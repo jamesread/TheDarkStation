@@ -173,17 +173,17 @@ func findCorridorCells(grid *world.Grid) []*world.Cell {
 	return corridors
 }
 
-// roomBoundary represents a corridor cell that connects to a room
-type roomBoundary struct {
-	corridorCell *world.Cell
-	roomName     string
+// roomEntryPoints represents all corridor cells that provide access to a specific room
+type roomEntryPoints struct {
+	roomName    string
+	entryCells  []*world.Cell
 }
 
-// findRoomBoundaries finds corridor cells that are adjacent to room cells
-// These are ideal locations for doors (at the entrance to rooms)
-func findRoomBoundaries(grid *world.Grid) []roomBoundary {
-	var boundaries []roomBoundary
-	seenPairs := mapset.New[string]() // Track corridor-room pairs we've already added
+// findRoomEntryPoints finds all corridor cells that serve as entry points to each room
+// Groups them by room so we can door ALL entries to fully block a room
+func findRoomEntryPoints(grid *world.Grid) map[string]*roomEntryPoints {
+	entries := make(map[string]*roomEntryPoints)
+	seenCells := mapset.New[string]() // Track cells we've already assigned
 
 	grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		// Only look at corridor cells
@@ -195,20 +195,39 @@ func findRoomBoundaries(grid *world.Grid) []roomBoundary {
 		neighbors := []*world.Cell{cell.North, cell.East, cell.South, cell.West}
 		for _, neighbor := range neighbors {
 			if neighbor != nil && neighbor.Room && neighbor.Name != "Corridor" && neighbor.Name != "" {
-				// Create a unique key for this corridor-room pair
-				pairKey := fmt.Sprintf("%d,%d-%s", cell.Row, cell.Col, neighbor.Name)
-				if !seenPairs.Has(pairKey) {
-					seenPairs.Put(pairKey)
-					boundaries = append(boundaries, roomBoundary{
-						corridorCell: cell,
-						roomName:     neighbor.Name,
-					})
+				roomName := neighbor.Name
+				cellKey := fmt.Sprintf("%d,%d-%s", cell.Row, cell.Col, roomName)
+				
+				if seenCells.Has(cellKey) {
+					continue
+				}
+				seenCells.Put(cellKey)
+
+				// Initialize entry points for this room if needed
+				if entries[roomName] == nil {
+					entries[roomName] = &roomEntryPoints{
+						roomName:   roomName,
+						entryCells: make([]*world.Cell, 0),
+					}
+				}
+
+				// Add this corridor cell as an entry point
+				// Only add if not already in the list (a corridor might touch multiple cells of same room)
+				alreadyAdded := false
+				for _, existing := range entries[roomName].entryCells {
+					if existing == cell {
+						alreadyAdded = true
+						break
+					}
+				}
+				if !alreadyAdded {
+					entries[roomName].entryCells = append(entries[roomName].entryCells, cell)
 				}
 			}
 		}
 	})
 
-	return boundaries
+	return entries
 }
 
 // abs returns the absolute value of an integer
@@ -332,90 +351,92 @@ func setupLevel(g *state.Game) {
 	// Track which cells have locked doors for reachability calculations
 	lockedDoorCells := mapset.New[*world.Cell]()
 
-	// Determine number of doors based on level
-	// More doors as levels progress - most rooms should have doors
-	// Level 1: 1 door
-	// Level 2: 2 doors
-	// Level 3+: 2 + (level-2) doors, scaling with available rooms
-	var numDoors int
-	if g.Level == 1 {
-		numDoors = 1
-	} else if g.Level == 2 {
-		numDoors = 2
-	} else {
-		numDoors = 2 + (g.Level - 2)
+	// Determine number of locked rooms based on level
+	// Level 1: 1 room, Level 2: 2 rooms, Level 3+: scales up
+	numLockedRooms := 1
+	if g.Level >= 2 {
+		numLockedRooms = 2
 	}
-	// Cap at reasonable maximum
-	if numDoors > 10 {
-		numDoors = 10
+	if g.Level >= 4 {
+		numLockedRooms = 3
+	}
+	if g.Level >= 6 {
+		numLockedRooms = 4
 	}
 
-	// Find room-corridor boundary cells (corridor cells that connect to rooms)
-	// These are ideal locations for doors
-	roomBoundaries := findRoomBoundaries(g.Grid)
+	// Find all room entry points (corridor cells that provide access to each room)
+	roomEntries := findRoomEntryPoints(g.Grid)
 
-	// Shuffle for random selection
-	rand.Shuffle(len(roomBoundaries), func(i, j int) {
-		roomBoundaries[i], roomBoundaries[j] = roomBoundaries[j], roomBoundaries[i]
+	// Build list of candidate rooms (rooms with 1-3 entry points that we can fully block)
+	type roomCandidate struct {
+		name       string
+		entries    *roomEntryPoints
+	}
+	var candidates []roomCandidate
+	for roomName, entries := range roomEntries {
+		// Only consider rooms with 1-3 entry points (manageable to door)
+		if len(entries.entryCells) >= 1 && len(entries.entryCells) <= 3 {
+			candidates = append(candidates, roomCandidate{name: roomName, entries: entries})
+		}
+	}
+
+	// Shuffle candidates for variety
+	rand.Shuffle(len(candidates), func(i, j int) {
+		candidates[i], candidates[j] = candidates[j], candidates[i]
 	})
 
-	// Track which rooms already have doors
+	// Track which rooms have doors
 	roomsWithDoors := mapset.New[string]()
+	lockedRoomsPlaced := 0
 
-	// Place doors at room-corridor boundaries, blocking the path to the exit
-	// Each door is named after the room it guards
-	for i := 0; i < numDoors; i++ {
-		// Calculate currently reachable area (with all previously placed doors)
+	// Place doors to fully block selected rooms
+	for _, candidate := range candidates {
+		if lockedRoomsPlaced >= numLockedRooms {
+			break
+		}
+
+		roomName := candidate.name
+		entryCells := candidate.entries.entryCells
+
+		// Skip if already has doors
+		if roomsWithDoors.Has(roomName) {
+			continue
+		}
+
+		// Check if all entry cells are available and reachable
 		currentlyReachable := getReachableCells(g.Grid, g.Grid.StartCell(), &lockedDoorCells)
-
-		// Find a boundary cell that blocks the exit when locked
-		var doorCell *world.Cell
-		var targetRoomName string
-
-		for _, boundary := range roomBoundaries {
-			if avoid.Has(boundary.corridorCell) || lockedDoorCells.Has(boundary.corridorCell) {
-				continue
-			}
-			// Don't put multiple doors for the same room
-			if roomsWithDoors.Has(boundary.roomName) {
-				continue
-			}
-			// Must be reachable from spawn
-			if !currentlyReachable.Has(boundary.corridorCell) {
-				continue
-			}
-			// Test if locking this cell blocks the exit
-			testLocked := mapset.New[*world.Cell]()
-			lockedDoorCells.Each(func(c *world.Cell) { testLocked.Put(c) })
-			testLocked.Put(boundary.corridorCell)
-			reachableWithDoor := getReachableCells(g.Grid, g.Grid.StartCell(), &testLocked)
-
-			// Prefer cells that block the exit, but accept any that reduce reachability
-			if !reachableWithDoor.Has(g.Grid.ExitCell()) || reachableWithDoor.Size() < currentlyReachable.Size() {
-				doorCell = boundary.corridorCell
-				targetRoomName = boundary.roomName
+		allValid := true
+		for _, cell := range entryCells {
+			if avoid.Has(cell) || lockedDoorCells.Has(cell) || !currentlyReachable.Has(cell) {
+				allValid = false
 				break
 			}
 		}
-
-		if doorCell == nil || targetRoomName == "" {
-			continue // No valid door location
+		if !allValid {
+			continue
 		}
 
-		// Calculate what's reachable with this door in place
+		// Test if blocking ALL entry cells reduces reachability
 		testLocked := mapset.New[*world.Cell]()
 		lockedDoorCells.Each(func(c *world.Cell) { testLocked.Put(c) })
-		testLocked.Put(doorCell)
-		reachableBeforeDoor := getReachableCells(g.Grid, g.Grid.StartCell(), &testLocked)
+		for _, cell := range entryCells {
+			testLocked.Put(cell)
+		}
+		reachableWithDoors := getReachableCells(g.Grid, g.Grid.StartCell(), &testLocked)
 
-		// Place the keycard in the area reachable BEFORE this door
-		keycardRoom := findRoomInReachable(reachableBeforeDoor, &avoid)
-		if keycardRoom == nil {
-			continue // No valid keycard location
+		// Must actually block something
+		if reachableWithDoors.Size() >= currentlyReachable.Size() {
+			continue
 		}
 
-		// Create the door and keycard
-		door := world.NewDoor(targetRoomName)
+		// Place the keycard in the area reachable BEFORE these doors
+		keycardRoom := findRoomInReachable(reachableWithDoors, &avoid)
+		if keycardRoom == nil {
+			continue
+		}
+
+		// Create the keycard (one keycard opens all doors to this room)
+		door := world.NewDoor(roomName)
 		keycardName := door.KeycardName()
 
 		keycard := world.NewItem(keycardName)
@@ -423,12 +444,22 @@ func setupLevel(g *state.Game) {
 		avoid.Put(keycardRoom)
 		g.AddHint("The " + renderer.ColorKeycard.Sprintf(keycardName) + " is in " + renderer.ColorCell.Sprintf(keycardRoom.Name))
 
-		// Place the door
-		doorCell.Door = door
-		avoid.Put(doorCell)
-		lockedDoorCells.Put(doorCell)
-		roomsWithDoors.Put(targetRoomName)
-		g.AddHint("The " + renderer.ColorDoor.Sprintf(door.DoorName()) + " blocks access to " + renderer.ColorCell.Sprintf(targetRoomName))
+		// Place doors on ALL entry cells (they share the same keycard)
+		for _, cell := range entryCells {
+			cellDoor := world.NewDoor(roomName)
+			cell.Door = cellDoor
+			avoid.Put(cell)
+			lockedDoorCells.Put(cell)
+		}
+
+		roomsWithDoors.Put(roomName)
+		lockedRoomsPlaced++
+
+		if len(entryCells) == 1 {
+			g.AddHint("The " + renderer.ColorDoor.Sprintf(door.DoorName()) + " blocks access to " + renderer.ColorCell.Sprintf(roomName))
+		} else {
+			g.AddHint(fmt.Sprintf("%d doors block access to %s", len(entryCells), renderer.ColorCell.Sprintf(roomName)))
+		}
 	}
 
 	// Levels 3+: Exit requires generators
@@ -478,6 +509,11 @@ func setupLevel(g *state.Game) {
 		}
 	} else {
 		g.Grid.ExitCell().Locked = false
+	}
+
+	// Place environmental hazards (level 2+)
+	if g.Level >= 2 {
+		placeHazards(g, &avoid, &lockedDoorCells)
 	}
 
 	// Always place a map in a reachable area
@@ -538,6 +574,104 @@ func collectUniqueRoomNames(grid *world.Grid) []string {
 	return names
 }
 
+// placeHazards places environmental hazards that block progress
+func placeHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells *mapset.Set[*world.Cell]) {
+	// Number of hazards scales with level: level 2 = 1, level 3 = 1-2, level 4+ = 2-3
+	numHazards := 1
+	if g.Level >= 4 {
+		numHazards = 2 + rand.Intn(2)
+	} else if g.Level >= 3 {
+		numHazards = 1 + rand.Intn(2)
+	}
+
+	// Available hazard types (excluding Vacuum initially, add it at level 3+)
+	hazardTypes := []world.HazardType{
+		world.HazardCoolant,
+		world.HazardElectrical,
+		world.HazardGas,
+	}
+	if g.Level >= 3 {
+		hazardTypes = append(hazardTypes, world.HazardVacuum)
+	}
+	if g.Level >= 5 {
+		hazardTypes = append(hazardTypes, world.HazardRadiation)
+	}
+
+	// Find corridor cells that could block progress
+	corridors := findCorridorCells(g.Grid)
+	rand.Shuffle(len(corridors), func(i, j int) {
+		corridors[i], corridors[j] = corridors[j], corridors[i]
+	})
+
+	hazardsPlaced := 0
+	for _, corridorCell := range corridors {
+		if hazardsPlaced >= numHazards {
+			break
+		}
+
+		// Skip if already used
+		if avoid.Has(corridorCell) || lockedDoorCells.Has(corridorCell) {
+			continue
+		}
+
+		// Check if this corridor is reachable from start
+		currentlyReachable := getReachableCells(g.Grid, g.Grid.StartCell(), lockedDoorCells)
+		if !currentlyReachable.Has(corridorCell) {
+			continue
+		}
+
+		// Test if blocking this cell would reduce reachability
+		testBlocked := mapset.New[*world.Cell]()
+		lockedDoorCells.Each(func(c *world.Cell) { testBlocked.Put(c) })
+		testBlocked.Put(corridorCell)
+		reachableWithHazard := getReachableCells(g.Grid, g.Grid.StartCell(), &testBlocked)
+
+		// Only place hazard if it blocks something
+		if reachableWithHazard.Size() >= currentlyReachable.Size() {
+			continue
+		}
+
+		// Choose a random hazard type
+		hazardType := hazardTypes[rand.Intn(len(hazardTypes))]
+		hazard := world.NewHazard(hazardType)
+
+		// Place the hazard
+		corridorCell.Hazard = hazard
+		avoid.Put(corridorCell)
+
+		info := world.HazardTypes[hazardType]
+
+		if hazard.RequiresItem() {
+			// Place the required item (e.g., Patch Kit) in a reachable area
+			itemRoom := findRoomInReachable(reachableWithHazard, avoid)
+			if itemRoom == nil {
+				itemRoom = findRoomInReachable(currentlyReachable, avoid)
+			}
+			if itemRoom != nil {
+				item := world.NewItem(info.ItemName)
+				itemRoom.ItemsOnFloor.Put(item)
+				avoid.Put(itemRoom)
+				g.AddHint("A " + renderer.ColorItem.Sprintf(info.ItemName) + " is in " + renderer.ColorCell.Sprintf(itemRoom.Name))
+			}
+		} else {
+			// Place the control panel in a reachable area
+			controlRoom := findRoomInReachable(reachableWithHazard, avoid)
+			if controlRoom == nil {
+				controlRoom = findRoomInReachable(currentlyReachable, avoid)
+			}
+			if controlRoom != nil {
+				control := world.NewHazardControl(hazardType, hazard)
+				control.Cell = controlRoom
+				controlRoom.HazardControl = control
+				avoid.Put(controlRoom)
+				g.AddHint("The " + renderer.ColorHazardCtrl.Sprintf(info.ControlName) + " is in " + renderer.ColorCell.Sprintf(controlRoom.Name))
+			}
+		}
+
+		hazardsPlaced++
+	}
+}
+
 // placeFurniture places thematically appropriate furniture in rooms
 func placeFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 	// Collect all unique rooms and their cells
@@ -583,12 +717,72 @@ func placeFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 			validCells[i], validCells[j] = validCells[j], validCells[i]
 		})
 
+		// Track furniture placed in this room for item hiding
+		var placedFurniture []*world.Furniture
+
 		// Place furniture
 		for i := 0; i < numFurniture && i < len(validCells); i++ {
 			template := templates[i]
 			furniture := world.NewFurniture(template.Name, template.Description, template.Icon)
 			furniture.Cell = validCells[i]
 			validCells[i].Furniture = furniture
+			placedFurniture = append(placedFurniture, furniture)
+		}
+
+		// Chance to hide items from the floor in furniture (40% per item)
+		if len(placedFurniture) > 0 {
+			hideItemsInFurniture(g, cells, placedFurniture)
+		}
+	}
+}
+
+// hideItemsInFurniture moves items from floor cells into furniture with a chance
+func hideItemsInFurniture(g *state.Game, roomCells []*world.Cell, furniture []*world.Furniture) {
+	// Find items on the floor in this room (keycards, patch kits - not batteries or maps)
+	for _, cell := range roomCells {
+		if cell.ItemsOnFloor.Size() == 0 {
+			continue
+		}
+
+		var itemsToMove []*world.Item
+		cell.ItemsOnFloor.Each(func(item *world.Item) {
+			// Only hide keycards and patch kits - items that are part of puzzles
+			if containsSubstring(item.Name, "Keycard") || item.Name == "Patch Kit" {
+				// 50% chance to hide in furniture
+				if rand.Intn(100) < 50 {
+					itemsToMove = append(itemsToMove, item)
+				}
+			}
+		})
+
+		// Move items to furniture
+		for _, item := range itemsToMove {
+			// Find furniture without an item
+			for _, f := range furniture {
+				if f.ContainedItem == nil {
+					cell.ItemsOnFloor.Remove(item)
+					f.ContainedItem = item
+
+					// Update hint to mention furniture instead of room
+					updateHintForFurnitureItem(g, item, f)
+					break
+				}
+			}
+		}
+	}
+}
+
+// updateHintForFurnitureItem updates the hint for an item to mention it's in furniture
+func updateHintForFurnitureItem(g *state.Game, item *world.Item, furniture *world.Furniture) {
+	roomName := furniture.Cell.Name
+
+	// Find and update the existing hint for this item
+	for i, hint := range g.Hints {
+		if containsSubstring(hint, item.Name) && containsSubstring(hint, roomName) {
+			// Replace the hint with one mentioning the furniture
+			g.Hints[i] = "The " + renderer.ColorKeycard.Sprintf(item.Name) + " is hidden in the " +
+				renderer.ColorFurniture.Sprintf(furniture.Name) + " in " + renderer.ColorCell.Sprintf(roomName)
+			return
 		}
 	}
 }
@@ -639,7 +833,12 @@ func showLevelObjectives(g *state.Game) {
 	if len(g.Generators) > 0 {
 		logMessage(g, "Power up ACTION{%d} generator(s) with batteries.", len(g.Generators))
 	}
-	if numDoors == 0 && len(g.Generators) == 0 {
+	// Count hazards
+	numHazards := countHazards(g)
+	if numHazards > 0 {
+		logMessage(g, "Clear ACTION{%d} environmental hazard(s).", numHazards)
+	}
+	if numDoors == 0 && len(g.Generators) == 0 && numHazards == 0 {
 		logMessage(g, "Find the lift to the next deck.")
 	}
 }
@@ -649,6 +848,17 @@ func countDoors(g *state.Game) int {
 	count := 0
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell.HasLockedDoor() {
+			count++
+		}
+	})
+	return count
+}
+
+// countHazards counts the number of active hazards on the map
+func countHazards(g *state.Game) int {
+	count := 0
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell.HasBlockingHazard() {
 			count++
 		}
 	})
@@ -681,13 +891,57 @@ func canEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 		})
 
 		if hasKeycard {
-			// Unlock the door and consume the keycard
-			r.Door.Unlock()
+			// Unlock ALL doors that require this keycard (a room may have multiple entry points)
+			doorsUnlocked := 0
+			g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+				if cell.HasLockedDoor() && cell.Door.KeycardName() == keycardName {
+					cell.Door.Unlock()
+					doorsUnlocked++
+				}
+			})
 			g.OwnedItems.Remove(keycardItem)
-			logMessage(g, "Used %s to unlock the %s!", renderer.ColorKeycard.Sprintf(keycardName), renderer.ColorDoor.Sprintf(r.Door.DoorName()))
+			if doorsUnlocked > 1 {
+				logMessage(g, "Used %s to unlock %d doors to %s!", renderer.ColorKeycard.Sprintf(keycardName), doorsUnlocked, renderer.ColorCell.Sprintf(r.Door.RoomName))
+			} else {
+				logMessage(g, "Used %s to unlock the %s!", renderer.ColorKeycard.Sprintf(keycardName), renderer.ColorDoor.Sprintf(r.Door.DoorName()))
+			}
 		} else {
 			if logReason {
 				logMessage(g, "This door requires a %s", renderer.ColorKeycard.Sprintf(keycardName))
+			}
+			return false, &missingItems
+		}
+	}
+
+	// Check for environmental hazard
+	if r.HasBlockingHazard() {
+		hazard := r.Hazard
+		if hazard.RequiresItem() {
+			// Check if player has the required item
+			itemName := hazard.RequiredItemName()
+			var fixItem *world.Item
+			g.OwnedItems.Each(func(item *world.Item) {
+				if item.Name == itemName {
+					fixItem = item
+				}
+			})
+
+			if fixItem != nil {
+				// Use the item to fix the hazard
+				hazard.Fix()
+				g.OwnedItems.Remove(fixItem)
+				info := world.HazardTypes[hazard.Type]
+				logMessage(g, info.FixedMessage)
+			} else {
+				if logReason {
+					logMessage(g, renderer.ColorHazard.Sprintf(hazard.Description))
+				}
+				return false, &missingItems
+			}
+		} else {
+			// Hazard requires a control panel to be activated
+			if logReason {
+				logMessage(g, renderer.ColorHazard.Sprintf(hazard.Description))
 			}
 			return false, &missingItems
 		}
@@ -845,6 +1099,9 @@ func mainLoop(g *state.Game) {
 	// Check adjacent cells for unused CCTV terminals
 	checkAdjacentTerminals(g)
 
+	// Check adjacent cells for inactive hazard controls
+	checkAdjacentHazardControls(g)
+
 	// Check adjacent cells for furniture and show hints
 	checkAdjacentFurniture(g)
 
@@ -937,7 +1194,7 @@ func checkAdjacentTerminals(g *state.Game) {
 	}
 }
 
-// checkAdjacentFurniture checks adjacent cells for furniture and displays hints
+// checkAdjacentFurniture checks adjacent cells for unchecked furniture and examines them
 func checkAdjacentFurniture(g *state.Game) {
 	neighbors := []*world.Cell{
 		g.CurrentCell.North,
@@ -947,25 +1204,50 @@ func checkAdjacentFurniture(g *state.Game) {
 	}
 
 	for _, cell := range neighbors {
-		if cell == nil || !cell.HasFurniture() {
+		if cell == nil || !cell.HasUncheckedFurniture() {
 			continue
 		}
 
 		furniture := cell.Furniture
 
-		// Only show hint if we haven't shown it recently (check if cell was just entered)
-		// We track this by checking if the furniture description is already in recent messages
-		alreadyShown := false
-		for _, msg := range g.Messages {
-			if containsSubstring(msg, furniture.Name) {
-				alreadyShown = true
-				break
+		// Check the furniture and get any contained item
+		item := furniture.Check()
+
+		// Show the description
+		logMessage(g, "%s: %s", renderer.ColorFurnitureCheck.Sprintf(furniture.Name), furniture.Description)
+
+		// If furniture contained an item, give it to the player
+		if item != nil {
+			if item.Name == "Battery" {
+				g.AddBatteries(1)
+				logMessage(g, "Found inside: ACTION{Battery}")
+			} else {
+				g.OwnedItems.Put(item)
+				logMessage(g, "Found inside: ITEM{%s}", item.Name)
 			}
 		}
+	}
+}
 
-		if !alreadyShown {
-			logMessage(g, "%s: %s", renderer.ColorFurniture.Sprintf(furniture.Name), furniture.Description)
+// checkAdjacentHazardControls checks adjacent cells for inactive hazard controls and activates them
+func checkAdjacentHazardControls(g *state.Game) {
+	neighbors := []*world.Cell{
+		g.CurrentCell.North,
+		g.CurrentCell.East,
+		g.CurrentCell.South,
+		g.CurrentCell.West,
+	}
+
+	for _, cell := range neighbors {
+		if cell == nil || !cell.HasInactiveHazardControl() {
+			continue
 		}
+
+		control := cell.HazardControl
+		control.Activate()
+
+		info := world.HazardTypes[control.Type]
+		logMessage(g, "Activated %s: %s", renderer.ColorHazardCtrl.Sprintf(control.Name), info.FixedMessage)
 	}
 }
 

@@ -1,0 +1,88 @@
+project_name: TheDarkStation
+version: 2
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    binary: darkstation
+    main: main.go
+    goos:
+      - linux
+      - windows
+      - darwin
+      - freebsd
+
+    goarch:
+      - amd64
+      - arm64
+      - arm
+
+    goarm:
+      - 6
+      - 7
+
+    ignore:
+      - goos: darwin
+        goarch: arm # Mac does not work on [32bit] arm
+
+      - goos: windows
+        goarch: arm
+
+      - goos: windows
+        goarch: arm64
+
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{ .CommitDate }}
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  version_template: "{{ .Branch }}-{{ .ShortCommit }}"
+
+changelog:
+  sort: asc
+  groups:
+    - title: 'Security'
+      regexp: '^.*?security(\([[:word:]]+\))??!?:.+$'
+      order: 0
+    - title: 'Features'
+      regexp: '^.*?feat.*?(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: 'Bug fixes'
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: Others
+      order: 999
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^cicd:'
+      - '^chore:'
+      - '^release:'
+      - '^refactor:'
+      - '^Merge branch'
+
+archives:
+  - formats: tar.gz
+    files:
+      - LICENSE
+      - README.md
+    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}{{ .Arm }}"
+    wrap_in_directory: true
+    format_overrides:
+      - goos: windows
+        formats: zip
+
+release:
+  footer: |
+    ## Installation
+
+    Download the appropriate archive for your platform, extract it, and run the `darkstation` executable.
+
+    ## Useful links
+
+    - [Report issues](https://github.com/jamesread/TheDarkStation/issues)
+
+    Thanks for your interest in The Dark Station!

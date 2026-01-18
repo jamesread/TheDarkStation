@@ -125,18 +125,21 @@ func GetViewportSize() (rows, cols int) {
 }
 
 var (
-	ColorCell        color.Style
-	ColorCellText    color.Style
-	ColorAction      color.Style
-	ColorActionShort color.Style
-	ColorDenied      color.Style
-	ColorItem        color.Style
-	ColorSubtle      color.Style
-	ColorPlayer      color.Style
-	ColorExitOpen    color.Style
-	ColorDoor        color.Style     // Generic door color
-	ColorKeycard     color.Style     // Keycard color
-	ColorFurniture   color.Style     // Furniture color
+	ColorCell            color.Style
+	ColorCellText        color.Style
+	ColorAction          color.Style
+	ColorActionShort     color.Style
+	ColorDenied          color.Style
+	ColorItem            color.Style
+	ColorSubtle          color.Style
+	ColorPlayer          color.Style
+	ColorExitOpen        color.Style
+	ColorDoor            color.Style // Generic door color
+	ColorKeycard         color.Style // Keycard color
+	ColorFurniture       color.Style // Unchecked furniture color
+	ColorFurnitureCheck  color.Style // Checked furniture color (brown)
+	ColorHazard          color.Style // Hazard color
+	ColorHazardCtrl      color.Style // Hazard control color
 
 	regexpStringFunctions *regexp.Regexp
 )
@@ -148,13 +151,16 @@ func InitColors() {
 	ColorAction = color.Style{color.FgMagenta}
 	ColorActionShort = color.Style{color.FgMagenta, color.OpBold}
 	ColorDenied = color.Style{color.FgRed, color.OpBold}
-	ColorItem = color.Style{color.FgGreen, color.OpBold}
+	ColorItem = color.Style{color.FgMagenta} // Dark purple for inventory items
 	ColorSubtle = color.Style{color.FgGray, color.OpBold}
 	ColorPlayer = color.Style{color.FgGreen, color.BgBlack, color.OpBold}
-	ColorExitOpen = color.Style{color.FgGreen}            // Dark green (no bold)
-	ColorDoor = color.Style{color.FgYellow, color.OpBold} // Yellow for doors
-	ColorKeycard = color.Style{color.FgCyan, color.OpBold} // Cyan for keycards
-	ColorFurniture = color.Style{color.FgWhite}           // White for furniture
+	ColorExitOpen = color.Style{color.FgGreen}             // Dark green (no bold)
+	ColorDoor = color.Style{color.FgYellow, color.OpBold}  // Yellow for doors
+	ColorKeycard = color.Style{color.FgBlue} // Dark blue for keycards
+	ColorFurniture = color.Style{color.FgMagenta, color.OpBold} // Pink for unchecked furniture
+	ColorFurnitureCheck = color.Style{color.FgYellow}      // Brown/dark yellow for checked furniture
+	ColorHazard = color.Style{color.FgRed}                 // Red for hazards
+	ColorHazardCtrl = color.Style{color.FgCyan}            // Cyan for hazard controls
 
 	regexpStringFunctions = regexp.MustCompile(`([a-zA-Z_]*){([a-z A-Z0-9_,:]+)}`)
 }
@@ -224,6 +230,22 @@ func RenderCell(g *state.Game, r *world.Cell) string {
 		return ColorPlayer.Sprint(PlayerIcon)
 	}
 
+	// Hazard (show if has map or discovered)
+	if r.HasHazard() && (g.HasMap || r.Discovered) {
+		if r.Hazard.IsBlocking() {
+			return ColorHazard.Sprintf(r.Hazard.GetIcon())
+		}
+		// Fixed hazards show as normal floor
+	}
+
+	// Hazard Control (show if has map or discovered)
+	if r.HasHazardControl() && (g.HasMap || r.Discovered) {
+		if !r.HazardControl.Activated {
+			return ColorHazardCtrl.Sprintf(world.GetControlIcon(r.HazardControl.Type))
+		}
+		return ColorSubtle.Sprintf(world.GetControlIcon(r.HazardControl.Type))
+	}
+
 	// Door (show if has map or discovered)
 	if r.HasDoor() && (g.HasMap || r.Discovered) {
 		if r.Door.Locked {
@@ -250,6 +272,9 @@ func RenderCell(g *state.Game, r *world.Cell) string {
 
 	// Furniture (show if has map or discovered)
 	if r.HasFurniture() && (g.HasMap || r.Discovered) {
+		if r.Furniture.IsChecked() {
+			return ColorFurnitureCheck.Sprintf(r.Furniture.Icon)
+		}
 		return ColorFurniture.Sprintf(r.Furniture.Icon)
 	}
 

@@ -24,17 +24,59 @@ type Cell struct {
 	Discovered bool
 	Room       bool
 
-	ExitCell  bool
-	Locked    bool          // Whether the exit is locked (requires generators)
-	Generator *Generator    // Generator in this cell (if any)
-	Door      *Door         // Door in this cell (if any)
-	Terminal  *CCTVTerminal // CCTV terminal in this cell (if any)
-	Furniture *Furniture    // Furniture in this cell (if any)
+	ExitCell      bool
+	Locked        bool           // Whether the exit is locked (requires generators)
+	Generator     *Generator     // Generator in this cell (if any)
+	Door          *Door          // Door in this cell (if any)
+	Terminal      *CCTVTerminal  // CCTV terminal in this cell (if any)
+	Furniture     *Furniture     // Furniture in this cell (if any)
+	Hazard        *Hazard        // Environmental hazard in this cell (if any)
+	HazardControl *HazardControl // Hazard control panel in this cell (if any)
 }
 
 // HasFurniture returns true if this cell contains furniture
 func (c *Cell) HasFurniture() bool {
 	return c.Furniture != nil
+}
+
+// HasUncheckedFurniture returns true if this cell has furniture that hasn't been examined
+func (c *Cell) HasUncheckedFurniture() bool {
+	return c.Furniture != nil && !c.Furniture.Checked
+}
+
+// HasCheckedFurniture returns true if this cell has furniture that has been examined
+func (c *Cell) HasCheckedFurniture() bool {
+	return c.Furniture != nil && c.Furniture.Checked
+}
+
+// HasHazard returns true if this cell contains a hazard
+func (c *Cell) HasHazard() bool {
+	return c.Hazard != nil
+}
+
+// HasBlockingHazard returns true if this cell has an unfixed hazard
+func (c *Cell) HasBlockingHazard() bool {
+	return c.Hazard != nil && c.Hazard.IsBlocking()
+}
+
+// HasFixedHazard returns true if this cell has a fixed hazard
+func (c *Cell) HasFixedHazard() bool {
+	return c.Hazard != nil && !c.Hazard.IsBlocking()
+}
+
+// HasHazardControl returns true if this cell contains a hazard control
+func (c *Cell) HasHazardControl() bool {
+	return c.HazardControl != nil
+}
+
+// HasInactiveHazardControl returns true if this cell has an unactivated control
+func (c *Cell) HasInactiveHazardControl() bool {
+	return c.HazardControl != nil && !c.HazardControl.Activated
+}
+
+// HasActiveHazardControl returns true if this cell has an activated control
+func (c *Cell) HasActiveHazardControl() bool {
+	return c.HazardControl != nil && c.HazardControl.Activated
 }
 
 // HasTerminal returns true if this cell contains a CCTV terminal

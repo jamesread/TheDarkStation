@@ -2,10 +2,12 @@ package world
 
 // Furniture represents a piece of furniture in a room
 type Furniture struct {
-	Name        string // Display name
-	Description string // Hint text shown when player is adjacent
-	Icon        string // Icon to display on the map
-	Cell        *Cell  // The cell this furniture is in
+	Name          string // Display name
+	Description   string // Hint text shown when player is adjacent
+	Icon          string // Icon to display on the map
+	Cell          *Cell  // The cell this furniture is in
+	Checked       bool   // Whether the player has examined this furniture
+	ContainedItem *Item  // Item hidden in this furniture (if any)
 }
 
 // NewFurniture creates a new furniture piece
@@ -14,7 +16,26 @@ func NewFurniture(name, description, icon string) *Furniture {
 		Name:        name,
 		Description: description,
 		Icon:        icon,
+		Checked:     false,
 	}
+}
+
+// Check marks the furniture as examined and returns any contained item
+func (f *Furniture) Check() *Item {
+	f.Checked = true
+	item := f.ContainedItem
+	f.ContainedItem = nil
+	return item
+}
+
+// HasItem returns true if this furniture contains an item
+func (f *Furniture) HasItem() bool {
+	return f.ContainedItem != nil
+}
+
+// IsChecked returns true if the furniture has been examined
+func (f *Furniture) IsChecked() bool {
+	return f.Checked
 }
 
 // FurnitureTemplate defines a furniture type that can be placed in rooms
