@@ -1,4 +1,5 @@
 <div align = "center">
+  <img alt = "project logo" src = "https://github.com/jamesread/TheDarkStation/blob/main/logo.svg" width = "128" />
   <h1>The Dark Station</h1>
 
   A relaxing, single-player exploration puzzle game. Navigate an abandoned space station, restore power to generators, unlock sealed doors, and find your way to the next deck.
