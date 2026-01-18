@@ -23,17 +23,17 @@ const (
 	IconUnvisited          = "●"
 	IconVisited            = "○"
 	IconVoid               = " "
-	IconExitLocked         = "▲"  // Locked lift (unpowered)
-	IconExitUnlocked       = "△"  // Unlocked lift (powered)
-	IconKey                = "⚷"  // Key item on floor
-	IconItem               = "?"  // Generic item on floor
-	IconBattery            = "■"  // Battery on floor
-	IconGeneratorUnpowered = "◇"  // Unpowered generator
-	IconGeneratorPowered   = "◆"  // Powered generator
-	IconDoorLocked         = "▣"  // Locked door
-	IconDoorUnlocked       = "□"  // Unlocked door
-	IconTerminalUnused     = "▫"  // Unused CCTV terminal
-	IconTerminalUsed       = "▪"  // Used CCTV terminal
+	IconExitLocked         = "▲" // Locked lift (unpowered)
+	IconExitUnlocked       = "△" // Unlocked lift (powered)
+	IconKey                = "⚷" // Key item on floor
+	IconItem               = "?" // Generic item on floor
+	IconBattery            = "■" // Battery on floor
+	IconGeneratorUnpowered = "◇" // Unpowered generator
+	IconGeneratorPowered   = "◆" // Powered generator
+	IconDoorLocked         = "▣" // Locked door
+	IconDoorUnlocked       = "□" // Unlocked door
+	IconTerminalUnused     = "▫" // Unused CCTV terminal
+	IconTerminalUsed       = "▪" // Used CCTV terminal
 )
 
 // Floor icons for different room types (visited/unvisited pairs)
@@ -125,21 +125,21 @@ func GetViewportSize() (rows, cols int) {
 }
 
 var (
-	ColorCell            color.Style
-	ColorCellText        color.Style
-	ColorAction          color.Style
-	ColorActionShort     color.Style
-	ColorDenied          color.Style
-	ColorItem            color.Style
-	ColorSubtle          color.Style
-	ColorPlayer          color.Style
-	ColorExitOpen        color.Style
-	ColorDoor            color.Style // Generic door color
-	ColorKeycard         color.Style // Keycard color
-	ColorFurniture       color.Style // Unchecked furniture color
-	ColorFurnitureCheck  color.Style // Checked furniture color (brown)
-	ColorHazard          color.Style // Hazard color
-	ColorHazardCtrl      color.Style // Hazard control color
+	ColorCell           color.Style
+	ColorCellText       color.Style
+	ColorAction         color.Style
+	ColorActionShort    color.Style
+	ColorDenied         color.Style
+	ColorItem           color.Style
+	ColorSubtle         color.Style
+	ColorPlayer         color.Style
+	ColorExitOpen       color.Style
+	ColorDoor           color.Style // Generic door color
+	ColorKeycard        color.Style // Keycard color
+	ColorFurniture      color.Style // Unchecked furniture color
+	ColorFurnitureCheck color.Style // Checked furniture color (brown)
+	ColorHazard         color.Style // Hazard color
+	ColorHazardCtrl     color.Style // Hazard control color
 
 	regexpStringFunctions *regexp.Regexp
 )
@@ -154,13 +154,13 @@ func InitColors() {
 	ColorItem = color.Style{color.FgMagenta} // Dark purple for inventory items
 	ColorSubtle = color.Style{color.FgGray, color.OpBold}
 	ColorPlayer = color.Style{color.FgGreen, color.BgBlack, color.OpBold}
-	ColorExitOpen = color.Style{color.FgGreen}             // Dark green (no bold)
-	ColorDoor = color.Style{color.FgYellow, color.OpBold}  // Yellow for doors
-	ColorKeycard = color.Style{color.FgBlue} // Dark blue for keycards
+	ColorExitOpen = color.Style{color.FgGreen}                  // Dark green (no bold)
+	ColorDoor = color.Style{color.FgYellow, color.OpBold}       // Yellow for doors
+	ColorKeycard = color.Style{color.FgBlue}                    // Dark blue for keycards
 	ColorFurniture = color.Style{color.FgMagenta, color.OpBold} // Pink for unchecked furniture
-	ColorFurnitureCheck = color.Style{color.FgYellow}      // Brown/dark yellow for checked furniture
-	ColorHazard = color.Style{color.FgRed}                 // Red for hazards
-	ColorHazardCtrl = color.Style{color.FgCyan}            // Cyan for hazard controls
+	ColorFurnitureCheck = color.Style{color.FgYellow}           // Brown/dark yellow for checked furniture
+	ColorHazard = color.Style{color.FgRed}                      // Red for hazards
+	ColorHazardCtrl = color.Style{color.FgCyan}                 // Cyan for hazard controls
 
 	regexpStringFunctions = regexp.MustCompile(`([a-zA-Z_]*){([a-z A-Z0-9_,:]+)}`)
 }

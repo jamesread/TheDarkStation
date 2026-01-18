@@ -46,9 +46,9 @@ var roomCounter int
 
 // Constants for BSP generation
 const (
-	minNodeSize  = 8  // Minimum size of a BSP node
-	minRoomSize  = 4  // Minimum size of a room
-	roomPadding  = 2  // Padding between room and node edge
+	minNodeSize   = 8 // Minimum size of a BSP node
+	minRoomSize   = 4 // Minimum size of a room
+	roomPadding   = 2 // Padding between room and node edge
 	corridorWidth = 3 // Width of corridors (wall + path + wall)
 )
 

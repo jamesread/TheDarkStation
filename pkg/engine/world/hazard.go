@@ -4,19 +4,19 @@ package world
 type HazardType int
 
 const (
-	HazardVacuum HazardType = iota // Depressurized area - needs breach sealed with Patch Kit
-	HazardCoolant                  // Coolant leak - needs Shutoff Valve activated
-	HazardElectrical               // Electrical fault - needs Circuit Breaker reset
-	HazardGas                      // Gas leak - needs Vent Control activated
-	HazardRadiation                // Radiation leak - needs Containment Field activated
+	HazardVacuum     HazardType = iota // Depressurized area - needs breach sealed with Patch Kit
+	HazardCoolant                      // Coolant leak - needs Shutoff Valve activated
+	HazardElectrical                   // Electrical fault - needs Circuit Breaker reset
+	HazardGas                          // Gas leak - needs Vent Control activated
+	HazardRadiation                    // Radiation leak - needs Containment Field activated
 )
 
 // Hazard represents an environmental hazard blocking a cell
 type Hazard struct {
 	Type        HazardType
-	Name        string // Display name
-	Description string // Description shown when trying to enter
-	Fixed       bool   // Whether the hazard has been cleared
+	Name        string         // Display name
+	Description string         // Description shown when trying to enter
+	Fixed       bool           // Whether the hazard has been cleared
 	Control     *HazardControl // The control that fixes this hazard (nil for item-based fixes)
 }
 

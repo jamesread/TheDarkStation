@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/zyedidia/generic/mapset"
 	gettext "github.com/gosexy/gettext"
+	"github.com/zyedidia/generic/mapset"
 
 	"darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
@@ -175,8 +175,8 @@ func findCorridorCells(grid *world.Grid) []*world.Cell {
 
 // roomEntryPoints represents all corridor cells that provide access to a specific room
 type roomEntryPoints struct {
-	roomName    string
-	entryCells  []*world.Cell
+	roomName   string
+	entryCells []*world.Cell
 }
 
 // findRoomEntryPoints finds all corridor cells that serve as entry points to each room
@@ -197,7 +197,7 @@ func findRoomEntryPoints(grid *world.Grid) map[string]*roomEntryPoints {
 			if neighbor != nil && neighbor.Room && neighbor.Name != "Corridor" && neighbor.Name != "" {
 				roomName := neighbor.Name
 				cellKey := fmt.Sprintf("%d,%d-%s", cell.Row, cell.Col, roomName)
-				
+
 				if seenCells.Has(cellKey) {
 					continue
 				}
@@ -369,8 +369,8 @@ func setupLevel(g *state.Game) {
 
 	// Build list of candidate rooms (rooms with 1-3 entry points that we can fully block)
 	type roomCandidate struct {
-		name       string
-		entries    *roomEntryPoints
+		name    string
+		entries *roomEntryPoints
 	}
 	var candidates []roomCandidate
 	for roomName, entries := range roomEntries {
