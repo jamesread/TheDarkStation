@@ -6,12 +6,12 @@ import (
 )
 
 var roomDescriptions = []string{
-	"ROOM_COBBLESTONE",
-	"ROOM_COURTYARD",
-	"ROOM_GARDEN",
-	"ROOM_WORKSHOP",
-	"ROOM_KITCHEN",
-	"ROOM_BANQUET",
+	"ROOM_CORRIDOR",
+	"ROOM_JUNCTION",
+	"ROOM_AIRLOCK",
+	"ROOM_MAINTENANCE",
+	"ROOM_STORAGE",
+	"ROOM_UTILITY",
 }
 
 // Grid represents the game map with encapsulated cell storage
@@ -170,6 +170,18 @@ func (g *Grid) MarkAsRoom(row, col int) bool {
 		return false
 	}
 	cell.Room = true
+	return true
+}
+
+// MarkAsRoomWithName marks a cell as a room and sets its name and description.
+func (g *Grid) MarkAsRoomWithName(row, col int, name, description string) bool {
+	cell := g.GetCell(row, col)
+	if cell == nil {
+		return false
+	}
+	cell.Room = true
+	cell.Name = name
+	cell.Description = description
 	return true
 }
 

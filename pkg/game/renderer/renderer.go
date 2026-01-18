@@ -11,29 +11,118 @@ import (
 	gettext "github.com/gosexy/gettext"
 	"github.com/zyedidia/generic/mapset"
 
-	"darkcastle/pkg/engine/terminal"
-	"darkcastle/pkg/engine/world"
-	"darkcastle/pkg/game/state"
+	"darkstation/pkg/engine/terminal"
+	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/state"
 )
 
-// Icon constants for The Dark Castle
+// Icon constants for Abandoned Station
 const (
-	PlayerIcon       = "@"
-	IconWall         = "▒"
-	IconUnvisited    = "●"
-	IconVisited      = "○"
-	IconVoid         = " "
-	IconExitLocked   = "▣"  // Locked exit (closed/blocked)
-	IconExitUnlocked = "⌂"  // Unlocked exit (house symbol)
-	IconKey          = "⚷"  // Key item on floor
-	IconItem         = "?"  // Generic item on floor
+	PlayerIcon             = "@"
+	IconWall               = "▒"
+	IconUnvisited          = "●"
+	IconVisited            = "○"
+	IconVoid               = " "
+	IconExitLocked         = "▲"  // Locked lift (unpowered)
+	IconExitUnlocked       = "△"  // Unlocked lift (powered)
+	IconKey                = "⚷"  // Key item on floor
+	IconItem               = "?"  // Generic item on floor
+	IconBattery            = "■"  // Battery on floor
+	IconGeneratorUnpowered = "◇"  // Unpowered generator
+	IconGeneratorPowered   = "◆"  // Powered generator
+	IconDoorLocked         = "▣"  // Locked door
+	IconDoorUnlocked       = "□"  // Unlocked door
+	IconTerminalUnused     = "▫"  // Unused CCTV terminal
+	IconTerminalUsed       = "▪"  // Used CCTV terminal
 )
 
-// Viewport dimensions (player will be centered)
+// Floor icons for different room types (visited/unvisited pairs)
+var roomFloorIcons = map[string][2]string{
+	"Bridge":          {"◎", "◉"}, // Command areas
+	"Command Center":  {"◎", "◉"},
+	"Communications":  {"◎", "◉"},
+	"Security":        {"◎", "◉"},
+	"Engineering":     {"▫", "▪"}, // Technical areas
+	"Reactor Core":    {"▫", "▪"},
+	"Server Room":     {"▫", "▪"},
+	"Maintenance Bay": {"▫", "▪"},
+	"Life Support":    {"▫", "▪"},
+	"Cargo Bay":       {"□", "▣"}, // Storage areas
+	"Storage":         {"□", "▣"},
+	"Hangar":          {"□", "▣"},
+	"Armory":          {"□", "▣"},
+	"Med Bay":         {"◇", "◆"}, // Science/medical areas
+	"Lab":             {"◇", "◆"},
+	"Hydroponics":     {"◇", "◆"},
+	"Observatory":     {"◇", "◆"},
+	"Crew Quarters":   {"·", "•"}, // Living areas
+	"Mess Hall":       {"·", "•"},
+	"Airlock":         {"╳", "╳"}, // Special areas
+	"Corridor":        {"░", "░"}, // Corridors
+}
+
+// getFloorIcon returns the appropriate floor icon for a room based on its name
+func getFloorIcon(roomName string, visited bool) string {
+	// Check each room type to see if it's contained in the room name
+	for baseRoom, icons := range roomFloorIcons {
+		if strings.Contains(roomName, baseRoom) {
+			if visited {
+				return icons[0] // visited icon
+			}
+			return icons[1] // unvisited icon
+		}
+	}
+	// Default icons
+	if visited {
+		return IconVisited
+	}
+	return IconUnvisited
+}
+
+// Viewport margins and minimum sizes
 const (
-	ViewportRows = 9
-	ViewportCols = 21
+	ViewportMinRows    = 7
+	ViewportMinCols    = 15
+	ViewportSideMargin = 26 // Space for West/East labels
+	// Lines needed outside viewport:
+	// - Level indicator + blank (2)
+	// - Room description + blank (2)
+	// - North label + blank (2)
+	// - South label + blanks (3)
+	// - Status bar (2-3 lines for inventory + generators)
+	// - Actions (1)
+	// - Messages pane (header + 5 messages + footer = 7)
+	// - Input prompt (2)
+	ViewportTopMargin = 24
 )
+
+// GetViewportSize returns the viewport dimensions based on terminal size
+func GetViewportSize() (rows, cols int) {
+	termWidth, termHeight := terminal.GetSize()
+
+	// Calculate available space
+	cols = termWidth - (ViewportSideMargin * 2)
+	rows = termHeight - ViewportTopMargin
+
+	// Ensure minimum size
+	if cols < ViewportMinCols {
+		cols = ViewportMinCols
+	}
+	if rows < ViewportMinRows {
+		rows = ViewportMinRows
+	}
+
+	// Keep rows odd for centering
+	if rows%2 == 0 {
+		rows--
+	}
+	// Keep cols odd for centering
+	if cols%2 == 0 {
+		cols--
+	}
+
+	return rows, cols
+}
 
 var (
 	ColorCell        color.Style
@@ -44,6 +133,10 @@ var (
 	ColorItem        color.Style
 	ColorSubtle      color.Style
 	ColorPlayer      color.Style
+	ColorExitOpen    color.Style
+	ColorDoor        color.Style     // Generic door color
+	ColorKeycard     color.Style     // Keycard color
+	ColorFurniture   color.Style     // Furniture color
 
 	regexpStringFunctions *regexp.Regexp
 )
@@ -58,6 +151,10 @@ func InitColors() {
 	ColorItem = color.Style{color.FgGreen, color.OpBold}
 	ColorSubtle = color.Style{color.FgGray, color.OpBold}
 	ColorPlayer = color.Style{color.FgGreen, color.BgBlack, color.OpBold}
+	ColorExitOpen = color.Style{color.FgGreen}            // Dark green (no bold)
+	ColorDoor = color.Style{color.FgYellow, color.OpBold} // Yellow for doors
+	ColorKeycard = color.Style{color.FgCyan, color.OpBold} // Cyan for keycards
+	ColorFurniture = color.Style{color.FgWhite}           // White for furniture
 
 	regexpStringFunctions = regexp.MustCompile(`([a-zA-Z_]*){([a-z A-Z0-9_,:]+)}`)
 }
@@ -127,38 +224,71 @@ func RenderCell(g *state.Game, r *world.Cell) string {
 		return ColorPlayer.Sprint(PlayerIcon)
 	}
 
-	// Exit cell (show if has map or discovered)
-	if r.ExitCell && (g.HasMap || r.Discovered) {
-		if r.Locked {
-			return ColorDenied.Sprintf(IconExitLocked)
+	// Door (show if has map or discovered)
+	if r.HasDoor() && (g.HasMap || r.Discovered) {
+		if r.Door.Locked {
+			return ColorDoor.Sprintf(IconDoorLocked)
 		}
-		return ColorItem.Sprintf(IconExitUnlocked)
+		return ColorExitOpen.Sprintf(IconDoorUnlocked)
 	}
 
-	// Items on floor (show if has map or discovered) - keys get special icon
+	// Generator (show if has map or discovered)
+	if r.HasGenerator() && (g.HasMap || r.Discovered) {
+		if r.Generator.IsPowered() {
+			return ColorExitOpen.Sprintf(IconGeneratorPowered) // Dark green when powered
+		}
+		return ColorDenied.Sprintf(IconGeneratorUnpowered)
+	}
+
+	// CCTV Terminal (show if has map or discovered)
+	if r.HasTerminal() && (g.HasMap || r.Discovered) {
+		if r.Terminal.IsUsed() {
+			return ColorSubtle.Sprintf(IconTerminalUsed)
+		}
+		return ColorCellText.Sprintf(IconTerminalUnused)
+	}
+
+	// Furniture (show if has map or discovered)
+	if r.HasFurniture() && (g.HasMap || r.Discovered) {
+		return ColorFurniture.Sprintf(r.Furniture.Icon)
+	}
+
+	// Exit cell (show if has map or discovered)
+	if r.ExitCell && (g.HasMap || r.Discovered) {
+		// Exit is red if locked (generators not all powered), dark green if unlocked/powered
+		if r.Locked && !g.AllGeneratorsPowered() {
+			return ColorDenied.Sprintf(IconExitLocked)
+		}
+		return ColorExitOpen.Sprintf(IconExitUnlocked)
+	}
+
+	// Items on floor (show if has map or discovered) - keycards/batteries get special icons
 	if r.ItemsOnFloor.Size() > 0 && (g.HasMap || r.Discovered) {
-		if cellHasKey(r) {
-			return ColorItem.Sprintf(IconKey)
+		if cellHasKeycard(r) {
+			return ColorKeycard.Sprintf(IconKey)
+		}
+		if cellHasBattery(r) {
+			return ColorAction.Sprintf(IconBattery)
 		}
 		return ColorItem.Sprintf(IconItem)
 	}
 
 	// Visited rooms
 	if r.Visited {
-		return ColorCell.Sprintf(IconVisited)
+		return ColorCell.Sprintf(getFloorIcon(r.Name, true))
 	}
 
 	// Discovered but not visited
 	if r.Discovered {
 		if r.Room {
-			return ColorSubtle.Sprintf(IconUnvisited)
+			return ColorSubtle.Sprintf(getFloorIcon(r.Name, false))
 		}
 		return ColorSubtle.Sprintf(IconWall)
 	}
 
 	// Has map - show rooms faintly
 	if g.HasMap && r.Room {
-		return ColorSubtle.Sprintf(IconUnvisited)
+		return ColorSubtle.Sprintf(getFloorIcon(r.Name, false))
 	}
 
 	// Non-room cells adjacent to discovered/visited rooms render as walls
@@ -171,15 +301,26 @@ func RenderCell(g *state.Game, r *world.Cell) string {
 	return IconVoid
 }
 
-// cellHasKey checks if a cell has a key item on the floor
-func cellHasKey(c *world.Cell) bool {
-	hasKey := false
+// cellHasKeycard checks if a cell has a keycard item on the floor
+func cellHasKeycard(c *world.Cell) bool {
+	hasKeycard := false
 	c.ItemsOnFloor.Each(func(item *world.Item) {
-		if strings.Contains(strings.ToLower(item.Name), "key") {
-			hasKey = true
+		if strings.Contains(strings.ToLower(item.Name), "keycard") {
+			hasKeycard = true
 		}
 	})
-	return hasKey
+	return hasKeycard
+}
+
+// cellHasBattery checks if a cell has a battery item on the floor
+func cellHasBattery(c *world.Cell) bool {
+	hasBattery := false
+	c.ItemsOnFloor.Each(func(item *world.Item) {
+		if strings.Contains(strings.ToLower(item.Name), "battery") {
+			hasBattery = true
+		}
+	})
+	return hasBattery
 }
 
 // hasAdjacentDiscoveredRoom checks if any adjacent cell is a discovered or visited room
@@ -253,43 +394,52 @@ func GetDirectionActionText(g *state.Game, c *world.Cell, direction string) stri
 		}
 	}
 
-	return fmt.Sprintf("ACTION{%v}: (%v) %v", displayKey, ColorCell.Sprintf(c.Name), lockedText)
+	return fmt.Sprintf("ACTION{%v}%v", displayKey, lockedText)
 }
 
 // PrintMap renders the game map
 func PrintMap(g *state.Game) {
 	termWidth := terminal.GetWidth()
+	viewportRows, viewportCols := GetViewportSize()
 
 	// Calculate indent to center the map
-	// West label area (24 chars) + map (ViewportCols) + East label area (24 chars)
+	// West label area (24 chars) + map (viewportCols) + East label area (24 chars)
 	westLabelWidth := 24
-	totalMapWidth := westLabelWidth + ViewportCols + westLabelWidth
+	totalMapWidth := westLabelWidth + viewportCols + westLabelWidth
 	centerIndent := (termWidth - totalMapWidth) / 2
 	if centerIndent < 0 {
 		centerIndent = 0
 	}
 	indent := strings.Repeat(" ", centerIndent+westLabelWidth)
 
+	// Calculate indent to center North/South labels over the map viewport
+	mapStartCol := centerIndent + westLabelWidth
+
 	// Calculate viewport bounds centered on player
 	playerRow := g.CurrentCell.Row
 	playerCol := g.CurrentCell.Col
 
 	// Calculate the top-left corner of the viewport
-	startRow := playerRow - ViewportRows/2
-	startCol := playerCol - ViewportCols/2
+	startRow := playerRow - viewportRows/2
+	startCol := playerCol - viewportCols/2
 
-	// Print North direction label
-	fmt.Print(indent)
-	PrintStringCenter(GetDirectionActionText(g, g.CurrentCell.North, "North"))
-	fmt.Println("")
+	// Print North direction label (centered over map)
+	northText := FormatString(GetDirectionActionText(g, g.CurrentCell.North, "North"))
+	northLen := len(color.ClearCode(northText))
+	northIndent := mapStartCol + (viewportCols-northLen)/2
+	if northIndent < 0 {
+		northIndent = 0
+	}
+	fmt.Print(strings.Repeat(" ", northIndent))
+	fmt.Println(northText)
 	fmt.Println("")
 
 	// Render the viewport
-	for vRow := 0; vRow < ViewportRows; vRow++ {
+	for vRow := 0; vRow < viewportRows; vRow++ {
 		mapRow := startRow + vRow
 
 		// Print West label on the middle row
-		if vRow == ViewportRows/2 {
+		if vRow == viewportRows/2 {
 			txt := FormatString(GetDirectionActionText(g, g.CurrentCell.West, "West"))
 			labelLen := len(color.ClearCode(txt))
 			padding := centerIndent + westLabelWidth - labelLen
@@ -302,7 +452,7 @@ func PrintMap(g *state.Game) {
 		}
 
 		// Render cells in this row
-		for vCol := 0; vCol < ViewportCols; vCol++ {
+		for vCol := 0; vCol < viewportCols; vCol++ {
 			mapCol := startCol + vCol
 
 			// Check if this position is within the actual grid
@@ -315,7 +465,7 @@ func PrintMap(g *state.Game) {
 		}
 
 		// Print East label on the middle row
-		if vRow == ViewportRows/2 {
+		if vRow == viewportRows/2 {
 			PrintString(" %s", GetDirectionActionText(g, g.CurrentCell.East, "East"))
 		}
 
@@ -324,11 +474,16 @@ func PrintMap(g *state.Game) {
 
 	fmt.Println("")
 
-	// Print South direction label
-	fmt.Print(indent)
-	PrintStringCenter(GetDirectionActionText(g, g.CurrentCell.South, "South"))
+	// Print South direction label (centered over map)
+	southText := FormatString(GetDirectionActionText(g, g.CurrentCell.South, "South"))
+	southLen := len(color.ClearCode(southText))
+	southIndent := mapStartCol + (viewportCols-southLen)/2
+	if southIndent < 0 {
+		southIndent = 0
+	}
+	fmt.Print(strings.Repeat(" ", southIndent))
+	fmt.Println(southText)
 
-	fmt.Println("")
 	fmt.Println("")
 }
 
@@ -340,16 +495,35 @@ func PrintPossibleActions() {
 // PrintStatusBar renders the inventory status bar
 func PrintStatusBar(g *state.Game) {
 	fmt.Println()
-	fmt.Print(ColorSubtle.Sprint("Inventory: "))
 
-	if g.OwnedItems.Size() == 0 {
+	// Show items
+	fmt.Print(ColorSubtle.Sprint("Inventory: "))
+	if g.OwnedItems.Size() == 0 && g.Batteries == 0 {
 		fmt.Println(ColorSubtle.Sprint("(empty)"))
 	} else {
 		items := []string{}
 		g.OwnedItems.Each(func(item *world.Item) {
 			items = append(items, ColorItem.Sprint(item.Name))
 		})
+		// Add batteries to display
+		if g.Batteries > 0 {
+			items = append(items, ColorAction.Sprintf("Batteries x%d", g.Batteries))
+		}
 		fmt.Println(strings.Join(items, ColorSubtle.Sprint(", ")))
+	}
+
+	// Show generator status if there are generators on this level
+	if len(g.Generators) > 0 {
+		fmt.Print(ColorSubtle.Sprint("Generators: "))
+		genStatus := []string{}
+		for i, gen := range g.Generators {
+			if gen.IsPowered() {
+				genStatus = append(genStatus, ColorItem.Sprintf("#%d POWERED", i+1))
+			} else {
+				genStatus = append(genStatus, ColorDenied.Sprintf("#%d %d/%d", i+1, gen.BatteriesInserted, gen.BatteriesRequired))
+			}
+		}
+		fmt.Println(strings.Join(genStatus, ColorSubtle.Sprint(", ")))
 	}
 }
 

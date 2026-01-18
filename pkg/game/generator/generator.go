@@ -1,7 +1,7 @@
 package generator
 
 import (
-	"darkcastle/pkg/engine/world"
+	"darkstation/pkg/engine/world"
 )
 
 // GridGenerator is an interface for map generation algorithms
@@ -10,5 +10,11 @@ type GridGenerator interface {
 	Name() string
 }
 
+// Available generators
+var (
+	LineWalker = &LineWalkerGenerator{}
+	BSP        = &BSPGenerator{}
+)
+
 // DefaultGenerator is the default map generator
-var DefaultGenerator GridGenerator = &LineWalkerGenerator{}
+var DefaultGenerator GridGenerator = BSP

@@ -3,7 +3,7 @@ package generator
 import (
 	"math/rand"
 
-	"darkcastle/pkg/engine/world"
+	"darkstation/pkg/engine/world"
 )
 
 // LineWalkerGenerator generates maps by walking lines in random directions

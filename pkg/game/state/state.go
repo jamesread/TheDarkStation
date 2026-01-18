@@ -3,7 +3,7 @@ package state
 import (
 	"github.com/zyedidia/generic/mapset"
 
-	"darkcastle/pkg/engine/world"
+	"darkstation/pkg/engine/world"
 )
 
 // NavStyle represents the navigation key style
@@ -15,7 +15,7 @@ const (
 	NavStyleVim
 )
 
-// Game represents the game state for The Dark Castle
+// Game represents the game state for Abandoned Station
 type Game struct {
 	CurrentCell *world.Cell
 
@@ -32,6 +32,9 @@ type Game struct {
 	NavStyle NavStyle
 
 	Level int // Current level/floor number
+
+	Batteries  int                // Number of batteries in inventory
+	Generators []*world.Generator // All generators on this level
 }
 
 // NewGame creates a new game instance
@@ -41,7 +44,52 @@ func NewGame() *Game {
 		HasMap:     false,
 		Messages:   make([]string, 0),
 		Level:      1,
+		Batteries:  0,
+		Generators: make([]*world.Generator, 0),
 	}
+}
+
+// AddBatteries adds batteries to the player's inventory
+func (g *Game) AddBatteries(count int) {
+	g.Batteries += count
+}
+
+// UseBatteries removes batteries from inventory, returns actual amount used
+func (g *Game) UseBatteries(count int) int {
+	if count > g.Batteries {
+		count = g.Batteries
+	}
+	g.Batteries -= count
+	return count
+}
+
+// AddGenerator registers a generator for this level
+func (g *Game) AddGenerator(gen *world.Generator) {
+	g.Generators = append(g.Generators, gen)
+}
+
+// AllGeneratorsPowered returns true if all generators are powered
+func (g *Game) AllGeneratorsPowered() bool {
+	if len(g.Generators) == 0 {
+		return true
+	}
+	for _, gen := range g.Generators {
+		if !gen.IsPowered() {
+			return false
+		}
+	}
+	return true
+}
+
+// UnpoweredGeneratorCount returns the number of unpowered generators
+func (g *Game) UnpoweredGeneratorCount() int {
+	count := 0
+	for _, gen := range g.Generators {
+		if !gen.IsPowered() {
+			count++
+		}
+	}
+	return count
 }
 
 // AddMessage adds a message to the game's message log
@@ -81,4 +129,6 @@ func (g *Game) AdvanceLevel() {
 	g.OwnedItems = mapset.New[*world.Item]()
 	g.HasMap = false
 	g.Hints = nil
+	g.Batteries = 0
+	g.Generators = make([]*world.Generator, 0)
 }

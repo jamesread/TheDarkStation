@@ -1,18 +1,26 @@
-TheDarkCastle
-=============
+Abandoned Station
+=================
 
-A single player, procedurally generated text adventure game in Go.
+A single player, procedurally generated exploration game in Go. Navigate an abandoned space station, restore power to generators, unlock sealed doors, and find your way to the next deck.
 
 ```
-You are in small garden surrounded by walls (5, 10)
+Deck 3
 
-Inventory: Map, Red Key
+You are in Damaged Engineering
+
+Inventory: Map, Red Key, Batteries x3
+
+Generators: #1 2/3, #2 POWERED
 
 - ?: Show hint
-- North: unvisited (4, 10)
-- East: unvisited (5, 11)
-- South: unvisited (6, 10)
-- West: unvisited (5, 9)
 
 >
 ```
+
+== Features
+
+- Procedurally generated space station layouts using BSP trees
+- Field of view system with line-of-sight blocking
+- Colored doors (Red, Green, Blue) requiring matching keycards
+- Generator power system requiring batteries
+- Dynamic viewport that scales to terminal size
