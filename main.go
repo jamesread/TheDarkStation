@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	gettext "github.com/gosexy/gettext"
+	"github.com/leonelquinteros/gotext"
 	"github.com/zyedidia/generic/mapset"
 
 	"darkstation/pkg/engine/world"
@@ -21,9 +21,7 @@ import (
 )
 
 func initGettext() {
-	gettext.BindTextdomain("default", "mo/")
-	gettext.Textdomain("default")
-	gettext.SetLocale(gettext.LcAll, "en_GB.utf8")
+	gotext.Configure("mo", "en_GB.utf8", "default")
 }
 
 // logMessage adds a formatted message to the game's message log
@@ -965,7 +963,7 @@ func moveCell(g *state.Game, requestedCell *world.Cell) {
 	if res, _ := canEnter(g, requestedCell, true); res {
 		// Only log message if entering a different named room
 		if g.CurrentCell == nil || g.CurrentCell.Name != requestedCell.Name {
-			logMessage(g, gettext.Gettext("OPEN_DOOR")+"%v", renderer.StyledCell(requestedCell.Name))
+			logMessage(g, gotext.Get("OPEN_DOOR")+"%v", renderer.StyledCell(requestedCell.Name))
 		}
 
 		requestedCell.Visited = true
@@ -990,7 +988,7 @@ func processInput(g *state.Game, in string) {
 	}
 
 	if in == "quit" || in == "q" {
-		fmt.Println(gettext.Gettext("GOODBYE"))
+		fmt.Println(gotext.Get("GOODBYE"))
 		os.Exit(0)
 	}
 
@@ -1050,7 +1048,7 @@ func processInput(g *state.Game, in string) {
 		return
 	}
 
-	logMessage(g, "%s", gettext.Gettext("UNKNOWN_COMMAND"))
+	logMessage(g, "%s", gotext.Get("UNKNOWN_COMMAND"))
 }
 
 func main() {
@@ -1077,7 +1075,7 @@ func mainLoop(g *state.Game) {
 	renderer.Clear()
 
 	if g.CurrentCell.ExitCell {
-		logMessage(g, "%s", gettext.Gettext("EXIT"))
+		logMessage(g, "%s", gotext.Get("EXIT"))
 		advanceLevel(g)
 	}
 

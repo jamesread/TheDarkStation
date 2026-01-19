@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/gookit/color"
-	gettext "github.com/gosexy/gettext"
+	"github.com/leonelquinteros/gotext"
 
 	"darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/terminal"
@@ -192,11 +192,11 @@ func (t *TUIRenderer) FormatText(msg string, args ...any) string {
 
 		switch function {
 		case "GT":
-			val = gettext.Gettext(operand)
+			val = gotext.Get(operand)
 		case "ITEM":
 			val = t.colorItem.Sprint(operand)
 		case "ROOM":
-			val = t.colorCell.Sprint(gettext.Gettext(operand))
+			val = t.colorCell.Sprint(gotext.Get(operand))
 		case "ACTION":
 			val = t.colorActionShort.Sprint(operand[0:1]) + t.colorAction.Sprint(operand[1:])
 		default:
