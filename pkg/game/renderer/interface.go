@@ -138,18 +138,19 @@ type CalloutRenderer interface {
 
 // Callout colors for different message types (matching cell colors)
 var (
-	CalloutColorInfo        = color.RGBA{200, 200, 255, 255} // Light blue
-	CalloutColorSuccess     = color.RGBA{100, 255, 150, 255} // Green
-	CalloutColorWarning     = color.RGBA{255, 220, 100, 255} // Yellow
-	CalloutColorDanger      = color.RGBA{255, 120, 120, 255} // Red
-	CalloutColorItem        = color.RGBA{220, 170, 255, 255} // Purple
-	CalloutColorGenerator   = color.RGBA{255, 100, 100, 255} // Red (unpowered)
-	CalloutColorGeneratorOn = color.RGBA{0, 255, 100, 255}   // Green (powered)
-	CalloutColorTerminal    = color.RGBA{100, 150, 255, 255} // Blue
-	CalloutColorFurniture   = color.RGBA{255, 150, 255, 255} // Pink
-	CalloutColorHazardCtrl  = color.RGBA{0, 255, 255, 255}   // Cyan
-	CalloutColorRoom        = color.RGBA{180, 180, 220, 255} // Light gray-blue for room names
-	CalloutColorDoor        = color.RGBA{255, 255, 0, 255}   // Yellow for locked doors
+	CalloutColorInfo             = color.RGBA{200, 200, 255, 255} // Light blue
+	CalloutColorSuccess          = color.RGBA{100, 255, 150, 255} // Green
+	CalloutColorWarning          = color.RGBA{255, 220, 100, 255} // Yellow
+	CalloutColorDanger           = color.RGBA{255, 120, 120, 255} // Red
+	CalloutColorItem             = color.RGBA{220, 170, 255, 255} // Purple
+	CalloutColorGenerator        = color.RGBA{255, 100, 100, 255} // Red (unpowered)
+	CalloutColorGeneratorOn      = color.RGBA{0, 255, 100, 255}   // Green (powered)
+	CalloutColorTerminal         = color.RGBA{100, 150, 255, 255} // Blue
+	CalloutColorFurniture        = color.RGBA{255, 150, 255, 255} // Pink (unchecked)
+	CalloutColorFurnitureChecked = color.RGBA{200, 180, 100, 255} // Tan/brown (checked, decorative)
+	CalloutColorHazardCtrl       = color.RGBA{0, 255, 255, 255}   // Cyan
+	CalloutColorRoom             = color.RGBA{180, 180, 220, 255} // Light gray-blue for room names
+	CalloutColorDoor             = color.RGBA{255, 255, 0, 255}   // Yellow for locked doors
 )
 
 // AddCallout adds a callout if the current renderer supports it

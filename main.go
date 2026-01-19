@@ -1254,15 +1254,17 @@ func checkAdjacentFurniture(g *state.Game) {
 			if item.Name == "Battery" {
 				g.AddBatteries(1)
 				logMessage(g, "Found inside: ACTION{Battery}")
-				renderer.AddCallout(cell.Row, cell.Col, "Found: Battery!", renderer.CalloutColorFurniture, 0)
+				// Use magenta item color for item-giving furniture
+				renderer.AddCallout(cell.Row, cell.Col, "Found: Battery!", renderer.CalloutColorItem, 0)
 			} else {
 				g.OwnedItems.Put(item)
 				logMessage(g, "Found inside: ITEM{%s}", item.Name)
-				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("Found: %s!", item.Name), renderer.CalloutColorFurniture, 0)
+				// Use magenta item color for item-giving furniture
+				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("Found: %s!", item.Name), renderer.CalloutColorItem, 0)
 			}
 		} else {
-			// Show description as callout if no item found
-			renderer.AddCallout(cell.Row, cell.Col, furniture.Name, renderer.CalloutColorFurniture, 0)
+			// Decorative-only furniture: use brown/tan checked furniture color
+			renderer.AddCallout(cell.Row, cell.Col, furniture.Name, renderer.CalloutColorFurnitureChecked, 0)
 		}
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"image/color"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -128,6 +129,12 @@ type Callout struct {
 	ExpiresAt int64 // Unix timestamp when callout expires (0 = never)
 }
 
+// messageEntry represents a message with timestamp for fade-out
+type messageEntry struct {
+	Text      string
+	Timestamp int64 // Unix timestamp in milliseconds when message was added
+}
+
 // roomLabel represents a persistent label for a room, drawn above its longest horizontal wall
 type roomLabel struct {
 	RoomName string
@@ -146,7 +153,7 @@ type renderSnapshot struct {
 	cellName   string
 	hasMap     bool
 	batteries  int
-	messages   []string
+	messages   []messageEntry
 	ownedItems []string
 	generators []generatorState
 	gridRows   int
@@ -209,8 +216,9 @@ type EbitenRenderer struct {
 	// Flag indicating renderer is running
 	running bool
 
-	// Messages to display
-	messages []string
+	// Messages to display with timestamps for fade-out
+	trackedMessages []messageEntry
+	messagesMutex   sync.RWMutex
 }
 
 // New creates a new Ebiten renderer
@@ -377,45 +385,24 @@ func (e *EbitenRenderer) StyleText(text string, style renderer.TextStyle) string
 }
 
 // FormatText formats a message with the markup system
+// For Ebiten, we preserve the markup so it can be parsed and colored when displaying
 func (e *EbitenRenderer) FormatText(msg string, args ...any) string {
-	// Simple formatting - strip markup tags for now
-	ret := fmt.Sprintf(msg, args...)
-
-	// Remove markup tags like GT{}, ITEM{}, ROOM{}, ACTION{}
-	// These are TUI-specific; Ebiten uses its own rendering
-	for {
-		start := strings.Index(ret, "{")
-		if start == -1 {
-			break
-		}
-		end := strings.Index(ret[start:], "}")
-		if end == -1 {
-			break
-		}
-
-		// Find the function name before {
-		funcStart := start
-		for funcStart > 0 && ret[funcStart-1] != ' ' && ret[funcStart-1] != '\n' {
-			funcStart--
-		}
-
-		// Extract content between { and }
-		content := ret[start+1 : start+end]
-
-		// Replace the whole markup with just the content
-		ret = ret[:funcStart] + content + ret[start+end+1:]
-	}
-
-	return ret
+	// Format with arguments, but preserve markup tags for later parsing
+	return fmt.Sprintf(msg, args...)
 }
 
 // ShowMessage displays a message to the user
 func (e *EbitenRenderer) ShowMessage(msg string) {
-	e.gameMutex.Lock()
-	defer e.gameMutex.Unlock()
-	e.messages = append(e.messages, msg)
-	if len(e.messages) > 5 {
-		e.messages = e.messages[len(e.messages)-5:]
+	e.messagesMutex.Lock()
+	defer e.messagesMutex.Unlock()
+	now := time.Now().UnixMilli()
+	e.trackedMessages = append(e.trackedMessages, messageEntry{
+		Text:      msg,
+		Timestamp: now,
+	})
+	// Keep only the last 5 messages
+	if len(e.trackedMessages) > 5 {
+		e.trackedMessages = e.trackedMessages[len(e.trackedMessages)-5:]
 	}
 }
 
@@ -457,9 +444,51 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 	// Compute persistent room labels (for rooms the player has visited)
 	e.snapshot.roomLabels = e.computeRoomLabels(g)
 
-	// Copy messages
-	e.snapshot.messages = make([]string, len(g.Messages))
-	copy(e.snapshot.messages, g.Messages)
+	// Track messages with timestamps and handle fade-out
+	e.messagesMutex.Lock()
+	now := time.Now().UnixMilli()
+	const messageLifetime = 10000 // 10 seconds in milliseconds
+
+	// Create a map of current game messages for quick lookup
+	currentMessages := make(map[string]bool)
+	for _, msg := range g.Messages {
+		currentMessages[msg] = true
+	}
+
+	// Update tracked messages: add new ones, keep existing ones (even if removed from game), remove expired ones
+	updatedMessages := make([]messageEntry, 0)
+
+	// Keep existing tracked messages that are not expired (even if removed from g.Messages)
+	for _, tracked := range e.trackedMessages {
+		age := now - tracked.Timestamp
+		if age < messageLifetime {
+			updatedMessages = append(updatedMessages, tracked)
+		}
+	}
+
+	// Add new messages from game that aren't already tracked
+	for _, msg := range g.Messages {
+		found := false
+		for _, tracked := range e.trackedMessages {
+			if tracked.Text == msg {
+				found = true
+				break
+			}
+		}
+		if !found {
+			updatedMessages = append(updatedMessages, messageEntry{
+				Text:      msg,
+				Timestamp: now,
+			})
+		}
+	}
+
+	e.trackedMessages = updatedMessages
+
+	// Copy to snapshot
+	e.snapshot.messages = make([]messageEntry, len(e.trackedMessages))
+	copy(e.snapshot.messages, e.trackedMessages)
+	e.messagesMutex.Unlock()
 
 	// Copy owned items
 	e.snapshot.ownedItems = make([]string, 0)
@@ -479,10 +508,10 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 
 	// Copy active callouts (with expiration filtering)
 	e.calloutsMutex.Lock()
-	now := time.Now().Unix()
+	nowUnixMilli := time.Now().UnixMilli()
 	activeCallouts := make([]Callout, 0)
 	for _, c := range e.callouts {
-		if c.ExpiresAt == 0 || c.ExpiresAt > now {
+		if c.ExpiresAt == 0 || c.ExpiresAt > nowUnixMilli {
 			activeCallouts = append(activeCallouts, c)
 		}
 	}
@@ -926,7 +955,8 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	helpHeight := int(uiFontSize) + 15
 
 	// Calculate available space for map
-	availableHeight := screenHeight - headerHeight - directionLabelHeight*2 - statusBarHeight - messagesHeight - helpHeight - 40
+	// Note: statusBarHeight is not subtracted since it overlays on the map
+	availableHeight := screenHeight - headerHeight - directionLabelHeight*2 - messagesHeight - helpHeight - 40
 	availableWidth := screenWidth - 200 // Leave space for east/west labels
 
 	// Calculate map dimensions
@@ -945,7 +975,7 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	mapY := headerHeight + directionLabelHeight
 
 	// Draw header (deck number and room name) - use snapshot data
-	e.drawHeaderFromSnapshot(screen, &snap, screenWidth)
+	e.drawHeaderFromSnapshot(screen, &snap, screenWidth, headerHeight)
 
 	// Draw map background
 	vector.DrawFilledRect(screen, float32(mapX-10), float32(mapY-10),
@@ -955,32 +985,30 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	// Draw the map using snapshot for player position
 	e.drawMap(screen, g, mapX, mapY, &snap)
 
-	// Draw direction labels
-	e.drawDirectionLabels(screen, g, mapX, mapY, mapAreaWidth, mapAreaHeight)
+	// Draw status bar (overlay on top left of map) - use snapshot data
+	statusY := mapY + 10 // Small padding from top of map
+	e.drawStatusBarFromSnapshot(screen, &snap, mapX+10, statusY, mapAreaWidth, statusBarHeight)
 
-	// Draw status bar (below map) - use snapshot data
-	statusY := mapY + mapAreaHeight + directionLabelHeight + 10
-	e.drawStatusBarFromSnapshot(screen, &snap, mapX, statusY, mapAreaWidth)
-
-	// Draw messages panel (below status) - use snapshot data
-	messagesY := statusY + statusBarHeight + 10
+	// Draw messages panel (below map) - use snapshot data
+	messagesY := mapY + mapAreaHeight + directionLabelHeight + 10
 	e.drawMessagesFromSnapshot(screen, &snap, mapX, messagesY, mapAreaWidth, messagesHeight)
-
-	// Draw help text at bottom
-	helpText := "Arrow/WASD/HJKL: Move | ?: Hint | +/-: Zoom | Q/Esc: Quit"
-	e.drawColoredText(screen, helpText, 10, screenHeight-int(uiFontSize)-10, colorSubtle)
 }
 
 // drawHeaderFromSnapshot draws the deck number and room name using snapshot data
-func (e *EbitenRenderer) drawHeaderFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, screenWidth int) {
+func (e *EbitenRenderer) drawHeaderFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, screenWidth int, headerHeight int) {
+	fontSize := e.getUIFontSize()
+	// Calculate vertical center: headerHeight/2, but since drawColoredText adds fontSize for baseline,
+	// we need to subtract fontSize to get the correct y position
+	centerY := headerHeight/2 - int(fontSize)
+
 	// Deck number
 	deckText := fmt.Sprintf("Deck %d", snap.level)
-	e.drawColoredText(screen, deckText, 20, 20, colorAction)
+	e.drawColoredText(screen, deckText, 20, centerY, colorAction)
 
 	// Room name (centered)
 	roomText := fmt.Sprintf("In: %s", snap.cellName)
 	textWidth := e.getTextWidth(roomText)
-	e.drawColoredText(screen, roomText, (screenWidth-int(textWidth))/2, 20, colorFloorVisited)
+	e.drawColoredText(screen, roomText, (screenWidth-int(textWidth))/2, centerY, colorFloorVisited)
 }
 
 // drawMap renders the game map
@@ -1305,6 +1333,115 @@ func (e *EbitenRenderer) drawColoredText(screen *ebiten.Image, str string, x, y 
 	text.Draw(screen, str, face, op)
 }
 
+// textSegment represents a segment of text with a specific color
+type textSegment struct {
+	text  string
+	color color.Color
+}
+
+// parseMarkup parses a message string with markup (ITEM{}, ROOM{}, ACTION{}, GT{}) and returns colored segments
+func (e *EbitenRenderer) parseMarkup(msg string) []textSegment {
+	var segments []textSegment
+	// Regex to match markup: FUNCTION{content}
+	markupRegex := regexp.MustCompile(`([A-Z]+)\{([^}]*)\}`)
+
+	lastIndex := 0
+	matches := markupRegex.FindAllStringSubmatchIndex(msg, -1)
+
+	for _, match := range matches {
+		// Add text before the markup
+		if match[0] > lastIndex {
+			plainText := msg[lastIndex:match[0]]
+			if plainText != "" {
+				segments = append(segments, textSegment{text: plainText, color: colorText})
+			}
+		}
+
+		// Extract function name and content
+		function := msg[match[2]:match[3]]
+		content := msg[match[4]:match[5]]
+
+		var segColor color.Color
+		switch function {
+		case "ITEM":
+			segColor = colorItem
+		case "ROOM":
+			segColor = colorFloorVisited // Light gray-blue for room names
+		case "ACTION":
+			segColor = colorAction
+		case "GT":
+			// GT{} is for translations - for now just use default color
+			// In a full implementation, you'd look up the translation here
+			segColor = colorText
+		default:
+			segColor = colorText
+		}
+
+		segments = append(segments, textSegment{text: content, color: segColor})
+		lastIndex = match[1]
+	}
+
+	// Add remaining text after last markup
+	if lastIndex < len(msg) {
+		plainText := msg[lastIndex:]
+		if plainText != "" {
+			segments = append(segments, textSegment{text: plainText, color: colorText})
+		}
+	}
+
+	// If no markup found, return the whole message as a single segment
+	if len(segments) == 0 {
+		segments = append(segments, textSegment{text: msg, color: colorText})
+	}
+
+	return segments
+}
+
+// applyAlpha applies an alpha value to a color
+func (e *EbitenRenderer) applyAlpha(c color.Color, alpha float64) color.Color {
+	if alpha <= 0 {
+		alpha = 0
+	}
+	if alpha > 1.0 {
+		alpha = 1.0
+	}
+
+	r, g, b, a := c.RGBA()
+	// RGBA returns values in 0-65535 range, convert to 0-255
+	r8 := uint8(r >> 8)
+	g8 := uint8(g >> 8)
+	b8 := uint8(b >> 8)
+	a8 := uint8(a >> 8)
+
+	// Apply alpha
+	newAlpha := uint8(float64(a8) * alpha)
+
+	return color.RGBA{r8, g8, b8, newAlpha}
+}
+
+// drawColoredTextSegments draws multiple text segments with different colors
+func (e *EbitenRenderer) drawColoredTextSegments(screen *ebiten.Image, segments []textSegment, x, y int) {
+	face := e.getSansFontFace()
+	fontSize := e.getUIFontSize()
+	currentX := float64(x)
+
+	for _, seg := range segments {
+		if seg.text == "" {
+			continue
+		}
+
+		op := &text.DrawOptions{}
+		op.GeoM.Translate(currentX, float64(y)+fontSize)
+		op.ColorScale.ScaleWithColor(seg.color)
+
+		text.Draw(screen, seg.text, face, op)
+
+		// Move x position for next segment
+		w, _ := text.Measure(seg.text, face, 0)
+		currentX += w
+	}
+}
+
 // getTextWidth returns the width of a string in pixels at UI font size
 func (e *EbitenRenderer) getTextWidth(str string) float64 {
 	face := e.getSansFontFace()
@@ -1518,10 +1655,27 @@ func (e *EbitenRenderer) getDirectionText(g *state.Game, cell *world.Cell, direc
 }
 
 // drawStatusBarFromSnapshot draws the inventory and generator status using snapshot data
-func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, x, y, width int) {
-	// Draw panel background
-	vector.DrawFilledRect(screen, float32(x-10), float32(y-5),
-		float32(width+20), 50, colorPanelBackground, false)
+func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, x, y, width, height int) {
+	fontSize := e.getUIFontSize()
+	lineHeight := int(fontSize) + 4
+
+	// Draw panel background with border (more opaque for overlay on map)
+	bgX := float32(x - 10)
+	bgY := float32(y - 5)
+	bgW := float32(width + 20)
+	bgH := float32(height)
+	borderColor := color.RGBA{80, 80, 100, 255}
+	// More opaque background for overlay readability
+	overlayBackground := color.RGBA{20, 20, 35, 250} // More opaque than colorPanelBackground
+
+	// Border
+	vector.DrawFilledRect(screen, bgX-1, bgY-1, bgW+2, bgH+2, borderColor, false)
+	// Background
+	vector.DrawFilledRect(screen, bgX, bgY, bgW, bgH, overlayBackground, false)
+
+	// Calculate vertical center for first line
+	// Since drawColoredText adds fontSize for baseline, we need to adjust
+	firstLineY := y + (height / 2) - (lineHeight / 2) - int(fontSize)
 
 	// Inventory line
 	invText := "Inventory: "
@@ -1535,7 +1689,7 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 		}
 		invText += strings.Join(items, ", ")
 	}
-	e.drawColoredText(screen, invText, x, y, colorText)
+	e.drawColoredText(screen, invText, x, firstLineY, colorText)
 
 	// Generator status (if applicable)
 	if len(snap.generators) > 0 {
@@ -1549,31 +1703,76 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 			}
 		}
 		genText += strings.Join(genParts, ", ")
-		e.drawColoredText(screen, genText, x, y+20, colorText)
+		// Second line positioned below first line
+		secondLineY := firstLineY + lineHeight
+		e.drawColoredText(screen, genText, x, secondLineY, colorText)
 	}
 }
 
 // drawMessagesFromSnapshot draws the messages panel using snapshot data
 func (e *EbitenRenderer) drawMessagesFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, x, y, width, maxHeight int) {
-	// Draw panel background
-	panelHeight := 120
-	if panelHeight > maxHeight {
-		panelHeight = maxHeight
-	}
-	vector.DrawFilledRect(screen, float32(x-10), float32(y-5),
-		float32(width+20), float32(panelHeight), colorPanelBackground, false)
+	fontSize := e.getUIFontSize()
+	lineHeight := int(fontSize) + 4 // Font size plus padding for proper line spacing
 
-	// Header
-	e.drawColoredText(screen, "─── Messages ───", x, y, colorSubtle)
+	// Use the provided maxHeight for the panel background
+	panelHeight := maxHeight
+	bgX := float32(x - 10)
+	bgY := float32(y - 5)
+	bgW := float32(width + 20)
+	bgH := float32(panelHeight)
+	borderColor := color.RGBA{80, 80, 100, 255}
 
-	// Messages
+	// Border
+	vector.DrawFilledRect(screen, bgX-1, bgY-1, bgW+2, bgH+2, borderColor, false)
+	// Background
+	vector.DrawFilledRect(screen, bgX, bgY, bgW, bgH, colorPanelBackground, false)
+
+	// Header - position at top with proper padding
+	headerY := y + 8 - int(fontSize) // Small padding from top, account for baseline
+	e.drawColoredText(screen, "─── Messages ───", x, headerY, colorSubtle)
+
+	// Messages - start below header with proper spacing
+	messageStartY := y + int(fontSize) + 12 // Below header with spacing
 	if len(snap.messages) == 0 {
-		e.drawColoredText(screen, "(no messages)", x+10, y+20, colorSubtle)
+		e.drawColoredText(screen, "(no messages)", x+10, messageStartY-int(fontSize), colorSubtle)
 	} else {
-		for i, msg := range snap.messages {
-			// Strip any ANSI codes or markup
-			cleanMsg := e.FormatText("%s", msg)
-			e.drawColoredText(screen, cleanMsg, x+10, y+20+i*16, colorText)
+		now := time.Now().UnixMilli()
+		const messageLifetime = 10000 // 10 seconds in milliseconds
+
+		for i, msgEntry := range snap.messages {
+			// Calculate fade based on age
+			age := now - msgEntry.Timestamp
+			if age >= messageLifetime {
+				continue // Skip fully faded messages
+			}
+
+			// Calculate alpha: 1.0 at start, 0.0 at messageLifetime
+			// Fade starts at 7 seconds (70% of lifetime), fully transparent at 10 seconds
+			fadeStart := int64(messageLifetime * 7 / 10) // Start fading at 7 seconds
+			var alpha float64 = 1.0
+			if age > fadeStart {
+				// Fade from 1.0 to 0.0 over the last 3 seconds
+				fadeProgress := float64(age-fadeStart) / float64(messageLifetime-fadeStart)
+				alpha = 1.0 - fadeProgress
+				if alpha < 0 {
+					alpha = 0
+				}
+			}
+
+			// Parse markup and draw colored segments with fade
+			segments := e.parseMarkup(msgEntry.Text)
+			// Apply alpha to all segment colors
+			fadedSegments := make([]textSegment, len(segments))
+			for j, seg := range segments {
+				fadedSegments[j] = textSegment{
+					text:  seg.text,
+					color: e.applyAlpha(seg.color, alpha),
+				}
+			}
+
+			// Position each message line
+			msgY := messageStartY + i*lineHeight - int(fontSize)
+			e.drawColoredTextSegments(screen, fadedSegments, x+10, msgY)
 		}
 	}
 }
