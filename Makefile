@@ -1,5 +1,5 @@
 default: mo
-	go run .
+	go run . --ebiten
 
 mo:
 	msgfmt -c -v po/default.pot -o mo/en_GB.utf8/LC_MESSAGES/default.mo

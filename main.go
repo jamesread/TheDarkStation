@@ -15,6 +15,7 @@ import (
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/renderer"
+	ebitenRenderer "darkstation/pkg/game/renderer/ebiten"
 	"darkstation/pkg/game/renderer/tui"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
@@ -906,6 +907,8 @@ func canEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 		} else {
 			if logReason {
 				logMessage(g, "This door requires a %s", renderer.StyledKeycard(keycardName))
+				// Contextual tooltip next to the locked door
+				renderer.AddCallout(r.Row, r.Col, fmt.Sprintf("Locked: %s", keycardName), renderer.CalloutColorDoor, 0)
 			}
 			return false, &missingItems
 		}
@@ -1053,26 +1056,52 @@ func processInput(g *state.Game, in string) {
 
 func main() {
 	startLevel := flag.Int("level", 1, "starting level/deck number (for developer testing)")
+	useEbiten := flag.Bool("ebiten", false, "use Ebiten graphical renderer instead of TUI")
 	flag.Parse()
 
 	initGettext()
-
-	// Initialize the TUI renderer
-	tuiRenderer := tui.New()
-	renderer.SetRenderer(tuiRenderer)
-	renderer.Init()
-
 	rand.Seed(time.Now().UnixNano())
 
-	g := buildGame(*startLevel)
+	if *useEbiten {
+		// Initialize the Ebiten renderer
+		ebitRenderer := ebitenRenderer.New()
+		renderer.SetRenderer(ebitRenderer)
+		renderer.Init()
 
-	for {
-		mainLoop(g)
+		g := buildGame(*startLevel)
+
+		// Run the game with Ebiten's game loop
+		// Ebiten's RunGame blocks, so we run the game logic in Update
+		if err := ebitRenderer.RunWithGameLoop(func() {
+			for {
+				mainLoop(g)
+			}
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "Error running Ebiten: %v\n", err)
+			os.Exit(1)
+		}
+	} else {
+		// Initialize the TUI renderer
+		tuiRenderer := tui.New()
+		renderer.SetRenderer(tuiRenderer)
+		renderer.Init()
+
+		g := buildGame(*startLevel)
+
+		for {
+			mainLoop(g)
+		}
 	}
 }
 
 func mainLoop(g *state.Game) {
 	renderer.Clear()
+
+	// Clear callouts if player moved (before adding new ones)
+	renderer.ClearCalloutsIfMoved(g.CurrentCell.Row, g.CurrentCell.Col)
+
+	// Show room entry callout if player entered a new room (but not corridors)
+	renderer.ShowRoomEntryIfNew(g.CurrentCell.Row, g.CurrentCell.Col, g.CurrentCell.Name)
 
 	if g.CurrentCell.ExitCell {
 		logMessage(g, "%s", gotext.Get("EXIT"))
@@ -1087,12 +1116,15 @@ func mainLoop(g *state.Game) {
 			g.HasMap = true
 			g.OwnedItems.Put(item)
 			logMessage(g, "Picked up: ITEM{%v}", item.Name)
+			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, "Picked up: Map", renderer.CalloutColorItem, 0)
 		} else if item.Name == "Battery" {
 			g.AddBatteries(1)
 			logMessage(g, "Picked up: ACTION{Battery}")
+			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, "Picked up: Battery", renderer.CalloutColorItem, 0)
 		} else {
 			g.OwnedItems.Put(item)
 			logMessage(g, "Picked up: ITEM{%v}", item.Name)
+			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, fmt.Sprintf("Picked up: %s", item.Name), renderer.CalloutColorItem, 0)
 		}
 	})
 
@@ -1151,8 +1183,10 @@ func checkAdjacentGenerators(g *state.Game) {
 
 			if gen.IsPowered() {
 				logMessage(g, "ITEM{%s} is now powered!", gen.Name)
+				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("%s POWERED!", gen.Name), renderer.CalloutColorGeneratorOn, 0)
 			} else {
 				logMessage(g, "%s needs ACTION{%d} more batteries", gen.Name, gen.BatteriesNeeded())
+				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("+%d batteries (%d more needed)", inserted, gen.BatteriesNeeded()), renderer.CalloutColorGenerator, 0)
 			}
 		}
 	}
@@ -1181,11 +1215,13 @@ func checkAdjacentTerminals(g *state.Game) {
 		if alreadyRevealed {
 			logMessage(g, "Accessed %s - ROOM{%s} already explored.", terminal.Name, targetRoom)
 			terminal.Activate()
+			renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("%s already explored", targetRoom), renderer.CalloutColorTerminal, 0)
 		} else {
 			// Reveal the target room
 			if revealRoomByName(g.Grid, targetRoom) {
 				terminal.Activate()
 				logMessage(g, "Accessed %s - revealed ROOM{%s} on security feed!", terminal.Name, targetRoom)
+				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("Revealed: %s", targetRoom), renderer.CalloutColorTerminal, 0)
 			}
 		}
 	}
@@ -1213,15 +1249,20 @@ func checkAdjacentFurniture(g *state.Game) {
 		// Show the description
 		logMessage(g, "%s: %s", renderer.StyledFurnitureChecked(furniture.Name), furniture.Description)
 
-		// If furniture contained an item, give it to the player
+		// If furniture contained an item, give it to the player and show callout
 		if item != nil {
 			if item.Name == "Battery" {
 				g.AddBatteries(1)
 				logMessage(g, "Found inside: ACTION{Battery}")
+				renderer.AddCallout(cell.Row, cell.Col, "Found: Battery!", renderer.CalloutColorFurniture, 0)
 			} else {
 				g.OwnedItems.Put(item)
 				logMessage(g, "Found inside: ITEM{%s}", item.Name)
+				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("Found: %s!", item.Name), renderer.CalloutColorFurniture, 0)
 			}
+		} else {
+			// Show description as callout if no item found
+			renderer.AddCallout(cell.Row, cell.Col, furniture.Name, renderer.CalloutColorFurniture, 0)
 		}
 	}
 }
@@ -1245,6 +1286,7 @@ func checkAdjacentHazardControls(g *state.Game) {
 
 		info := entities.HazardTypes[control.Type]
 		logMessage(g, "Activated %s: %s", renderer.StyledHazardCtrl(control.Name), info.FixedMessage)
+		renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("%s activated!", control.Name), renderer.CalloutColorHazardCtrl, 0)
 	}
 }
 

@@ -1,6 +1,8 @@
 package renderer
 
 import (
+	"image/color"
+
 	"darkstation/pkg/game/state"
 )
 
@@ -115,4 +117,67 @@ func GetViewportSize() (rows, cols int) {
 		return Current.GetViewportSize()
 	}
 	return 15, 30 // sensible defaults
+}
+
+// CalloutRenderer is an optional interface for renderers that support floating callouts
+type CalloutRenderer interface {
+	// AddCallout adds a floating message near a specific cell
+	// durationMs is how long the callout should display (0 = until cleared)
+	AddCallout(row, col int, message string, c color.Color, durationMs int)
+
+	// ClearCallouts removes all active callouts
+	ClearCallouts()
+
+	// ClearCalloutsIfMoved clears callouts if player moved from the last known position
+	ClearCalloutsIfMoved(row, col int) bool
+
+	// ShowRoomEntryIfNew shows a room entry callout if the player entered a new room
+	// Returns true if a callout was shown
+	ShowRoomEntryIfNew(row, col int, roomName string) bool
+}
+
+// Callout colors for different message types (matching cell colors)
+var (
+	CalloutColorInfo        = color.RGBA{200, 200, 255, 255} // Light blue
+	CalloutColorSuccess     = color.RGBA{100, 255, 150, 255} // Green
+	CalloutColorWarning     = color.RGBA{255, 220, 100, 255} // Yellow
+	CalloutColorDanger      = color.RGBA{255, 120, 120, 255} // Red
+	CalloutColorItem        = color.RGBA{220, 170, 255, 255} // Purple
+	CalloutColorGenerator   = color.RGBA{255, 100, 100, 255} // Red (unpowered)
+	CalloutColorGeneratorOn = color.RGBA{0, 255, 100, 255}   // Green (powered)
+	CalloutColorTerminal    = color.RGBA{100, 150, 255, 255} // Blue
+	CalloutColorFurniture   = color.RGBA{255, 150, 255, 255} // Pink
+	CalloutColorHazardCtrl  = color.RGBA{0, 255, 255, 255}   // Cyan
+	CalloutColorRoom        = color.RGBA{180, 180, 220, 255} // Light gray-blue for room names
+	CalloutColorDoor        = color.RGBA{255, 255, 0, 255}   // Yellow for locked doors
+)
+
+// AddCallout adds a callout if the current renderer supports it
+func AddCallout(row, col int, message string, c color.Color, durationMs int) {
+	if cr, ok := Current.(CalloutRenderer); ok {
+		cr.AddCallout(row, col, message, c, durationMs)
+	}
+}
+
+// ClearCallouts clears callouts if the current renderer supports it
+func ClearCallouts() {
+	if cr, ok := Current.(CalloutRenderer); ok {
+		cr.ClearCallouts()
+	}
+}
+
+// ClearCalloutsIfMoved clears callouts if player moved, returns true if cleared
+func ClearCalloutsIfMoved(row, col int) bool {
+	if cr, ok := Current.(CalloutRenderer); ok {
+		return cr.ClearCalloutsIfMoved(row, col)
+	}
+	return false
+}
+
+// ShowRoomEntryIfNew shows a room entry callout if the player entered a new room
+func ShowRoomEntryIfNew(row, col int, roomName string) bool {
+	if cr, ok := Current.(CalloutRenderer); ok {
+		return cr.ShowRoomEntryIfNew(row, col, roomName)
+	}
+	return false
 }
