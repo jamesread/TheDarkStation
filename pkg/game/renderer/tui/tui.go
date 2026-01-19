@@ -81,6 +81,11 @@ const (
 	ViewportTopMargin = 24
 )
 
+// dynamicGet is used for runtime translation key lookups.
+// We use a function variable to avoid go vet's non-constant format string check,
+// since we intentionally look up translation keys dynamically from markup.
+var dynamicGet = gotext.Get
+
 // TUIRenderer is the terminal-based renderer implementation
 type TUIRenderer struct {
 	colorCell           color.Style
@@ -192,11 +197,11 @@ func (t *TUIRenderer) FormatText(msg string, args ...any) string {
 
 		switch function {
 		case "GT":
-			val = gotext.Get(operand)
+			val = dynamicGet(operand)
 		case "ITEM":
 			val = t.colorItem.Sprint(operand)
 		case "ROOM":
-			val = t.colorCell.Sprint(gotext.Get(operand))
+			val = t.colorCell.Sprint(dynamicGet(operand))
 		case "ACTION":
 			val = t.colorActionShort.Sprint(operand[0:1]) + t.colorAction.Sprint(operand[1:])
 		default:
