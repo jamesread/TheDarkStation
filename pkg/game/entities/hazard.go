@@ -1,4 +1,4 @@
-package world
+package entities
 
 // HazardType represents different types of environmental hazards
 type HazardType int
@@ -27,7 +27,6 @@ type HazardControl struct {
 	Description string  // Description when activated
 	Activated   bool    // Whether this control has been used
 	Hazard      *Hazard // The hazard this control fixes
-	Cell        *Cell   // The cell this control is in
 }
 
 // HazardInfo contains display information for each hazard type

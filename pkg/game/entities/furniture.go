@@ -1,13 +1,16 @@
-package world
+package entities
+
+import (
+	"darkstation/pkg/engine/world"
+)
 
 // Furniture represents a piece of furniture in a room
 type Furniture struct {
-	Name          string // Display name
-	Description   string // Hint text shown when player is adjacent
-	Icon          string // Icon to display on the map
-	Cell          *Cell  // The cell this furniture is in
-	Checked       bool   // Whether the player has examined this furniture
-	ContainedItem *Item  // Item hidden in this furniture (if any)
+	Name          string      // Display name
+	Description   string      // Hint text shown when player is adjacent
+	Icon          string      // Icon to display on the map
+	Checked       bool        // Whether the player has examined this furniture
+	ContainedItem *world.Item // Item hidden in this furniture (if any)
 }
 
 // NewFurniture creates a new furniture piece
@@ -21,7 +24,7 @@ func NewFurniture(name, description, icon string) *Furniture {
 }
 
 // Check marks the furniture as examined and returns any contained item
-func (f *Furniture) Check() *Item {
+func (f *Furniture) Check() *world.Item {
 	f.Checked = true
 	item := f.ContainedItem
 	f.ContainedItem = nil
@@ -45,7 +48,7 @@ type FurnitureTemplate struct {
 	Icon        string
 }
 
-// Room-themed furniture templates
+// RoomFurniture contains space station themed furniture templates by room type
 var RoomFurniture = map[string][]FurnitureTemplate{
 	"Bridge": {
 		{"Captain's Chair", "A worn command chair faces the main viewscreen.", "Ω"},

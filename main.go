@@ -5,16 +5,19 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"strings"
 	"time"
 
 	gettext "github.com/gosexy/gettext"
 	"github.com/zyedidia/generic/mapset"
 
-	"darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/renderer"
+	"darkstation/pkg/game/renderer/tui"
 	"darkstation/pkg/game/state"
+	gameworld "darkstation/pkg/game/world"
 )
 
 func initGettext() {
@@ -25,7 +28,7 @@ func initGettext() {
 
 // logMessage adds a formatted message to the game's message log
 func logMessage(g *state.Game, msg string, a ...any) {
-	formatted := renderer.FormatString(msg, a...)
+	formatted := renderer.ApplyMarkup(msg, a...)
 	g.AddMessage(formatted)
 }
 
@@ -135,7 +138,7 @@ func placeItem(g *state.Game, start *world.Cell, item *world.Item, avoid *mapset
 
 	if item != nil {
 		room.ItemsOnFloor.Put(item)
-		g.AddHint("The " + renderer.ColorDenied.Sprintf(item.Name) + " is in " + renderer.ColorCell.Sprintf(room.Name))
+		g.AddHint("The " + renderer.StyledDenied(item.Name) + " is in " + renderer.StyledCell(room.Name))
 	}
 
 	return room
@@ -436,18 +439,18 @@ func setupLevel(g *state.Game) {
 		}
 
 		// Create the keycard (one keycard opens all doors to this room)
-		door := world.NewDoor(roomName)
+		door := entities.NewDoor(roomName)
 		keycardName := door.KeycardName()
 
 		keycard := world.NewItem(keycardName)
 		keycardRoom.ItemsOnFloor.Put(keycard)
 		avoid.Put(keycardRoom)
-		g.AddHint("The " + renderer.ColorKeycard.Sprintf(keycardName) + " is in " + renderer.ColorCell.Sprintf(keycardRoom.Name))
+		g.AddHint("The " + renderer.StyledKeycard(keycardName) + " is in " + renderer.StyledCell(keycardRoom.Name))
 
 		// Place doors on ALL entry cells (they share the same keycard)
 		for _, cell := range entryCells {
-			cellDoor := world.NewDoor(roomName)
-			cell.Door = cellDoor
+			cellDoor := entities.NewDoor(roomName)
+			gameworld.GetGameData(cell).Door = cellDoor
 			avoid.Put(cell)
 			lockedDoorCells.Put(cell)
 		}
@@ -456,9 +459,9 @@ func setupLevel(g *state.Game) {
 		lockedRoomsPlaced++
 
 		if len(entryCells) == 1 {
-			g.AddHint("The " + renderer.ColorDoor.Sprintf(door.DoorName()) + " blocks access to " + renderer.ColorCell.Sprintf(roomName))
+			g.AddHint("The " + renderer.StyledDoor(door.DoorName()) + " blocks access to " + renderer.StyledCell(roomName))
 		} else {
-			g.AddHint(fmt.Sprintf("%d doors block access to %s", len(entryCells), renderer.ColorCell.Sprintf(roomName)))
+			g.AddHint(fmt.Sprintf("%d doors block access to %s", len(entryCells), renderer.StyledCell(roomName)))
 		}
 	}
 
@@ -487,15 +490,14 @@ func setupLevel(g *state.Game) {
 			batteriesRequired := minBatteries + rand.Intn(maxBatteries-minBatteries+1)
 			totalBatteriesNeeded += batteriesRequired
 
-			gen := world.NewGenerator(fmt.Sprintf("Generator #%d", i+1), batteriesRequired)
+			gen := entities.NewGenerator(fmt.Sprintf("Generator #%d", i+1), batteriesRequired)
 			genRoom := findRoom(g, g.Grid.StartCell(), &avoid)
 			if genRoom != nil {
-				genRoom.Generator = gen
-				gen.Cell = genRoom
+				gameworld.GetGameData(genRoom).Generator = gen
 				g.AddGenerator(gen)
 				avoid.Put(genRoom)
 
-				g.AddHint("A generator is in " + renderer.ColorCell.Sprintf(genRoom.Name))
+				g.AddHint("A generator is in " + renderer.StyledCell(genRoom.Name))
 			}
 		}
 
@@ -536,7 +538,7 @@ func setupLevel(g *state.Game) {
 	for i := 0; i < numTerminals; i++ {
 		terminalRoom := findRoom(g, g.Grid.StartCell(), &avoid)
 		if terminalRoom != nil && len(roomNames) > 0 {
-			terminal := world.NewCCTVTerminal(fmt.Sprintf("CCTV Terminal #%d", i+1))
+			terminal := entities.NewCCTVTerminal(fmt.Sprintf("CCTV Terminal #%d", i+1))
 
 			// Assign a random room for this terminal to reveal
 			targetIdx := rand.Intn(len(roomNames))
@@ -544,8 +546,7 @@ func setupLevel(g *state.Game) {
 			// Remove this room from the list so each terminal reveals a different room
 			roomNames = append(roomNames[:targetIdx], roomNames[targetIdx+1:]...)
 
-			terminal.Cell = terminalRoom
-			terminalRoom.Terminal = terminal
+			gameworld.GetGameData(terminalRoom).Terminal = terminal
 			avoid.Put(terminalRoom)
 		}
 	}
@@ -585,16 +586,16 @@ func placeHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells
 	}
 
 	// Available hazard types (excluding Vacuum initially, add it at level 3+)
-	hazardTypes := []world.HazardType{
-		world.HazardCoolant,
-		world.HazardElectrical,
-		world.HazardGas,
+	hazardTypes := []entities.HazardType{
+		entities.HazardCoolant,
+		entities.HazardElectrical,
+		entities.HazardGas,
 	}
 	if g.Level >= 3 {
-		hazardTypes = append(hazardTypes, world.HazardVacuum)
+		hazardTypes = append(hazardTypes, entities.HazardVacuum)
 	}
 	if g.Level >= 5 {
-		hazardTypes = append(hazardTypes, world.HazardRadiation)
+		hazardTypes = append(hazardTypes, entities.HazardRadiation)
 	}
 
 	// Find corridor cells that could block progress
@@ -633,13 +634,13 @@ func placeHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells
 
 		// Choose a random hazard type
 		hazardType := hazardTypes[rand.Intn(len(hazardTypes))]
-		hazard := world.NewHazard(hazardType)
+		hazard := entities.NewHazard(hazardType)
 
 		// Place the hazard
-		corridorCell.Hazard = hazard
+		gameworld.GetGameData(corridorCell).Hazard = hazard
 		avoid.Put(corridorCell)
 
-		info := world.HazardTypes[hazardType]
+		info := entities.HazardTypes[hazardType]
 
 		if hazard.RequiresItem() {
 			// Place the required item (e.g., Patch Kit) in a reachable area
@@ -651,7 +652,7 @@ func placeHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells
 				item := world.NewItem(info.ItemName)
 				itemRoom.ItemsOnFloor.Put(item)
 				avoid.Put(itemRoom)
-				g.AddHint("A " + renderer.ColorItem.Sprintf(info.ItemName) + " is in " + renderer.ColorCell.Sprintf(itemRoom.Name))
+				g.AddHint("A " + renderer.StyledItem(info.ItemName) + " is in " + renderer.StyledCell(itemRoom.Name))
 			}
 		} else {
 			// Place the control panel in a reachable area
@@ -660,11 +661,10 @@ func placeHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells
 				controlRoom = findRoomInReachable(currentlyReachable, avoid)
 			}
 			if controlRoom != nil {
-				control := world.NewHazardControl(hazardType, hazard)
-				control.Cell = controlRoom
-				controlRoom.HazardControl = control
+				control := entities.NewHazardControl(hazardType, hazard)
+				gameworld.GetGameData(controlRoom).HazardControl = control
 				avoid.Put(controlRoom)
-				g.AddHint("The " + renderer.ColorHazardCtrl.Sprintf(info.ControlName) + " is in " + renderer.ColorCell.Sprintf(controlRoom.Name))
+				g.AddHint("The " + renderer.StyledHazardCtrl(info.ControlName) + " is in " + renderer.StyledCell(controlRoom.Name))
 			}
 		}
 
@@ -684,7 +684,7 @@ func placeFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 
 	// For each unique room, try to place 1-2 furniture pieces
 	for roomName, cells := range roomCells {
-		templates := world.GetAllFurnitureForRoom(roomName)
+		templates := entities.GetAllFurnitureForRoom(roomName)
 		if len(templates) == 0 {
 			continue
 		}
@@ -706,8 +706,9 @@ func placeFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		// Find valid cells (not already used for something else)
 		var validCells []*world.Cell
 		for _, cell := range cells {
-			if !avoid.Has(cell) && !cell.ExitCell && cell.Generator == nil &&
-				cell.Door == nil && cell.Terminal == nil && cell.Furniture == nil {
+			data := gameworld.GetGameData(cell)
+			if !avoid.Has(cell) && !cell.ExitCell && data.Generator == nil &&
+				data.Door == nil && data.Terminal == nil && data.Furniture == nil {
 				validCells = append(validCells, cell)
 			}
 		}
@@ -718,26 +719,25 @@ func placeFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		})
 
 		// Track furniture placed in this room for item hiding
-		var placedFurniture []*world.Furniture
+		var placedFurniture []*entities.Furniture
 
 		// Place furniture
 		for i := 0; i < numFurniture && i < len(validCells); i++ {
 			template := templates[i]
-			furniture := world.NewFurniture(template.Name, template.Description, template.Icon)
-			furniture.Cell = validCells[i]
-			validCells[i].Furniture = furniture
+			furniture := entities.NewFurniture(template.Name, template.Description, template.Icon)
+			gameworld.GetGameData(validCells[i]).Furniture = furniture
 			placedFurniture = append(placedFurniture, furniture)
 		}
 
 		// Chance to hide items from the floor in furniture (40% per item)
 		if len(placedFurniture) > 0 {
-			hideItemsInFurniture(g, cells, placedFurniture)
+			hideItemsInFurniture(g, cells, placedFurniture, roomName)
 		}
 	}
 }
 
 // hideItemsInFurniture moves items from floor cells into furniture with a chance
-func hideItemsInFurniture(g *state.Game, roomCells []*world.Cell, furniture []*world.Furniture) {
+func hideItemsInFurniture(g *state.Game, roomCells []*world.Cell, furniture []*entities.Furniture, roomName string) {
 	// Find items on the floor in this room (keycards, patch kits - not batteries or maps)
 	for _, cell := range roomCells {
 		if cell.ItemsOnFloor.Size() == 0 {
@@ -764,7 +764,7 @@ func hideItemsInFurniture(g *state.Game, roomCells []*world.Cell, furniture []*w
 					f.ContainedItem = item
 
 					// Update hint to mention furniture instead of room
-					updateHintForFurnitureItem(g, item, f)
+					updateHintForFurnitureItem(g, item, f, roomName)
 					break
 				}
 			}
@@ -773,15 +773,13 @@ func hideItemsInFurniture(g *state.Game, roomCells []*world.Cell, furniture []*w
 }
 
 // updateHintForFurnitureItem updates the hint for an item to mention it's in furniture
-func updateHintForFurnitureItem(g *state.Game, item *world.Item, furniture *world.Furniture) {
-	roomName := furniture.Cell.Name
-
+func updateHintForFurnitureItem(g *state.Game, item *world.Item, furniture *entities.Furniture, roomName string) {
 	// Find and update the existing hint for this item
 	for i, hint := range g.Hints {
 		if containsSubstring(hint, item.Name) && containsSubstring(hint, roomName) {
 			// Replace the hint with one mentioning the furniture
-			g.Hints[i] = "The " + renderer.ColorKeycard.Sprintf(item.Name) + " is hidden in the " +
-				renderer.ColorFurniture.Sprintf(furniture.Name) + " in " + renderer.ColorCell.Sprintf(roomName)
+			g.Hints[i] = "The " + renderer.StyledKeycard(item.Name) + " is hidden in the " +
+				renderer.StyledFurniture(furniture.Name) + " in " + renderer.StyledCell(roomName)
 			return
 		}
 	}
@@ -847,7 +845,7 @@ func showLevelObjectives(g *state.Game) {
 func countDoors(g *state.Game) int {
 	count := 0
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if cell.HasLockedDoor() {
+		if gameworld.HasLockedDoor(cell) {
 			count++
 		}
 	})
@@ -858,7 +856,7 @@ func countDoors(g *state.Game) int {
 func countHazards(g *state.Game) int {
 	count := 0
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if cell.HasBlockingHazard() {
+		if gameworld.HasBlockingHazard(cell) {
 			count++
 		}
 	})
@@ -878,8 +876,9 @@ func canEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 	}
 
 	// Check for locked door
-	if r.HasLockedDoor() {
-		keycardName := r.Door.KeycardName()
+	if gameworld.HasLockedDoor(r) {
+		rData := gameworld.GetGameData(r)
+		keycardName := rData.Door.KeycardName()
 		hasKeycard := false
 		var keycardItem *world.Item
 
@@ -894,28 +893,29 @@ func canEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 			// Unlock ALL doors that require this keycard (a room may have multiple entry points)
 			doorsUnlocked := 0
 			g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-				if cell.HasLockedDoor() && cell.Door.KeycardName() == keycardName {
-					cell.Door.Unlock()
+				cellData := gameworld.GetGameData(cell)
+				if gameworld.HasLockedDoor(cell) && cellData.Door.KeycardName() == keycardName {
+					cellData.Door.Unlock()
 					doorsUnlocked++
 				}
 			})
 			g.OwnedItems.Remove(keycardItem)
 			if doorsUnlocked > 1 {
-				logMessage(g, "Used %s to unlock %d doors to %s!", renderer.ColorKeycard.Sprintf(keycardName), doorsUnlocked, renderer.ColorCell.Sprintf(r.Door.RoomName))
+				logMessage(g, "Used %s to unlock %d doors to %s!", renderer.StyledKeycard(keycardName), doorsUnlocked, renderer.StyledCell(rData.Door.RoomName))
 			} else {
-				logMessage(g, "Used %s to unlock the %s!", renderer.ColorKeycard.Sprintf(keycardName), renderer.ColorDoor.Sprintf(r.Door.DoorName()))
+				logMessage(g, "Used %s to unlock the %s!", renderer.StyledKeycard(keycardName), renderer.StyledDoor(rData.Door.DoorName()))
 			}
 		} else {
 			if logReason {
-				logMessage(g, "This door requires a %s", renderer.ColorKeycard.Sprintf(keycardName))
+				logMessage(g, "This door requires a %s", renderer.StyledKeycard(keycardName))
 			}
 			return false, &missingItems
 		}
 	}
 
 	// Check for environmental hazard
-	if r.HasBlockingHazard() {
-		hazard := r.Hazard
+	if gameworld.HasBlockingHazard(r) {
+		hazard := gameworld.GetGameData(r).Hazard
 		if hazard.RequiresItem() {
 			// Check if player has the required item
 			itemName := hazard.RequiredItemName()
@@ -930,18 +930,18 @@ func canEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 				// Use the item to fix the hazard
 				hazard.Fix()
 				g.OwnedItems.Remove(fixItem)
-				info := world.HazardTypes[hazard.Type]
-				logMessage(g, info.FixedMessage)
+				info := entities.HazardTypes[hazard.Type]
+				logMessage(g, "%s", info.FixedMessage)
 			} else {
 				if logReason {
-					logMessage(g, renderer.ColorHazard.Sprintf(hazard.Description))
+					logMessage(g, "%s", renderer.StyledHazard(hazard.Description))
 				}
 				return false, &missingItems
 			}
 		} else {
 			// Hazard requires a control panel to be activated
 			if logReason {
-				logMessage(g, renderer.ColorHazard.Sprintf(hazard.Description))
+				logMessage(g, "%s", renderer.StyledHazard(hazard.Description))
 			}
 			return false, &missingItems
 		}
@@ -965,7 +965,7 @@ func moveCell(g *state.Game, requestedCell *world.Cell) {
 	if res, _ := canEnter(g, requestedCell, true); res {
 		// Only log message if entering a different named room
 		if g.CurrentCell == nil || g.CurrentCell.Name != requestedCell.Name {
-			logMessage(g, gettext.Gettext("OPEN_DOOR")+"%v", renderer.ColorCell.Sprintf(requestedCell.Name))
+			logMessage(g, gettext.Gettext("OPEN_DOOR")+"%v", renderer.StyledCell(requestedCell.Name))
 		}
 
 		requestedCell.Visited = true
@@ -985,13 +985,19 @@ func processInput(g *state.Game, in string) {
 
 	if in == "?" || in == "hint" {
 		idx := rand.Intn(len(g.Hints))
-		logMessage(g, g.Hints[idx])
+		logMessage(g, "%s", g.Hints[idx])
 		return
 	}
 
 	if in == "quit" || in == "q" {
 		fmt.Println(gettext.Gettext("GOODBYE"))
 		os.Exit(0)
+	}
+
+	if in == "screenshot" {
+		filename := saveScreenshotHTML(g)
+		logMessage(g, "Screenshot saved to ITEM{%s}", filename)
+		return
 	}
 
 	// NSEW navigation
@@ -1044,7 +1050,7 @@ func processInput(g *state.Game, in string) {
 		return
 	}
 
-	logMessage(g, gettext.Gettext("UNKNOWN_COMMAND"))
+	logMessage(g, "%s", gettext.Gettext("UNKNOWN_COMMAND"))
 }
 
 func main() {
@@ -1052,7 +1058,11 @@ func main() {
 	flag.Parse()
 
 	initGettext()
-	renderer.InitColors()
+
+	// Initialize the TUI renderer
+	tuiRenderer := tui.New()
+	renderer.SetRenderer(tuiRenderer)
+	renderer.Init()
 
 	rand.Seed(time.Now().UnixNano())
 
@@ -1067,14 +1077,9 @@ func mainLoop(g *state.Game) {
 	renderer.Clear()
 
 	if g.CurrentCell.ExitCell {
-		logMessage(g, gettext.Gettext("EXIT"))
+		logMessage(g, "%s", gettext.Gettext("EXIT"))
 		advanceLevel(g)
 	}
-
-	// Level indicator in top left
-	renderer.ColorAction.Printf("Deck %d\n\n", g.Level)
-
-	renderer.PrintString("GT{IN_ROOM} ROOM{%v}\n\n", g.CurrentCell.Name)
 
 	// Pick up items on the floor
 	g.CurrentCell.ItemsOnFloor.Each(func(item *world.Item) {
@@ -1105,17 +1110,11 @@ func mainLoop(g *state.Game) {
 	// Check adjacent cells for furniture and show hints
 	checkAdjacentFurniture(g)
 
-	renderer.PrintMap(g)
+	// Render the complete game frame
+	renderer.RenderFrame(g)
 
-	renderer.PrintStatusBar(g)
-
-	renderer.PrintPossibleActions()
-
-	renderer.PrintMessagesPane(g)
-
-	fmt.Printf("\n> ")
-
-	processInput(g, input.GetInputWithArrows())
+	// Get and process input
+	processInput(g, renderer.GetInput())
 }
 
 // checkAdjacentGenerators checks adjacent cells for unpowered generators and inserts batteries
@@ -1132,11 +1131,11 @@ func checkAdjacentGenerators(g *state.Game) {
 	}
 
 	for _, cell := range neighbors {
-		if cell == nil || !cell.HasUnpoweredGenerator() {
+		if cell == nil || !gameworld.HasUnpoweredGenerator(cell) {
 			continue
 		}
 
-		gen := cell.Generator
+		gen := gameworld.GetGameData(cell).Generator
 		needed := gen.BatteriesNeeded()
 		if needed == 0 {
 			continue
@@ -1171,11 +1170,11 @@ func checkAdjacentTerminals(g *state.Game) {
 	}
 
 	for _, cell := range neighbors {
-		if cell == nil || !cell.HasUnusedTerminal() {
+		if cell == nil || !gameworld.HasUnusedTerminal(cell) {
 			continue
 		}
 
-		terminal := cell.Terminal
+		terminal := gameworld.GetGameData(cell).Terminal
 		targetRoom := terminal.TargetRoom
 
 		// Check if the room is already fully revealed
@@ -1204,17 +1203,17 @@ func checkAdjacentFurniture(g *state.Game) {
 	}
 
 	for _, cell := range neighbors {
-		if cell == nil || !cell.HasUncheckedFurniture() {
+		if cell == nil || !gameworld.HasUncheckedFurniture(cell) {
 			continue
 		}
 
-		furniture := cell.Furniture
+		furniture := gameworld.GetGameData(cell).Furniture
 
 		// Check the furniture and get any contained item
 		item := furniture.Check()
 
 		// Show the description
-		logMessage(g, "%s: %s", renderer.ColorFurnitureCheck.Sprintf(furniture.Name), furniture.Description)
+		logMessage(g, "%s: %s", renderer.StyledFurnitureChecked(furniture.Name), furniture.Description)
 
 		// If furniture contained an item, give it to the player
 		if item != nil {
@@ -1239,16 +1238,383 @@ func checkAdjacentHazardControls(g *state.Game) {
 	}
 
 	for _, cell := range neighbors {
-		if cell == nil || !cell.HasInactiveHazardControl() {
+		if cell == nil || !gameworld.HasInactiveHazardControl(cell) {
 			continue
 		}
 
-		control := cell.HazardControl
+		control := gameworld.GetGameData(cell).HazardControl
 		control.Activate()
 
-		info := world.HazardTypes[control.Type]
-		logMessage(g, "Activated %s: %s", renderer.ColorHazardCtrl.Sprintf(control.Name), info.FixedMessage)
+		info := entities.HazardTypes[control.Type]
+		logMessage(g, "Activated %s: %s", renderer.StyledHazardCtrl(control.Name), info.FixedMessage)
 	}
+}
+
+// saveScreenshotHTML saves the current map view as an HTML file
+func saveScreenshotHTML(g *state.Game) string {
+	timestamp := time.Now().Format("20060102-150405")
+	filename := fmt.Sprintf("screenshot-%s.html", timestamp)
+
+	viewportRows, viewportCols := renderer.GetViewportSize()
+
+	// Calculate viewport bounds centered on player
+	playerRow := g.CurrentCell.Row
+	playerCol := g.CurrentCell.Col
+	startRow := playerRow - viewportRows/2
+	startCol := playerCol - viewportCols/2
+
+	// Build the HTML
+	var html strings.Builder
+
+	html.WriteString(`<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>The Dark Station - Screenshot</title>
+    <style>
+        body {
+            background-color: #1a1a2e;
+            color: #eee;
+            font-family: 'Courier New', monospace;
+            padding: 20px;
+        }
+        .header {
+            color: #bb86fc;
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+        .room-name {
+            color: #888;
+            margin-bottom: 20px;
+        }
+        .map-container {
+            background-color: #0f0f1a;
+            padding: 20px;
+            border-radius: 8px;
+            display: inline-block;
+            margin: 20px 0;
+        }
+        .map-row {
+            white-space: pre;
+            line-height: 1.2;
+            font-size: 16px;
+        }
+        .player { color: #00ff00; font-weight: bold; }
+        .wall { color: #666; }
+        .floor { color: #888; }
+        .floor-visited { color: #aaa; }
+        .door-locked { color: #ffff00; font-weight: bold; }
+        .door-unlocked { color: #00aa00; }
+        .keycard { color: #4444ff; }
+        .item { color: #bb86fc; }
+        .battery { color: #bb86fc; font-weight: bold; }
+        .hazard { color: #ff4444; }
+        .hazard-ctrl { color: #00ffff; }
+        .generator-off { color: #ff4444; font-weight: bold; }
+        .generator-on { color: #00aa00; }
+        .terminal { color: #4444ff; }
+        .terminal-used { color: #666; }
+        .furniture { color: #ff66ff; font-weight: bold; }
+        .furniture-checked { color: #aaaa00; }
+        .exit-locked { color: #ff4444; font-weight: bold; }
+        .exit-unlocked { color: #00aa00; }
+        .void { color: #1a1a2e; }
+        .inventory {
+            margin-top: 20px;
+            color: #888;
+        }
+        .inventory-item { color: #bb86fc; }
+        .messages {
+            margin-top: 20px;
+            border-top: 1px solid #333;
+            padding-top: 10px;
+        }
+        .message { color: #ccc; margin: 5px 0; }
+    </style>
+</head>
+<body>
+`)
+
+	// Header
+	html.WriteString(fmt.Sprintf(`    <div class="header">Deck %d</div>`+"\n", g.Level))
+	html.WriteString(fmt.Sprintf(`    <div class="room-name">In: %s</div>`+"\n", g.CurrentCell.Name))
+
+	// Map container
+	html.WriteString(`    <div class="map-container">` + "\n")
+
+	// Render the viewport
+	for vRow := 0; vRow < viewportRows; vRow++ {
+		mapRow := startRow + vRow
+		html.WriteString(`        <div class="map-row">`)
+
+		for vCol := 0; vCol < viewportCols; vCol++ {
+			mapCol := startCol + vCol
+			cell := g.Grid.GetCell(mapRow, mapCol)
+			icon, class := getCellHTMLInfo(g, cell)
+			html.WriteString(fmt.Sprintf(`<span class="%s">%s</span>`, class, icon))
+		}
+
+		html.WriteString("</div>\n")
+	}
+
+	html.WriteString(`    </div>` + "\n")
+
+	// Inventory
+	html.WriteString(`    <div class="inventory">Inventory: `)
+	if g.OwnedItems.Size() == 0 && g.Batteries == 0 {
+		html.WriteString(`<span style="color:#666">(empty)</span>`)
+	} else {
+		first := true
+		g.OwnedItems.Each(func(item *world.Item) {
+			if !first {
+				html.WriteString(", ")
+			}
+			html.WriteString(fmt.Sprintf(`<span class="inventory-item">%s</span>`, item.Name))
+			first = false
+		})
+		if g.Batteries > 0 {
+			if !first {
+				html.WriteString(", ")
+			}
+			html.WriteString(fmt.Sprintf(`<span class="battery">Batteries x%d</span>`, g.Batteries))
+		}
+	}
+	html.WriteString(`</div>` + "\n")
+
+	// Generator status
+	if len(g.Generators) > 0 {
+		html.WriteString(`    <div class="inventory">Generators: `)
+		for i, gen := range g.Generators {
+			if i > 0 {
+				html.WriteString(", ")
+			}
+			if gen.IsPowered() {
+				html.WriteString(fmt.Sprintf(`<span class="generator-on">#%d POWERED</span>`, i+1))
+			} else {
+				html.WriteString(fmt.Sprintf(`<span class="generator-off">#%d %d/%d</span>`, i+1, gen.BatteriesInserted, gen.BatteriesRequired))
+			}
+		}
+		html.WriteString(`</div>` + "\n")
+	}
+
+	// Messages
+	if len(g.Messages) > 0 {
+		html.WriteString(`    <div class="messages">` + "\n")
+		for _, msg := range g.Messages {
+			// Strip ANSI codes for HTML output
+			cleanMsg := stripANSI(msg)
+			html.WriteString(fmt.Sprintf(`        <div class="message">%s</div>`+"\n", cleanMsg))
+		}
+		html.WriteString(`    </div>` + "\n")
+	}
+
+	html.WriteString(`</body>
+</html>
+`)
+
+	// Write to file
+	os.WriteFile(filename, []byte(html.String()), 0644)
+	return filename
+}
+
+// getCellHTMLInfo returns the icon and CSS class for a cell
+func getCellHTMLInfo(g *state.Game, r *world.Cell) (string, string) {
+	if r == nil {
+		return " ", "void"
+	}
+
+	// Player position
+	if g.CurrentCell == r {
+		return "@", "player"
+	}
+
+	// Get game-specific data for this cell
+	data := gameworld.GetGameData(r)
+
+	// Hazard (show if has map or discovered)
+	if gameworld.HasHazard(r) && (g.HasMap || r.Discovered) {
+		if data.Hazard.IsBlocking() {
+			return data.Hazard.GetIcon(), "hazard"
+		}
+	}
+
+	// Hazard Control (show if has map or discovered)
+	if gameworld.HasHazardControl(r) && (g.HasMap || r.Discovered) {
+		if !data.HazardControl.Activated {
+			return entities.GetControlIcon(data.HazardControl.Type), "hazard-ctrl"
+		}
+		return entities.GetControlIcon(data.HazardControl.Type), "terminal-used"
+	}
+
+	// Door (show if has map or discovered)
+	if gameworld.HasDoor(r) && (g.HasMap || r.Discovered) {
+		if data.Door.Locked {
+			return "▣", "door-locked"
+		}
+		return "□", "door-unlocked"
+	}
+
+	// Generator (show if has map or discovered)
+	if gameworld.HasGenerator(r) && (g.HasMap || r.Discovered) {
+		if data.Generator.IsPowered() {
+			return "◆", "generator-on"
+		}
+		return "◇", "generator-off"
+	}
+
+	// CCTV Terminal (show if has map or discovered)
+	if gameworld.HasTerminal(r) && (g.HasMap || r.Discovered) {
+		if data.Terminal.IsUsed() {
+			return "▪", "terminal-used"
+		}
+		return "▫", "terminal"
+	}
+
+	// Furniture (show if has map or discovered)
+	if gameworld.HasFurniture(r) && (g.HasMap || r.Discovered) {
+		if data.Furniture.IsChecked() {
+			return data.Furniture.Icon, "furniture-checked"
+		}
+		return data.Furniture.Icon, "furniture"
+	}
+
+	// Exit cell (show if has map or discovered)
+	if r.ExitCell && (g.HasMap || r.Discovered) {
+		if r.Locked && !g.AllGeneratorsPowered() {
+			return "▲", "exit-locked"
+		}
+		return "△", "exit-unlocked"
+	}
+
+	// Items on floor (show if has map or discovered)
+	if r.ItemsOnFloor.Size() > 0 && (g.HasMap || r.Discovered) {
+		if cellHasKeycard(r) {
+			return "⚷", "keycard"
+		}
+		if cellHasBattery(r) {
+			return "■", "battery"
+		}
+		return "?", "item"
+	}
+
+	// Visited rooms
+	if r.Visited {
+		return getFloorIconHTML(r.Name, true), "floor-visited"
+	}
+
+	// Discovered but not visited
+	if r.Discovered {
+		if r.Room {
+			return getFloorIconHTML(r.Name, false), "floor"
+		}
+		return "▒", "wall"
+	}
+
+	// Has map - show rooms faintly
+	if g.HasMap && r.Room {
+		return getFloorIconHTML(r.Name, false), "floor"
+	}
+
+	// Non-room cells adjacent to discovered/visited rooms render as walls
+	if !r.Room && hasAdjacentDiscoveredRoomHTML(r) {
+		return "▒", "wall"
+	}
+
+	// Unknown/void
+	return " ", "void"
+}
+
+// getFloorIconHTML returns floor icons for HTML output
+func getFloorIconHTML(roomName string, visited bool) string {
+	roomFloorIcons := map[string][2]string{
+		"Bridge":          {"◎", "◉"},
+		"Command Center":  {"◎", "◉"},
+		"Communications":  {"◎", "◉"},
+		"Security":        {"◎", "◉"},
+		"Engineering":     {"▫", "▪"},
+		"Reactor Core":    {"▫", "▪"},
+		"Server Room":     {"▫", "▪"},
+		"Maintenance Bay": {"▫", "▪"},
+		"Life Support":    {"▫", "▪"},
+		"Cargo Bay":       {"□", "▣"},
+		"Storage":         {"□", "▣"},
+		"Hangar":          {"□", "▣"},
+		"Armory":          {"□", "▣"},
+		"Med Bay":         {"◇", "◆"},
+		"Lab":             {"◇", "◆"},
+		"Hydroponics":     {"◇", "◆"},
+		"Observatory":     {"◇", "◆"},
+		"Crew Quarters":   {"·", "•"},
+		"Mess Hall":       {"·", "•"},
+		"Airlock":         {"╳", "╳"},
+		"Corridor":        {"░", "░"},
+	}
+
+	for baseRoom, icons := range roomFloorIcons {
+		if containsSubstring(roomName, baseRoom) {
+			if visited {
+				return icons[0]
+			}
+			return icons[1]
+		}
+	}
+	if visited {
+		return "○"
+	}
+	return "●"
+}
+
+// hasAdjacentDiscoveredRoomHTML checks if any adjacent cell is a discovered or visited room
+func hasAdjacentDiscoveredRoomHTML(c *world.Cell) bool {
+	neighbors := []*world.Cell{c.North, c.East, c.South, c.West}
+	for _, n := range neighbors {
+		if n != nil && n.Room && (n.Discovered || n.Visited) {
+			return true
+		}
+	}
+	return false
+}
+
+// cellHasKeycard checks if a cell has a keycard item on the floor
+func cellHasKeycard(c *world.Cell) bool {
+	hasKeycard := false
+	c.ItemsOnFloor.Each(func(item *world.Item) {
+		if containsSubstring(item.Name, "Keycard") || containsSubstring(item.Name, "keycard") {
+			hasKeycard = true
+		}
+	})
+	return hasKeycard
+}
+
+// cellHasBattery checks if a cell has a battery item on the floor
+func cellHasBattery(c *world.Cell) bool {
+	hasBattery := false
+	c.ItemsOnFloor.Each(func(item *world.Item) {
+		if containsSubstring(item.Name, "Battery") || containsSubstring(item.Name, "battery") {
+			hasBattery = true
+		}
+	})
+	return hasBattery
+}
+
+// stripANSI removes ANSI escape codes from a string
+func stripANSI(s string) string {
+	var result strings.Builder
+	inEscape := false
+	for _, r := range s {
+		if r == '\x1b' {
+			inEscape = true
+			continue
+		}
+		if inEscape {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				inEscape = false
+			}
+			continue
+		}
+		result.WriteRune(r)
+	}
+	return result.String()
 }
 
 // containsSubstring checks if s contains substr

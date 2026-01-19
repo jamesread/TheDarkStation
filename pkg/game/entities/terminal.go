@@ -1,11 +1,10 @@
-package world
+package entities
 
 // CCTVTerminal represents a security terminal that can reveal nearby rooms
 type CCTVTerminal struct {
 	Name       string
 	Used       bool
 	TargetRoom string // Name of the room this terminal reveals
-	Cell       *Cell
 }
 
 // NewCCTVTerminal creates a new CCTV terminal

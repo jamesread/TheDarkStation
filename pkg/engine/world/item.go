@@ -7,6 +7,12 @@ import (
 // ItemSet is a set of items
 type ItemSet = mapset.Set[*Item]
 
+// NewItemSet creates a new empty item set
+func NewItemSet() *ItemSet {
+	set := mapset.New[*Item]()
+	return &set
+}
+
 // Item represents a collectible item in the world
 type Item struct {
 	Name string

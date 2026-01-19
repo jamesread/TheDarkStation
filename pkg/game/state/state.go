@@ -4,6 +4,7 @@ import (
 	"github.com/zyedidia/generic/mapset"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/entities"
 )
 
 // NavStyle represents the navigation key style
@@ -33,8 +34,8 @@ type Game struct {
 
 	Level int // Current level/floor number
 
-	Batteries  int                // Number of batteries in inventory
-	Generators []*world.Generator // All generators on this level
+	Batteries  int                   // Number of batteries in inventory
+	Generators []*entities.Generator // All generators on this level
 }
 
 // NewGame creates a new game instance
@@ -45,7 +46,7 @@ func NewGame() *Game {
 		Messages:   make([]string, 0),
 		Level:      1,
 		Batteries:  0,
-		Generators: make([]*world.Generator, 0),
+		Generators: make([]*entities.Generator, 0),
 	}
 }
 
@@ -64,7 +65,7 @@ func (g *Game) UseBatteries(count int) int {
 }
 
 // AddGenerator registers a generator for this level
-func (g *Game) AddGenerator(gen *world.Generator) {
+func (g *Game) AddGenerator(gen *entities.Generator) {
 	g.Generators = append(g.Generators, gen)
 }
 
@@ -130,5 +131,5 @@ func (g *Game) AdvanceLevel() {
 	g.HasMap = false
 	g.Hints = nil
 	g.Batteries = 0
-	g.Generators = make([]*world.Generator, 0)
+	g.Generators = make([]*entities.Generator, 0)
 }

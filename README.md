@@ -13,19 +13,9 @@
 
 ## Screenshot
 
-```
-Deck 3
-
-You are in Damaged Engineering
-
-Inventory: Map, Red Key, Batteries x3
-
-Generators: #1 2/3, #2 POWERED
-
-- ?: Show hint
-
->
-```
+<div align="center">
+  <img src="var/screenshot.png" alt="Game Screenshot" />
+</div>
 
 ## Features
 

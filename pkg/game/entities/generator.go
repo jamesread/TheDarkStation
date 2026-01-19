@@ -1,11 +1,10 @@
-package world
+package entities
 
 // Generator represents a power generator that requires batteries to activate
 type Generator struct {
 	Name              string
 	BatteriesRequired int
 	BatteriesInserted int
-	Cell              *Cell
 }
 
 // NewGenerator creates a new unpowered generator

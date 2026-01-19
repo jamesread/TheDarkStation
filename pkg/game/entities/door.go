@@ -1,7 +1,9 @@
-package world
+// Package entities contains game-specific entity types for The Dark Station.
+// These are space station themed objects that extend the generic engine primitives.
+package entities
 
-// Door represents a door that connects a room to a corridor
-// Doors can be unlocked by various conditions, starting with keycards
+// Door represents a door that connects a room to a corridor.
+// Doors can be unlocked with keycards matching the room name.
 type Door struct {
 	RoomName string // Name of the room this door belongs to
 	Locked   bool
