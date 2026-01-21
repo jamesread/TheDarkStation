@@ -5,6 +5,7 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	gameworld "darkstation/pkg/game/world"
 )
 
 // NavStyle represents the navigation key style
@@ -34,8 +35,15 @@ type Game struct {
 
 	Level int // Current level/floor number
 
-	Batteries  int                   // Number of batteries in inventory
-	Generators []*entities.Generator // All generators on this level
+	Batteries            int                   // Number of batteries in inventory
+	Generators           []*entities.Generator // All generators on this level
+	FoundCodes           map[string]bool       // Puzzle codes found by the player (code -> found)
+	ExitAnimating        bool                  // True when exit animation is playing
+	ExitAnimStartTime    int64                 // Timestamp when exit animation started (milliseconds)
+	LastInteractedRow    int                   // Row of last cell interacted with (for cycling)
+	LastInteractedCol    int                   // Col of last cell interacted with (for cycling)
+	InteractionPlayerRow int                   // Player row when interaction order was established
+	InteractionPlayerCol int                   // Player col when interaction order was established
 }
 
 // NewGame creates a new game instance
@@ -47,6 +55,7 @@ func NewGame() *Game {
 		Level:      1,
 		Batteries:  0,
 		Generators: make([]*entities.Generator, 0),
+		FoundCodes: make(map[string]bool),
 	}
 }
 
@@ -80,6 +89,20 @@ func (g *Game) AllGeneratorsPowered() bool {
 		}
 	}
 	return true
+}
+
+// AllHazardsCleared returns true if all hazards are cleared (no blocking hazards remain)
+func (g *Game) AllHazardsCleared() bool {
+	if g == nil || g.Grid == nil {
+		return true
+	}
+	hasBlockingHazard := false
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell != nil && gameworld.HasBlockingHazard(cell) {
+			hasBlockingHazard = true
+		}
+	})
+	return !hasBlockingHazard
 }
 
 // UnpoweredGeneratorCount returns the number of unpowered generators
@@ -132,4 +155,15 @@ func (g *Game) AdvanceLevel() {
 	g.Hints = nil
 	g.Batteries = 0
 	g.Generators = make([]*entities.Generator, 0)
+	g.FoundCodes = make(map[string]bool)
+}
+
+// AddFoundCode records that the player has found a puzzle code
+func (g *Game) AddFoundCode(code string) {
+	g.FoundCodes[code] = true
+}
+
+// HasFoundCode checks if the player has found a specific code
+func (g *Game) HasFoundCode(code string) bool {
+	return g.FoundCodes[code]
 }

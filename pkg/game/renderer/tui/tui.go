@@ -140,9 +140,15 @@ func (t *TUIRenderer) Clear() {
 	c.Run()
 }
 
-// GetInput gets user input from the terminal
-func (t *TUIRenderer) GetInput() string {
-	return input.GetInputWithArrows()
+// GetInput gets user input from the terminal and returns a high-level Intent.
+func (t *TUIRenderer) GetInput() input.Intent {
+	raw := input.RawInput{
+		Device: input.DeviceTerminal,
+		Code:   input.GetInputWithArrows(),
+		// Timestamp left zero for now; terminal input is inherently low frequency.
+	}
+	debounced := input.NewDebouncedInput(raw)
+	return input.MapToIntent(debounced)
 }
 
 // StyleText applies a style to text
@@ -204,6 +210,9 @@ func (t *TUIRenderer) FormatText(msg string, args ...any) string {
 			val = t.colorCell.Sprint(dynamicGet(operand))
 		case "ACTION":
 			val = t.colorActionShort.Sprint(operand[0:1]) + t.colorAction.Sprint(operand[1:])
+		case "FURNITURE":
+			// FURNITURE{} uses the furniture checked color (tan/brown)
+			val = t.colorFurnitureCheck.Sprint(operand)
 		default:
 			ret = fmt.Sprintf("ERROR, function not found: %v -> %v", function, operand)
 		}

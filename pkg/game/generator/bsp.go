@@ -37,8 +37,8 @@ var roomNames = []string{
 }
 
 var roomAdjectives = []string{
-	"Abandoned", "Damaged", "Dark", "Derelict", "Emergency",
-	"Flickering", "Isolated", "Sealed", "Depressurized", "Overgrown",
+	"Abandoned", "Damaged", "Derelict", "Emergency",
+	"Isolated", "Sealed", "Depressurized", "Overgrown",
 }
 
 // Global room counter for unique names

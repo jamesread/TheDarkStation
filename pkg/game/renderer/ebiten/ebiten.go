@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"fmt"
 	"image/color"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -17,9 +19,11 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
+	"github.com/leonelquinteros/gotext"
 	"golang.org/x/image/font/gofont/gomono"
 	"golang.org/x/image/font/gofont/goregular"
 
+	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/config"
 	"darkstation/pkg/game/entities"
@@ -57,6 +61,7 @@ var (
 	colorAction          = color.RGBA{220, 170, 255, 255} // Bright purple
 	colorDenied          = color.RGBA{255, 100, 100, 255} // Bright red
 	colorPanelBackground = color.RGBA{30, 30, 50, 220}    // Semi-transparent dark
+	colorFocusBackground = color.RGBA{60, 80, 100, 200}   // Dark blue-gray for focused/interacted cell (darker than cell text)
 
 	// Callout colors
 	ColorCalloutInfo    = color.RGBA{200, 200, 255, 255} // Light blue for info
@@ -127,6 +132,7 @@ type Callout struct {
 	Message   string // Message to display
 	Color     color.Color
 	ExpiresAt int64 // Unix timestamp when callout expires (0 = never)
+	CreatedAt int64 // Unix timestamp when callout was created (for animations)
 }
 
 // messageEntry represents a message with timestamp for fade-out
@@ -135,31 +141,36 @@ type messageEntry struct {
 	Timestamp int64 // Unix timestamp in milliseconds when message was added
 }
 
-// roomLabel represents a persistent label for a room, drawn above its longest horizontal wall
+// roomLabel represents a persistent label for a room, positioned at the leftmost point
 type roomLabel struct {
 	RoomName string
-	Row      int // Grid row of the wall (room interior row)
-	StartCol int // Inclusive grid column index
-	EndCol   int // Inclusive grid column index
+	Row      int // Grid row of the label position (room interior row)
+	StartCol int // Grid column index (leftmost point)
+	EndCol   int // Same as StartCol (kept for compatibility)
 }
 
 // renderSnapshot holds a consistent snapshot of game state for rendering
 // This prevents jitter from race conditions between game logic and rendering
 type renderSnapshot struct {
-	valid      bool
-	level      int
-	playerRow  int
-	playerCol  int
-	cellName   string
-	hasMap     bool
-	batteries  int
-	messages   []messageEntry
-	ownedItems []string
-	generators []generatorState
-	gridRows   int
-	gridCols   int
-	callouts   []Callout
-	roomLabels []roomLabel
+	valid             bool
+	level             int
+	playerRow         int
+	playerCol         int
+	cellName          string
+	hasMap            bool
+	batteries         int
+	messages          []messageEntry
+	ownedItems        []string
+	generators        []generatorState
+	gridRows          int
+	gridCols          int
+	callouts          []Callout
+	roomLabels        []roomLabel
+	objectives        []string // Current level objectives
+	exitAnimating     bool     // True when exit animation is playing
+	exitAnimStartTime int64    // Timestamp when exit animation started
+	focusedCellRow    int      // Row of cell with active callout (for focus background)
+	focusedCellCol    int      // Col of cell with active callout (for focus background)
 }
 
 // generatorState holds generator info for rendering
@@ -211,7 +222,7 @@ type EbitenRenderer struct {
 	lastPosInitialized bool
 
 	// Input channel for communication between Ebiten and game loop
-	inputChan chan string
+	inputChan chan engineinput.Intent
 
 	// Flag indicating renderer is running
 	running bool
@@ -219,18 +230,53 @@ type EbitenRenderer struct {
 	// Messages to display with timestamps for fade-out
 	trackedMessages []messageEntry
 	messagesMutex   sync.RWMutex
+
+	// Bindings menu overlay state
+	menuActive   bool
+	menuActions  []engineinput.Action
+	menuSelected int
+	menuHelpText string
+	menuMutex    sync.RWMutex
+
+	// Analog stick state tracking (for edge detection)
+	// Maps gamepad ID to previous stick state (x, y values)
+	stickState      map[ebiten.GamepadID]struct{ x, y float64 }
+	stickStateMutex sync.RWMutex
+
+	// Key repeat state tracking
+	// Maps key/button codes to their repeat state
+	keyRepeatState      map[string]keyRepeatInfo
+	keyRepeatStateMutex sync.RWMutex
+
+	// Debounce animation state (for failed movement attempts)
+	debounceDirection string // "north", "south", "east", "west"
+	debounceStartTime int64  // Timestamp when debounce started (milliseconds)
+	debounceMutex     sync.RWMutex
 }
+
+// keyRepeatInfo tracks the repeat state for a key or button
+type keyRepeatInfo struct {
+	firstPressed int64 // Timestamp when first pressed (milliseconds)
+	lastRepeat   int64 // Timestamp when last repeat event was sent (milliseconds)
+}
+
+const (
+	keyRepeatInitialDelay = 500 // Initial delay before first repeat (milliseconds)
+	keyRepeatInterval     = 100 // Interval between repeat events (milliseconds)
+)
 
 // New creates a new Ebiten renderer
 func New() *EbitenRenderer {
 	return &EbitenRenderer{
-		windowWidth:  1024,
-		windowHeight: 768,
-		tileSize:     24,
-		viewportRows: 21,
-		viewportCols: 35,
-		inputChan:    make(chan string, 10),
-		running:      false,
+		windowWidth:    1024,
+		windowHeight:   768,
+		tileSize:       24,
+		viewportRows:   21,
+		viewportCols:   35,
+		inputChan:      make(chan engineinput.Intent, 10),
+		running:        false,
+		stickState:     make(map[ebiten.GamepadID]struct{ x, y float64 }),
+		keyRepeatState: make(map[string]keyRepeatInfo),
 	}
 }
 
@@ -372,7 +418,7 @@ func (e *EbitenRenderer) Clear() {
 }
 
 // GetInput gets user input from Ebiten (blocking)
-func (e *EbitenRenderer) GetInput() string {
+func (e *EbitenRenderer) GetInput() engineinput.Intent {
 	// Wait for input from the Ebiten game loop
 	return <-e.inputChan
 }
@@ -409,6 +455,44 @@ func (e *EbitenRenderer) ShowMessage(msg string) {
 // GetViewportSize returns the current viewport dimensions
 func (e *EbitenRenderer) GetViewportSize() (rows, cols int) {
 	return e.viewportRows, e.viewportCols
+}
+
+// calculateObjectives calculates the current level objectives based on game state
+func (e *EbitenRenderer) calculateObjectives(g *state.Game) []string {
+	if g == nil || g.Grid == nil {
+		return nil
+	}
+
+	var objectives []string
+
+	// Count unpowered generators (show remaining, not total)
+	unpoweredGenerators := g.UnpoweredGeneratorCount()
+	if unpoweredGenerators > 0 {
+		if unpoweredGenerators == 1 {
+			objectives = append(objectives, "Power up ACTION{1} more generator with batteries.")
+		} else {
+			objectives = append(objectives, fmt.Sprintf("Power up ACTION{%d} more generators with batteries.", unpoweredGenerators))
+		}
+	}
+
+	// Count hazards (matching showLevelObjectives logic - count remaining active hazards)
+	numHazards := 0
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if gameworld.HasBlockingHazard(cell) {
+			numHazards++
+		}
+	})
+
+	if numHazards > 0 {
+		objectives = append(objectives, fmt.Sprintf("Clear ACTION{%d} environmental hazard(s).", numHazards))
+	}
+
+	// If all objectives are complete, show exit message
+	if len(g.Generators) == 0 && numHazards == 0 {
+		objectives = append(objectives, "Find the lift to the next deck.")
+	}
+
+	return objectives
 }
 
 // RenderFrame stores the game state and captures a snapshot for the next Draw call
@@ -464,6 +548,7 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 		if age < messageLifetime {
 			updatedMessages = append(updatedMessages, tracked)
 		}
+		// Messages older than 10 seconds are discarded (not added to updatedMessages)
 	}
 
 	// Add new messages from game that aren't already tracked
@@ -483,18 +568,27 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 		}
 	}
 
+	// Sort messages by timestamp (oldest first) to ensure chronological ordering
+	// This ensures consistent ordering regardless of when messages were added
+	sort.Slice(updatedMessages, func(i, j int) bool {
+		return updatedMessages[i].Timestamp < updatedMessages[j].Timestamp
+	})
+
 	e.trackedMessages = updatedMessages
 
-	// Copy to snapshot
+	// Copy to snapshot (only non-expired messages)
 	e.snapshot.messages = make([]messageEntry, len(e.trackedMessages))
 	copy(e.snapshot.messages, e.trackedMessages)
 	e.messagesMutex.Unlock()
 
 	// Copy owned items
+	// Collect and sort items deterministically
 	e.snapshot.ownedItems = make([]string, 0)
 	g.OwnedItems.Each(func(item *world.Item) {
 		e.snapshot.ownedItems = append(e.snapshot.ownedItems, item.Name)
 	})
+	// Sort items for deterministic display order
+	sort.Strings(e.snapshot.ownedItems)
 
 	// Copy generator states
 	e.snapshot.generators = make([]generatorState, len(g.Generators))
@@ -506,9 +600,37 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 		}
 	}
 
+	// Calculate objectives
+	e.snapshot.objectives = e.calculateObjectives(g)
+
+	// Copy exit animation state
+	e.snapshot.exitAnimating = g.ExitAnimating
+	e.snapshot.exitAnimStartTime = g.ExitAnimStartTime
+
+	// Find the cell with the most recent active callout (for focus background)
+	e.snapshot.focusedCellRow = -1
+	e.snapshot.focusedCellCol = -1
+	e.calloutsMutex.RLock()
+	nowUnixMilli := time.Now().UnixMilli()
+	var mostRecentCallout *Callout
+	for i := range e.callouts {
+		callout := &e.callouts[i]
+		// Check if callout is active (not expired)
+		if callout.ExpiresAt == 0 || callout.ExpiresAt > nowUnixMilli {
+			if mostRecentCallout == nil || callout.CreatedAt > mostRecentCallout.CreatedAt {
+				mostRecentCallout = callout
+			}
+		}
+	}
+	if mostRecentCallout != nil {
+		e.snapshot.focusedCellRow = mostRecentCallout.Row
+		e.snapshot.focusedCellCol = mostRecentCallout.Col
+	}
+	e.calloutsMutex.RUnlock()
+
 	// Copy active callouts (with expiration filtering)
 	e.calloutsMutex.Lock()
-	nowUnixMilli := time.Now().UnixMilli()
+	// Reuse nowUnixMilli from above (already calculated)
 	activeCallouts := make([]Callout, 0)
 	for _, c := range e.callouts {
 		if c.ExpiresAt == 0 || c.ExpiresAt > nowUnixMilli {
@@ -521,8 +643,8 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 	e.calloutsMutex.Unlock()
 }
 
-// computeRoomLabels computes the longest horizontal top wall for each visited room
-// and returns label definitions for rendering.
+// computeRoomLabels finds the leftmost valid position for each visited room's label,
+// avoiding gaps (corridor cells) and ensuring the label starts at the leftmost point of the room.
 func (e *EbitenRenderer) computeRoomLabels(g *state.Game) []roomLabel {
 	if g == nil || g.Grid == nil {
 		return nil
@@ -553,101 +675,93 @@ func (e *EbitenRenderer) computeRoomLabels(g *state.Game) []roomLabel {
 		return nil
 	}
 
-	// For each room, track the best (longest) horizontal boundary segment
-	type segment struct {
-		row      int
-		startCol int
-		endCol   int
+	// For each room, find the leftmost valid position for the label
+	// The label should be placed above a room cell, avoiding gaps (corridors) above
+	type labelPos struct {
+		row int
+		col int
 	}
-	bestByRoom := make(map[string]segment)
+	leftmostByRoom := make(map[string]labelPos)
 
-	// Scan each row for contiguous runs of "top boundary" cells for a room.
-	// A top boundary cell is a room cell whose north neighbor is not the same room.
+	// First pass: find the leftmost column for each room
+	leftmostColByRoom := make(map[string]int)
 	for row := 0; row < rows; row++ {
-		currentRoom := ""
-		runStartCol := -1
-
-		flushRun := func(endCol int) {
-			if currentRoom == "" || runStartCol < 0 {
-				return
-			}
-			length := endCol - runStartCol + 1
-			if length <= 0 {
-				return
-			}
-			// Only label rooms the player has actually visited
-			if !roomVisited[currentRoom] {
-				return
-			}
-			if existing, ok := bestByRoom[currentRoom]; ok {
-				existingLen := existing.endCol - existing.startCol + 1
-				if length > existingLen || (length == existingLen && row < existing.row) {
-					bestByRoom[currentRoom] = segment{row: row, startCol: runStartCol, endCol: endCol}
-				}
-			} else {
-				bestByRoom[currentRoom] = segment{row: row, startCol: runStartCol, endCol: endCol}
-			}
-		}
-
 		for col := 0; col < cols; col++ {
 			cell := g.Grid.GetCell(row, col)
 			if cell == nil || !cell.Room || cell.Name == "" {
-				// End any current run
-				if runStartCol >= 0 {
-					flushRun(col - 1)
-					currentRoom = ""
-					runStartCol = -1
-				}
 				continue
 			}
 
-			// Only consider cells whose north neighbor is not the same room:
-			// these form the top edge of the room.
-			isTopBoundary := false
-			if cell.North == nil || !cell.North.Room || cell.North.Name != cell.Name {
-				isTopBoundary = true
-			}
-
-			if !isTopBoundary {
-				// Not part of the top wall – flush any active run
-				if runStartCol >= 0 {
-					flushRun(col - 1)
-					currentRoom = ""
-					runStartCol = -1
-				}
-				continue
-			}
-
-			// Cell is a top boundary cell for its room
 			roomName := cell.Name
-
-			// Start a new run if necessary or if room changes
-			if runStartCol < 0 || roomName != currentRoom {
-				if runStartCol >= 0 {
-					flushRun(col - 1)
-				}
-				currentRoom = roomName
-				runStartCol = col
+			// Skip corridors and unvisited rooms
+			if strings.Contains(strings.ToLower(roomName), "corridor") || !roomVisited[roomName] {
+				continue
 			}
-		}
 
-		// Flush run at end of row
-		if runStartCol >= 0 {
-			flushRun(cols - 1)
+			// Track the leftmost column for this room
+			if leftmostCol, ok := leftmostColByRoom[roomName]; !ok || col < leftmostCol {
+				leftmostColByRoom[roomName] = col
+			}
 		}
 	}
 
-	if len(bestByRoom) == 0 {
+	// Second pass: for each room, find the best row at the leftmost column
+	// Prefer positions where the cell above (where label renders) is not a gap/corridor
+	for roomName, leftmostCol := range leftmostColByRoom {
+		bestRow := -1
+		bestHasGap := true // Track if best position has a gap above
+
+		// Scan rows at the leftmost column
+		for row := 0; row < rows; row++ {
+			cell := g.Grid.GetCell(row, leftmostCol)
+			if cell == nil || !cell.Room || cell.Name != roomName {
+				continue
+			}
+
+			// Check if the cell above (where label would render) is a gap/corridor
+			labelRow := row - 1
+			hasGap := false
+			if labelRow < 0 {
+				hasGap = true // Edge of map
+			} else {
+				aboveCell := g.Grid.GetCell(labelRow, leftmostCol)
+				if aboveCell == nil || !aboveCell.Room || strings.Contains(strings.ToLower(aboveCell.Name), "corridor") {
+					hasGap = true
+				}
+			}
+
+			// Prefer positions without gaps, or if all have gaps, use the first (topmost) one
+			if bestRow == -1 {
+				bestRow = row
+				bestHasGap = hasGap
+			} else if !hasGap && bestHasGap {
+				// This position has no gap, current best has gap - prefer this
+				bestRow = row
+				bestHasGap = false
+			} else if hasGap == bestHasGap && row < bestRow {
+				// Both have same gap status - prefer higher (topmost) row
+				bestRow = row
+			}
+		}
+
+		if bestRow >= 0 {
+			leftmostByRoom[roomName] = labelPos{row: bestRow, col: leftmostCol}
+		}
+	}
+
+	if len(leftmostByRoom) == 0 {
 		return nil
 	}
 
-	labels := make([]roomLabel, 0, len(bestByRoom))
-	for roomName, seg := range bestByRoom {
+	labels := make([]roomLabel, 0, len(leftmostByRoom))
+	for roomName, pos := range leftmostByRoom {
+		// Use the leftmost column as both start and end (single cell position)
+		// The drawing code will position the label starting from this point
 		labels = append(labels, roomLabel{
 			RoomName: roomName,
-			Row:      seg.row,
-			StartCol: seg.startCol,
-			EndCol:   seg.endCol,
+			Row:      pos.row,
+			StartCol: pos.col,
+			EndCol:   pos.col, // Single cell position
 		})
 	}
 	return labels
@@ -671,14 +785,24 @@ func (e *EbitenRenderer) AddCallout(row, col int, message string, col_color colo
 		}
 	}
 
+	now := time.Now().UnixMilli()
 	filtered = append(filtered, Callout{
 		Row:       row,
 		Col:       col,
 		Message:   message,
 		Color:     col_color,
 		ExpiresAt: expiresAt,
+		CreatedAt: now,
 	})
 	e.callouts = filtered
+}
+
+// SetDebounceAnimation triggers a debounce animation in the given direction
+func (e *EbitenRenderer) SetDebounceAnimation(direction string) {
+	e.debounceMutex.Lock()
+	defer e.debounceMutex.Unlock()
+	e.debounceDirection = direction
+	e.debounceStartTime = time.Now().UnixMilli()
 }
 
 // AddCalloutAtPlayer adds a callout at the player's current position
@@ -739,8 +863,7 @@ func (e *EbitenRenderer) ShowRoomEntryIfNew(row, col int, roomName string) bool 
 		return false
 	}
 
-	// Show room entry callout
-	e.AddCallout(row, col, roomName, renderer.CalloutColorRoom, 0)
+	// Room entry callout removed - no longer showing room titles on entry
 	return true
 }
 
@@ -749,12 +872,18 @@ func (e *EbitenRenderer) Update() error {
 	// Handle font size changes (Ctrl+= to increase, Ctrl+- to decrease)
 	e.handleZoom()
 
-	// Check for keyboard input
-	input := e.checkInput()
-	if input != "" {
+	// Check for gamepad input first, then fall back to keyboard (raw layer)
+	if intent := e.checkGamepadInput(); intent.Action != engineinput.ActionNone {
 		// Non-blocking send to input channel
 		select {
-		case e.inputChan <- input:
+		case e.inputChan <- intent:
+		default:
+			// Channel full, drop input
+		}
+	} else if intent := e.checkInput(); intent.Action != engineinput.ActionNone {
+		// Non-blocking send to input channel
+		select {
+		case e.inputChan <- intent:
 		default:
 			// Channel full, drop input
 		}
@@ -825,11 +954,14 @@ func (e *EbitenRenderer) recalculateViewport() {
 	}
 
 	// Calculate available space for the map (accounting for UI elements)
-	// Header: ~60px, Status bar: ~60px, Messages: ~120px, margins: ~80px
-	availableHeight := h - 320
-	availableWidth := w - 100
+	// Header height + small frame border
+	uiFontSize := e.getUIFontSize()
+	headerHeight := int(uiFontSize) + 20
+	frameBorder := 10
+	availableHeight := h - headerHeight - frameBorder*2
+	availableWidth := w - frameBorder*2
 
-	// Calculate viewport dimensions
+	// Calculate viewport dimensions to maximize the map
 	e.viewportCols = availableWidth / e.tileSize
 	e.viewportRows = availableHeight / e.tileSize
 
@@ -850,72 +982,306 @@ func (e *EbitenRenderer) recalculateViewport() {
 	}
 }
 
-// checkInput checks for keyboard input and returns the corresponding command
-func (e *EbitenRenderer) checkInput() string {
-	// Arrow keys / NSEW navigation
-	if inpututil.IsKeyJustPressed(ebiten.KeyArrowUp) {
-		return "arrow_up"
+// shouldRepeatKey checks if a key/button should trigger (initial press or repeat)
+// Returns true if the key should trigger, false otherwise
+func (e *EbitenRenderer) shouldRepeatKey(isPressed func() bool, code string) bool {
+	now := time.Now().UnixMilli()
+
+	e.keyRepeatStateMutex.Lock()
+	defer e.keyRepeatStateMutex.Unlock()
+
+	pressed := isPressed()
+	state, exists := e.keyRepeatState[code]
+
+	if pressed {
+		if !exists {
+			// First press - record it and trigger immediately
+			e.keyRepeatState[code] = keyRepeatInfo{
+				firstPressed: now,
+				lastRepeat:   now,
+			}
+			return true
+		}
+
+		// Key is held - check if we should repeat
+		timeSinceFirstPress := now - state.firstPressed
+		timeSinceLastRepeat := now - state.lastRepeat
+
+		if timeSinceFirstPress >= keyRepeatInitialDelay {
+			// Initial delay has passed, check repeat interval
+			if timeSinceLastRepeat >= keyRepeatInterval {
+				// Update last repeat time and trigger
+				state.lastRepeat = now
+				e.keyRepeatState[code] = state
+				return true
+			}
+		}
+		return false
+	} else {
+		// Key released - clean up state
+		if exists {
+			delete(e.keyRepeatState, code)
+		}
+		return false
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyArrowDown) {
-		return "arrow_down"
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyArrowLeft) {
-		return "arrow_left"
-	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyArrowRight) {
-		return "arrow_right"
+}
+
+// checkGamepadInput checks for controller/gamepad input and returns the corresponding Intent.
+// NOTE: Button indices here are tuned for common XInput-style controllers on Linux;
+// mappings may vary between devices/platforms.
+func (e *EbitenRenderer) checkGamepadInput() engineinput.Intent {
+	// Collect currently connected gamepads
+	var ids []ebiten.GamepadID
+	ids = ebiten.AppendGamepadIDs(ids[:0])
+
+	for _, id := range ids {
+		// Analog stick (left stick) movement
+		// Axes: 0 = X (left = -1, right = +1), 1 = Y (up = -1, down = +1)
+		const deadZone = 0.5 // Threshold to avoid drift
+		const axisX = 0
+		const axisY = 1
+
+		stickX := ebiten.GamepadAxisValue(id, axisX)
+		stickY := ebiten.GamepadAxisValue(id, axisY)
+
+		// Check horizontal movement (left/right) with key repeat
+		stickCodeLeft := fmt.Sprintf("gamepad_%d_stick_left", id)
+		if stickX < -deadZone {
+			if e.shouldRepeatKey(func() bool { return stickX < -deadZone }, stickCodeLeft) {
+				return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+					Device: engineinput.DeviceGamepad,
+					Code:   "gamepad_dpad_left",
+				}))
+			}
+		}
+		stickCodeRight := fmt.Sprintf("gamepad_%d_stick_right", id)
+		if stickX > deadZone {
+			if e.shouldRepeatKey(func() bool { return stickX > deadZone }, stickCodeRight) {
+				return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+					Device: engineinput.DeviceGamepad,
+					Code:   "gamepad_dpad_right",
+				}))
+			}
+		}
+
+		// Check vertical movement (up/down) with key repeat
+		stickCodeUp := fmt.Sprintf("gamepad_%d_stick_up", id)
+		if stickY < -deadZone {
+			if e.shouldRepeatKey(func() bool { return stickY < -deadZone }, stickCodeUp) {
+				return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+					Device: engineinput.DeviceGamepad,
+					Code:   "gamepad_dpad_up",
+				}))
+			}
+		}
+		stickCodeDown := fmt.Sprintf("gamepad_%d_stick_down", id)
+		if stickY > deadZone {
+			if e.shouldRepeatKey(func() bool { return stickY > deadZone }, stickCodeDown) {
+				return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+					Device: engineinput.DeviceGamepad,
+					Code:   "gamepad_dpad_down",
+				}))
+			}
+		}
+
+		// Directional pad (D‑pad) movement with key repeat
+		// Typical mapping on many XInput-style controllers under Ebiten:
+		//  - Up:    11
+		//  - Right: 12
+		//  - Down:  13
+		//  - Left:  14
+		code := fmt.Sprintf("gamepad_%d_14", id)
+		if e.shouldRepeatKey(func() bool { return ebiten.IsGamepadButtonPressed(id, ebiten.GamepadButton14) }, code) {
+			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+				Device: engineinput.DeviceGamepad,
+				Code:   "gamepad_dpad_left",
+			}))
+		}
+		code = fmt.Sprintf("gamepad_%d_12", id)
+		if e.shouldRepeatKey(func() bool { return ebiten.IsGamepadButtonPressed(id, ebiten.GamepadButton12) }, code) {
+			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+				Device: engineinput.DeviceGamepad,
+				Code:   "gamepad_dpad_right",
+			}))
+		}
+		code = fmt.Sprintf("gamepad_%d_11", id)
+		if e.shouldRepeatKey(func() bool { return ebiten.IsGamepadButtonPressed(id, ebiten.GamepadButton11) }, code) {
+			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+				Device: engineinput.DeviceGamepad,
+				Code:   "gamepad_dpad_up",
+			}))
+		}
+		code = fmt.Sprintf("gamepad_%d_13", id)
+		if e.shouldRepeatKey(func() bool { return ebiten.IsGamepadButtonPressed(id, ebiten.GamepadButton13) }, code) {
+			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+				Device: engineinput.DeviceGamepad,
+				Code:   "gamepad_dpad_down",
+			}))
+		}
+
+		// Face buttons:
+		// - A: show help / hint
+		// - B: quit game
+		// Typical mapping:
+		//  - A / Cross: 0
+		//  - B / Circle: 1
+		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton0) {
+			return engineinput.Intent{Action: engineinput.ActionInteract}
+		}
+		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton1) {
+			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+				Device: engineinput.DeviceGamepad,
+				Code:   "gamepad_b",
+			}))
+		}
+
+		// Start button opens the bindings/menu.
+		// Typical mapping:
+		//  - Start: 7
+		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton7) {
+			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+				Device: engineinput.DeviceGamepad,
+				Code:   "gamepad_start",
+			}))
+		}
 	}
 
-	// WASD navigation (as arrow alternatives)
-	if inpututil.IsKeyJustPressed(ebiten.KeyW) {
-		return "arrow_up"
+	return engineinput.Intent{Action: engineinput.ActionNone}
+}
+
+// checkInput checks for keyboard input and returns the corresponding Intent.
+func (e *EbitenRenderer) checkInput() engineinput.Intent {
+	// Arrow keys / NSEW navigation with key repeat
+	if e.shouldRepeatKey(func() bool { return ebiten.IsKeyPressed(ebiten.KeyArrowUp) }, "key_arrow_up") {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "arrow_up",
+		}))
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyS) && !ebiten.IsKeyPressed(ebiten.KeyControl) {
-		return "arrow_down"
+	if e.shouldRepeatKey(func() bool { return ebiten.IsKeyPressed(ebiten.KeyArrowDown) }, "key_arrow_down") {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "arrow_down",
+		}))
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyA) {
-		return "arrow_left"
+	if e.shouldRepeatKey(func() bool { return ebiten.IsKeyPressed(ebiten.KeyArrowLeft) }, "key_arrow_left") {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "arrow_left",
+		}))
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyD) {
-		return "arrow_right"
+	if e.shouldRepeatKey(func() bool { return ebiten.IsKeyPressed(ebiten.KeyArrowRight) }, "key_arrow_right") {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "arrow_right",
+		}))
 	}
 
-	// Vim-style navigation
-	if inpututil.IsKeyJustPressed(ebiten.KeyK) {
-		return "k"
+	// WASD navigation (as arrow alternatives) with key repeat
+	if e.shouldRepeatKey(func() bool { return ebiten.IsKeyPressed(ebiten.KeyW) }, "key_w") {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "arrow_up",
+		}))
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyJ) {
-		return "j"
+	if e.shouldRepeatKey(func() bool { return ebiten.IsKeyPressed(ebiten.KeyS) && !ebiten.IsKeyPressed(ebiten.KeyControl) }, "key_s") {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "arrow_down",
+		}))
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyH) {
-		return "h"
+	if e.shouldRepeatKey(func() bool { return ebiten.IsKeyPressed(ebiten.KeyA) }, "key_a") {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "arrow_left",
+		}))
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyL) {
-		return "l"
+	if e.shouldRepeatKey(func() bool { return ebiten.IsKeyPressed(ebiten.KeyD) }, "key_d") {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "arrow_right",
+		}))
 	}
 
-	// NSEW keys
-	if inpututil.IsKeyJustPressed(ebiten.KeyN) {
-		return "n"
+	// Vim-style navigation with key repeat
+	if e.shouldRepeatKey(func() bool { return ebiten.IsKeyPressed(ebiten.KeyK) }, "key_k") {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "k",
+		}))
+	}
+	if e.shouldRepeatKey(func() bool { return ebiten.IsKeyPressed(ebiten.KeyJ) }, "key_j") {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "j",
+		}))
+	}
+	if e.shouldRepeatKey(func() bool { return ebiten.IsKeyPressed(ebiten.KeyH) }, "key_h") {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "h",
+		}))
+	}
+	if e.shouldRepeatKey(func() bool { return ebiten.IsKeyPressed(ebiten.KeyL) }, "key_l") {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "l",
+		}))
+	}
+
+	// NSEW keys with key repeat
+	if e.shouldRepeatKey(func() bool { return ebiten.IsKeyPressed(ebiten.KeyN) }, "key_n") {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "n",
+		}))
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyE) {
-		return "e"
+		return engineinput.Intent{Action: engineinput.ActionInteract}
 	}
 
 	// Help
 	if inpututil.IsKeyJustPressed(ebiten.KeySlash) && ebiten.IsKeyPressed(ebiten.KeyShift) {
-		return "?"
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "?",
+		}))
+	}
+
+	// Interaction (Enter)
+	if inpututil.IsKeyJustPressed(ebiten.KeyEnter) || inpututil.IsKeyJustPressed(ebiten.KeyKPEnter) {
+		return engineinput.Intent{Action: engineinput.ActionInteract}
+	}
+
+	// Open menu (F10)
+	if inpututil.IsKeyJustPressed(ebiten.KeyF9) {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "f9",
+		}))
+	}
+	if inpututil.IsKeyJustPressed(ebiten.KeyF10) {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "menu",
+		}))
 	}
 
 	// Quit
 	if inpututil.IsKeyJustPressed(ebiten.KeyQ) {
-		return "quit"
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "quit",
+		}))
 	}
 	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
-		return "quit"
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "quit",
+		}))
 	}
 
-	return ""
+	return engineinput.Intent{Action: engineinput.ActionNone}
 }
 
 // Draw renders the game to the screen (Ebiten interface)
@@ -949,30 +1315,48 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 
 	// Calculate layout dimensions with dynamic spacing based on font size
 	headerHeight := int(uiFontSize) + 20
-	directionLabelHeight := int(uiFontSize) + 15
 	statusBarHeight := int(uiFontSize)*2 + 20
-	messagesHeight := int(uiFontSize)*6 + 20
-	helpHeight := int(uiFontSize) + 15
 
-	// Calculate available space for map
-	// Note: statusBarHeight is not subtracted since it overlays on the map
-	availableHeight := screenHeight - headerHeight - directionLabelHeight*2 - messagesHeight - helpHeight - 40
-	availableWidth := screenWidth - 200 // Leave space for east/west labels
+	// Small frame border around the window
+	frameBorder := 10
 
-	// Calculate map dimensions
-	mapAreaWidth := e.viewportCols * e.tileSize
-	mapAreaHeight := e.viewportRows * e.tileSize
+	// Calculate maximum available space for map (after header, with frame border)
+	// Note: status bar and messages panel are overlays and do not reduce map height
+	availableHeight := screenHeight - headerHeight - frameBorder*2
+	availableWidth := screenWidth - frameBorder*2
 
-	// Constrain map to available space
-	if mapAreaWidth > availableWidth {
-		mapAreaWidth = availableWidth
+	// Recalculate viewport to maximize based on current available space
+	// This ensures the viewport uses the maximum available space
+	viewportCols := availableWidth / e.tileSize
+	viewportRows := availableHeight / e.tileSize
+
+	// Ensure minimum viewport size
+	if viewportCols < 15 {
+		viewportCols = 15
 	}
-	if mapAreaHeight > availableHeight {
-		mapAreaHeight = availableHeight
+	if viewportRows < 11 {
+		viewportRows = 11
 	}
 
+	// Keep odd numbers for centering
+	if viewportCols%2 == 0 {
+		viewportCols--
+	}
+	if viewportRows%2 == 0 {
+		viewportRows--
+	}
+
+	// Update stored viewport (will be used in next frame's recalculateViewport)
+	e.viewportCols = viewportCols
+	e.viewportRows = viewportRows
+
+	// Calculate map dimensions to fill available space
+	mapAreaWidth := viewportCols * e.tileSize
+	mapAreaHeight := viewportRows * e.tileSize
+
+	// Center the map horizontally, position it right after header with frame border
 	mapX := (screenWidth - mapAreaWidth) / 2
-	mapY := headerHeight + directionLabelHeight
+	mapY := headerHeight + frameBorder
 
 	// Draw header (deck number and room name) - use snapshot data
 	e.drawHeaderFromSnapshot(screen, &snap, screenWidth, headerHeight)
@@ -989,9 +1373,139 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	statusY := mapY + 10 // Small padding from top of map
 	e.drawStatusBarFromSnapshot(screen, &snap, mapX+10, statusY, mapAreaWidth, statusBarHeight)
 
-	// Draw messages panel (below map) - use snapshot data
-	messagesY := mapY + mapAreaHeight + directionLabelHeight + 10
-	e.drawMessagesFromSnapshot(screen, &snap, mapX, messagesY, mapAreaWidth, messagesHeight)
+	// Draw messages panel as a bottom‑aligned overlay, limited to a few lines
+	e.drawMessagesFromSnapshot(screen, &snap, screenWidth, screenHeight)
+
+	// Draw bindings menu overlay if active (covers most of the screen on top of the map)
+	e.menuMutex.RLock()
+	menuActive := e.menuActive
+	e.menuMutex.RUnlock()
+	if menuActive {
+		e.drawBindingsMenuOverlay(screen)
+	}
+}
+
+// RenderBindingsMenu implements renderer.BindingsMenuRenderer for Ebiten.
+// It captures the current frame and marks the menu overlay as active.
+func (e *EbitenRenderer) RenderBindingsMenu(g *state.Game, actions []engineinput.Action, selected int, helpText string) {
+	// Keep the underlying game/map snapshot up to date
+	e.RenderFrame(g)
+
+	e.menuMutex.Lock()
+	defer e.menuMutex.Unlock()
+	e.menuActive = true
+	e.menuSelected = selected
+	e.menuHelpText = helpText
+	e.menuActions = make([]engineinput.Action, len(actions))
+	copy(e.menuActions, actions)
+}
+
+// ClearBindingsMenu hides the bindings menu overlay.
+func (e *EbitenRenderer) ClearBindingsMenu() {
+	e.menuMutex.Lock()
+	defer e.menuMutex.Unlock()
+	e.menuActive = false
+	e.menuActions = nil
+	e.menuHelpText = ""
+}
+
+// drawBindingsMenuOverlay draws a semi-transparent panel over most of the screen
+// with the bindings list and a clear highlight for the selected entry.
+func (e *EbitenRenderer) drawBindingsMenuOverlay(screen *ebiten.Image) {
+	e.menuMutex.RLock()
+	actions := make([]engineinput.Action, len(e.menuActions))
+	copy(actions, e.menuActions)
+	selected := e.menuSelected
+	helpText := e.menuHelpText
+	e.menuMutex.RUnlock()
+
+	if len(actions) == 0 {
+		return
+	}
+
+	screenWidth, screenHeight := screen.Bounds().Dx(), screen.Bounds().Dy()
+
+	// Panel covers ~70% of screen, centered
+	panelW := int(float32(screenWidth) * 0.7)
+	panelH := int(float32(screenHeight) * 0.7)
+	panelX := (screenWidth - panelW) / 2
+	panelY := (screenHeight - panelH) / 2
+
+	bg := color.RGBA{12, 12, 24, 230}
+	border := color.RGBA{180, 180, 220, 255}
+
+	// Border
+	vector.DrawFilledRect(screen,
+		float32(panelX-2), float32(panelY-2),
+		float32(panelW+4), float32(panelH+4),
+		border, false)
+	// Background
+	vector.DrawFilledRect(screen,
+		float32(panelX), float32(panelY),
+		float32(panelW), float32(panelH),
+		bg, false)
+
+	paddingX := 24
+	paddingY := 24
+	x := panelX + paddingX
+	y := panelY + paddingY
+
+	fontSize := e.getUIFontSize()
+	lineHeight := int(fontSize) + 6
+
+	// Use UI font metrics so the highlight rectangle can tightly wrap the text.
+	face := e.getSansFontFace()
+	_, textHeight := text.Measure("Ag", face, 0)
+
+	// Title and help text
+	e.drawColoredText(screen, "Bindings", x, y-int(fontSize), colorAction)
+	y += lineHeight
+
+	// Show help text if provided (e.g., when editing a binding), otherwise show default instructions
+	if helpText != "" {
+		e.drawColoredText(screen, helpText, x, y-int(fontSize), colorAction)
+	} else {
+		e.drawColoredText(screen, "Up/Down: select    ?: edit binding    F10/Start or q: close", x, y-int(fontSize), colorSubtle)
+	}
+	y += lineHeight * 2
+
+	byAction := engineinput.GetBindingsByAction()
+
+	// First pass: draw highlight rectangles (so they are always below text)
+	for i := range actions {
+		if i != selected {
+			continue
+		}
+
+		// Match the vertical span of the text: from (baseline - textHeight) to baseline.
+		rowParamY := y + i*lineHeight              // y passed into drawColoredText
+		baselineY := float64(rowParamY) + fontSize // actual baseline y used by text.Draw
+		rectTop := baselineY                       // top of glyph box
+		rectHeight := textHeight + 4               // small padding below glyphs
+		highlight := color.RGBA{40, 60, 120, 255}
+		vector.DrawFilledRect(screen,
+			float32(panelX+8), float32(rectTop),
+			float32(panelW-16), float32(rectHeight),
+			highlight, false)
+	}
+
+	// Second pass: draw action names and bindings on top of the highlights
+	for i, act := range actions {
+		name := engineinput.ActionName(act)
+		codes := byAction[act]
+		codeText := strings.Join(codes, ", ")
+		if codeText == "" {
+			codeText = "(unbound)"
+		}
+
+		// Use a shared origin for text and rectangle calculations (see above).
+		rowParamY := y + i*lineHeight
+
+		e.drawColoredText(screen, name, x, rowParamY, colorText)
+		//		codeX := x + int(e.getTextWidth(name)) + 32
+		codeX := x + 200
+		e.drawColoredText(screen, codeText, codeX, rowParamY, colorSubtle)
+	}
 }
 
 // drawHeaderFromSnapshot draws the deck number and room name using snapshot data
@@ -1032,13 +1546,35 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, mapX, mapY
 			mapCol := startCol + vCol
 
 			cell := g.Grid.GetCell(mapRow, mapCol)
+
+			// Skip drawing player here - it will be drawn separately with debounce animation
+			if cell != nil && cell.Row == snap.playerRow && cell.Col == snap.playerCol {
+				// Draw background only, player icon will be drawn separately
+				_, _, hasBg := e.getCellDisplay(g, cell, snap)
+				if hasBg {
+					x := mapX + vCol*e.tileSize
+					y := mapY + vRow*e.tileSize
+					e.drawTile(screen, " ", x, y, colorBackground, true)
+				}
+				continue
+			}
+
 			icon, col, hasBg := e.getCellDisplay(g, cell, snap)
 
 			x := mapX + vCol*e.tileSize
 			y := mapY + vRow*e.tileSize
 
+			// Check if this is the focused cell (has active callout) - use focus background
+			var customBg color.Color
+			if cell != nil && cell.Row == snap.focusedCellRow && cell.Col == snap.focusedCellCol {
+				customBg = colorFocusBackground
+			} else if cell != nil && cell.ExitCell && (g.HasMap || cell.Discovered) && !cell.Locked && g.AllGeneratorsPowered() && g.AllHazardsCleared() {
+				// Unlocked exit cell - use pulsing background (requires generators powered and hazards cleared)
+				customBg = e.getPulsingExitBackgroundColor()
+			}
+
 			// Draw the tile character with optional background
-			e.drawTile(screen, icon, x, y, col, hasBg)
+			e.drawTileWithBg(screen, icon, x, y, col, hasBg, customBg)
 		}
 	}
 
@@ -1047,9 +1583,166 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, mapX, mapY
 
 	// Draw callouts on top of the map
 	e.drawCallouts(screen, snap, mapX, mapY, startRow, startCol)
+
+	// Draw player with debounce animation if active
+	e.drawPlayerWithDebounce(screen, g, snap, mapX, mapY, startRow, startCol)
+
+	// Draw exit animation overlay if active
+	if snap.exitAnimating {
+		e.drawExitAnimation(screen, snap, mapX, mapY, startRow, startCol)
+	}
 }
 
-// drawRoomLabels renders persistent room name labels above the longest horizontal wall of each room
+// drawPlayerWithDebounce draws the player icon with debounce animation if active
+func (e *EbitenRenderer) drawPlayerWithDebounce(screen *ebiten.Image, g *state.Game, snap *renderSnapshot, mapX, mapY, startRow, startCol int) {
+	e.debounceMutex.RLock()
+	direction := e.debounceDirection
+	startTime := e.debounceStartTime
+	e.debounceMutex.RUnlock()
+
+	// Calculate player position in viewport
+	playerVRow := snap.playerRow - startRow
+	playerVCol := snap.playerCol - startCol
+
+	// Skip if player not in viewport
+	if playerVRow < 0 || playerVRow >= e.viewportRows || playerVCol < 0 || playerVCol >= e.viewportCols {
+		return
+	}
+
+	// Calculate base position
+	baseX := mapX + playerVCol*e.tileSize
+	baseY := mapY + playerVRow*e.tileSize
+
+	// Calculate debounce offset
+	offsetX := 0
+	offsetY := 0
+	if direction != "" {
+		now := time.Now().UnixMilli()
+		elapsed := now - startTime
+		const debounceDuration = 150 // milliseconds
+
+		if elapsed < debounceDuration {
+			// Calculate bounce offset using a sine wave for smooth animation
+			progress := float64(elapsed) / debounceDuration
+			bounceAmount := math.Sin(progress*math.Pi) * 8.0 // Max 8 pixels offset
+
+			switch direction {
+			case "north":
+				offsetY = int(-bounceAmount)
+			case "south":
+				offsetY = int(bounceAmount)
+			case "east":
+				offsetX = int(bounceAmount)
+			case "west":
+				offsetX = int(-bounceAmount)
+			}
+		} else {
+			// Animation complete, clear it
+			e.debounceMutex.Lock()
+			e.debounceDirection = ""
+			e.debounceMutex.Unlock()
+		}
+	}
+
+	// Draw player icon at offset position
+	playerX := baseX + offsetX
+	playerY := baseY + offsetY
+	e.drawTile(screen, PlayerIcon, playerX, playerY, colorPlayer, false)
+}
+
+// drawExitAnimation draws the exit transition animation with a meaningful message
+func (e *EbitenRenderer) drawExitAnimation(screen *ebiten.Image, snap *renderSnapshot, mapX, mapY, startRow, startCol int) {
+	now := time.Now().UnixMilli()
+	elapsed := now - snap.exitAnimStartTime
+	const exitAnimDuration = 2000 // 2 seconds for transition
+
+	if elapsed >= exitAnimDuration {
+		return // Animation complete
+	}
+
+	// Calculate fade progress (0.0 to 1.0)
+	progress := float64(elapsed) / exitAnimDuration
+
+	// Get screen dimensions
+	w, h := ebiten.WindowSize()
+	if w == 0 || h == 0 {
+		w, h = e.windowWidth, e.windowHeight
+	}
+
+	// Phase 1: Fade to white (first 40% of animation)
+	// Phase 2: Show message on white background (middle 40%)
+	// Phase 3: Fade message out (last 20%)
+	var overlayAlpha float64
+	var textAlpha float64
+	var showText bool
+
+	if progress < 0.4 {
+		// Phase 1: Fade to white
+		overlayAlpha = progress / 0.4
+		textAlpha = 0
+		showText = false
+	} else if progress < 0.8 {
+		// Phase 2: Show message on white background
+		overlayAlpha = 1.0
+		textProgress := (progress - 0.4) / 0.4
+		textAlpha = textProgress
+		if textAlpha > 1.0 {
+			textAlpha = 1.0
+		}
+		showText = true
+	} else {
+		// Phase 3: Fade message out, keep white background
+		overlayAlpha = 1.0
+		fadeProgress := (progress - 0.8) / 0.2
+		textAlpha = 1.0 - fadeProgress
+		if textAlpha < 0 {
+			textAlpha = 0
+		}
+		showText = textAlpha > 0
+	}
+
+	// Draw white overlay
+	overlayColor := color.RGBA{255, 255, 255, uint8(255 * overlayAlpha)}
+	vector.DrawFilledRect(screen, 0, 0, float32(w), float32(h), overlayColor, false)
+
+	// Draw transition message
+	if showText && textAlpha > 0 {
+		message := fmt.Sprintf("DECK %d CLEARED", snap.level)
+		subMessage := "Proceeding to next level..."
+
+		// Get font size for UI (use larger size for transition screen)
+		fontSize := e.getUIFontSize() * 1.5
+		face := e.getSansFontFace()
+
+		// Calculate text position (centered)
+		messageWidth, _ := text.Measure(message, face, 0)
+		subMessageWidth, _ := text.Measure(subMessage, face, 0)
+
+		centerX := float64(w) / 2
+		centerY := float64(h) / 2
+
+		messageX := centerX - float64(messageWidth)/2
+		messageY := centerY - fontSize/2
+
+		subMessageX := centerX - float64(subMessageWidth)/2
+		subMessageY := centerY + fontSize + 10
+
+		// Draw main message with fade
+		textColor := color.RGBA{0, 0, 0, uint8(255 * textAlpha)}
+		op := &text.DrawOptions{}
+		op.GeoM.Translate(messageX, messageY+fontSize)
+		op.ColorScale.ScaleWithColor(textColor)
+		text.Draw(screen, message, face, op)
+
+		// Draw sub message with fade
+		op2 := &text.DrawOptions{}
+		op2.GeoM.Translate(subMessageX, subMessageY+fontSize)
+		op2.ColorScale.ScaleWithColor(textColor)
+		text.Draw(screen, subMessage, face, op2)
+	}
+}
+
+// drawRoomLabels renders persistent room name labels at the leftmost point of each room
 func (e *EbitenRenderer) drawRoomLabels(screen *ebiten.Image, snap *renderSnapshot, mapX, mapY, startRow, startCol int) {
 	if len(snap.roomLabels) == 0 {
 		return
@@ -1058,40 +1751,26 @@ func (e *EbitenRenderer) drawRoomLabels(screen *ebiten.Image, snap *renderSnapsh
 	fontSize := e.getUIFontSize()
 
 	for _, rl := range snap.roomLabels {
-		// Determine visible portion of this wall segment in the current viewport
-		wallStartCol := rl.StartCol
-		wallEndCol := rl.EndCol
-
+		// Check if the label position is visible in the viewport
+		labelCol := rl.StartCol
 		viewportStartCol := startCol
 		viewportEndCol := startCol + e.viewportCols - 1
 
-		// Intersection of wall segment with viewport columns
-		visStartCol := wallStartCol
-		if visStartCol < viewportStartCol {
-			visStartCol = viewportStartCol
+		// Skip if label is outside viewport
+		if labelCol < viewportStartCol || labelCol > viewportEndCol {
+			continue
 		}
-		visEndCol := wallEndCol
-		if visEndCol > viewportEndCol {
-			visEndCol = viewportEndCol
-		}
-
-		if visStartCol > visEndCol {
-			continue // not visible in this viewport
-		}
-
-		// Compute center column of the visible part
-		centerCol := (visStartCol + visEndCol) / 2
 
 		// Convert to viewport coordinates
-		vCol := centerCol - startCol
-		vRow := rl.Row - startRow
+		vCol := labelCol - startCol
+		vRow := (rl.Row - startRow) - 1
 
 		// Skip if not in vertical range
 		if vRow < 0 || vRow >= e.viewportRows {
 			continue
 		}
 
-		// Compute pixel position
+		// Compute pixel position (left edge of the cell where label should be)
 		cellX := mapX + vCol*e.tileSize
 		cellY := mapY + vRow*e.tileSize
 
@@ -1104,9 +1783,9 @@ func (e *EbitenRenderer) drawRoomLabels(screen *ebiten.Image, snap *renderSnapsh
 		boxW := int(textWidth) + paddingX*2
 		boxH := int(fontSize) + paddingY*2
 
-		// Position box centered horizontally over the wall
+		// Position box starting at the leftmost point of the room cell
 		// Raise it by half its height so it sits just above the wall
-		boxX := cellX + e.tileSize/2 - boxW/2
+		boxX := cellX + 2 // Small offset from left edge of cell
 		boxY := cellY - boxH - 4 - boxH/2
 
 		// Higher contrast colors for room labels
@@ -1151,6 +1830,13 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 
 	fontSize := e.getUIFontSize()
 	padding := 6
+	now := time.Now().UnixMilli()
+
+	// Animation timing constants
+	const (
+		entranceDuration = 200 // milliseconds for entrance animation
+		exitDuration     = 200 // milliseconds for exit animation
+	)
 
 	for _, callout := range snap.callouts {
 		// Calculate screen position from cell position
@@ -1162,70 +1848,175 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 			continue
 		}
 
+		// Calculate animation progress
+		age := now - callout.CreatedAt
+		var alpha float64 = 1.0
+		var slideOffsetY float32 = 0.0
+
+		// Entrance animation (fade in from black + slide in from top)
+		if age < entranceDuration {
+			progress := float64(age) / entranceDuration
+			alpha = progress                               // Fade in from 0 to 1
+			slideOffsetY = float32(-20 * (1.0 - progress)) // Slide in from 20px above
+		}
+
+		// Exit animation (fade out to black + slide out to bottom)
+		if callout.ExpiresAt > 0 {
+			timeUntilExpiry := callout.ExpiresAt - now
+			if timeUntilExpiry < exitDuration && timeUntilExpiry > 0 {
+				progress := float64(timeUntilExpiry) / exitDuration
+				alpha = progress                              // Fade out from 1 to 0
+				slideOffsetY = float32(20 * (1.0 - progress)) // Slide out to 20px below
+			} else if timeUntilExpiry <= 0 {
+				continue // Skip expired callouts
+			}
+		}
+
 		// Calculate pixel position (center of the cell)
 		cellX := mapX + vCol*e.tileSize
 		cellY := mapY + vRow*e.tileSize
 
-		// Measure text for callout box
-		textWidth := e.getTextWidth(callout.Message)
-		boxHeight := int(fontSize) + padding*2
+		// Parse markup to get actual text segments (for width calculation)
+		// Split message by newlines to handle multi-line callouts
+		lines := strings.Split(callout.Message, "\n")
+		maxTextWidth := 0.0
+		for _, line := range lines {
+			lineSegments := e.parseMarkup(line)
+			lineWidth := 0.0
+			for _, seg := range lineSegments {
+				lineWidth += e.getTextWidth(seg.text)
+			}
+			if lineWidth > maxTextWidth {
+				maxTextWidth = lineWidth
+			}
+		}
+		textWidth := maxTextWidth
+		boxHeight := (int(fontSize)+4)*len(lines) + padding*2 // Height for all lines
 
-		// Position callout to the right and vertically centered with the cell
-		calloutX := cellX + e.tileSize + 8
-		calloutY := cellY + (e.tileSize-boxHeight)/2
+		// Determine base position (to the right or left of cell)
+		boxWidth := int(textWidth) + padding*2
+		baseCalloutX := cellX + e.tileSize + 8
 
 		// If callout would go off right edge, position to the left instead
-		boxWidth := int(textWidth) + padding*2
-		if calloutX+boxWidth > mapX+e.viewportCols*e.tileSize {
-			calloutX = cellX - boxWidth - 8
+		if baseCalloutX+boxWidth > mapX+e.viewportCols*e.tileSize {
+			baseCalloutX = cellX - boxWidth - 8
 		}
 
-		// Keep callout within vertical bounds
-		if calloutY < mapY {
-			calloutY = mapY
-		}
-		if calloutY+boxHeight > mapY+e.viewportRows*e.tileSize {
-			calloutY = mapY + e.viewportRows*e.tileSize - boxHeight
+		// Check if callout would overlap with player icon
+		// Player position in viewport coordinates
+		playerVRow := snap.playerRow - startRow
+		playerVCol := snap.playerCol - startCol
+		playerX := mapX + playerVCol*e.tileSize
+		playerY := mapY + playerVRow*e.tileSize
+
+		// Calculate callout box bounds
+		baseCalloutY := cellY + (e.tileSize-boxHeight)/2
+		calloutBoxLeft := float32(baseCalloutX)
+		calloutBoxRight := float32(baseCalloutX + boxWidth)
+		calloutBoxTop := float32(baseCalloutY)
+		calloutBoxBottom := float32(baseCalloutY + boxHeight)
+
+		// Check if callout overlaps with player icon (player icon is roughly centered in its tile)
+		playerIconLeft := float32(playerX + e.tileSize/4)
+		playerIconRight := float32(playerX + e.tileSize*3/4)
+		playerIconTop := float32(playerY + e.tileSize/4)
+		playerIconBottom := float32(playerY + e.tileSize*3/4)
+
+		overlapsPlayer := calloutBoxLeft < playerIconRight && calloutBoxRight > playerIconLeft &&
+			calloutBoxTop < playerIconBottom && calloutBoxBottom > playerIconTop
+
+		// If overlapping, move callout back a column and down a row
+		if overlapsPlayer {
+			// Move back a column (left if on right side, right if on left side)
+			if baseCalloutX > cellX+e.tileSize {
+				// Callout is on the right, move it further right (back a column)
+				//baseCalloutX = cellX + e.tileSize*2 + 8
+				baseCalloutX = cellX // - e.tileSize*2 + 8
+			} else {
+				// Callout is on the left, move it further left (back a column)
+				//baseCalloutX = cellX - boxWidth - e.tileSize - 8
+				//baseCalloutX = cellX + e.tileSize*2 + 8
+			}
+			// Move down a row
+			baseCalloutY = cellY + e.tileSize + (e.tileSize-boxHeight)/2
 		}
 
-		// Draw callout background
-		bgColor := color.RGBA{15, 15, 25, 240}
-		borderColor := color.RGBA{80, 80, 100, 255}
+		// Apply slide animation offset (vertical only)
+		calloutX := float32(baseCalloutX)
+		calloutY := float32(baseCalloutY) + slideOffsetY
+
+		// Keep callout within vertical bounds (check after applying slide offset)
+		if calloutY < float32(mapY) {
+			calloutY = float32(mapY)
+		}
+		if calloutY+float32(boxHeight) > float32(mapY+e.viewportRows*e.tileSize) {
+			calloutY = float32(mapY + e.viewportRows*e.tileSize - boxHeight)
+		}
+
+		// Skip drawing if alpha is too low (avoid rendering artifacts)
+		if alpha < 0.01 {
+			continue
+		}
+
+		// Apply alpha to colors (fade from black/transparent, not white)
+		// The applyAlpha function multiplies the alpha channel, so colors fade to transparent black
+		bgColor := e.applyAlpha(color.RGBA{15, 15, 25, 240}, alpha)
+		borderColor := e.applyAlpha(color.RGBA{80, 80, 100, 255}, alpha)
 
 		// Border
 		vector.DrawFilledRect(screen,
-			float32(calloutX-1), float32(calloutY-1),
+			calloutX-1, calloutY-1,
 			float32(boxWidth+2), float32(boxHeight+2),
 			borderColor, false)
 
 		// Background
 		vector.DrawFilledRect(screen,
-			float32(calloutX), float32(calloutY),
+			calloutX, calloutY,
 			float32(boxWidth), float32(boxHeight),
 			bgColor, false)
 
 		// Draw pointer/arrow toward the cell
 		arrowSize := float32(6)
-		arrowY := float32(calloutY + boxHeight/2)
-		if calloutX > cellX+e.tileSize {
+		arrowY := calloutY + float32(boxHeight/2)
+		if calloutX > float32(cellX+e.tileSize) {
 			// Arrow pointing left
-			arrowX := float32(calloutX - 1)
+			arrowX := calloutX - 1
 			vector.DrawFilledRect(screen, arrowX-arrowSize, arrowY-2, arrowSize, 4, borderColor, false)
 		} else {
 			// Arrow pointing right
-			arrowX := float32(calloutX + boxWidth + 1)
+			arrowX := calloutX + float32(boxWidth) + 1
 			vector.DrawFilledRect(screen, arrowX, arrowY-2, arrowSize, 4, borderColor, false)
 		}
 
 		// Draw text - position so baseline is vertically centered in box
 		// drawColoredText adds fontSize to y for baseline, so we need to offset
-		textY := calloutY + padding - int(fontSize)
-		e.drawColoredText(screen, callout.Message, calloutX+padding, textY, callout.Color)
+		lineHeight := int(fontSize) + 4
+		startY := int(calloutY) + padding - int(fontSize)
+
+		// Draw each line of the callout
+		for i, line := range lines {
+			lineSegments := e.parseMarkup(line)
+			// Apply alpha to all segment colors
+			fadedSegments := make([]textSegment, len(lineSegments))
+			for j, seg := range lineSegments {
+				fadedSegments[j] = textSegment{
+					text:  seg.text,
+					color: e.applyAlpha(seg.color, alpha),
+				}
+			}
+			textY := startY + i*lineHeight
+			e.drawColoredTextSegments(screen, fadedSegments, int(calloutX)+padding, textY)
+		}
 	}
 }
 
 // drawTile draws a single tile at the given position
 func (e *EbitenRenderer) drawTile(screen *ebiten.Image, icon string, x, y int, col color.Color, hasBackground bool) {
+	e.drawTileWithBg(screen, icon, x, y, col, hasBackground, nil)
+}
+
+// drawTileWithBg draws a single tile with optional custom background color
+func (e *EbitenRenderer) drawTileWithBg(screen *ebiten.Image, icon string, x, y int, col color.Color, hasBackground bool, bgColor color.Color) {
 	// Skip completely empty/void tiles
 	if icon == " " || icon == "" {
 		return
@@ -1244,9 +2035,15 @@ func (e *EbitenRenderer) drawTile(screen *ebiten.Image, icon string, x, y int, c
 	if hasBackground {
 		// Draw background with small margin inside the tile
 		margin := float32(2)
+		bgCol := colorWallBg
+		if bgColor != nil {
+			// Convert color.Color to color.RGBA
+			r, g, b, a := bgColor.RGBA()
+			bgCol = color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), uint8(a >> 8)}
+		}
 		vector.DrawFilledRect(screen, float32(x)+margin, float32(y)+margin,
 			float32(e.tileSize)-margin*2, float32(e.tileSize)-margin*2,
-			colorWallBg, false)
+			bgCol, false)
 	}
 
 	// Draw the colored character
@@ -1370,9 +2167,15 @@ func (e *EbitenRenderer) parseMarkup(msg string) []textSegment {
 		case "ACTION":
 			segColor = colorAction
 		case "GT":
-			// GT{} is for translations - for now just use default color
-			// In a full implementation, you'd look up the translation here
+			// GT{} is for translations - look up the translation
+			content = gotext.Get(content)
 			segColor = colorText
+		case "FURNITURE":
+			// FURNITURE{} uses the furniture callout color (tan/brown for checked furniture)
+			segColor = renderer.CalloutColorFurnitureChecked
+		case "HAZARD":
+			// HAZARD{} uses the hazard color (red)
+			segColor = colorHazard
 		default:
 			segColor = colorText
 		}
@@ -1413,10 +2216,14 @@ func (e *EbitenRenderer) applyAlpha(c color.Color, alpha float64) color.Color {
 	b8 := uint8(b >> 8)
 	a8 := uint8(a >> 8)
 
-	// Apply alpha
+	// Apply alpha to both RGB and alpha channel for proper fade from black
+	// This ensures colors fade to transparent black, not transparent bright colors
+	newR := uint8(float64(r8) * alpha)
+	newG := uint8(float64(g8) * alpha)
+	newB := uint8(float64(b8) * alpha)
 	newAlpha := uint8(float64(a8) * alpha)
 
-	return color.RGBA{r8, g8, b8, newAlpha}
+	return color.RGBA{newR, newG, newB, newAlpha}
 }
 
 // drawColoredTextSegments draws multiple text segments with different colors
@@ -1447,6 +2254,58 @@ func (e *EbitenRenderer) getTextWidth(str string) float64 {
 	face := e.getSansFontFace()
 	w, _ := text.Measure(str, face, 0)
 	return w
+}
+
+// getPulsingExitColor returns a pulsing color for the unlocked exit icon
+// Uses a sine wave to create a smooth pulsing effect
+func (e *EbitenRenderer) getPulsingExitColor() color.Color {
+	// Pulse period: 2 seconds (2000ms)
+	const pulsePeriod = 2000.0
+	now := time.Now().UnixMilli()
+
+	// Calculate pulse value (0.0 to 1.0) using sine wave
+	// This creates a smooth oscillation
+	pulsePhase := float64(now%int64(pulsePeriod)) / pulsePeriod
+	pulseValue := (math.Sin(pulsePhase*2*math.Pi) + 1.0) / 2.0 // 0.0 to 1.0
+
+	// Pulse between 50% and 100% brightness
+	minBrightness := 0.5
+	maxBrightness := 1.0
+	brightness := minBrightness + (maxBrightness-minBrightness)*pulseValue
+
+	// Apply brightness to the base exit unlocked color (bright green)
+	baseR, baseG, baseB, baseA := colorExitUnlocked.RGBA()
+	r8 := uint8(float64(baseR>>8) * brightness)
+	g8 := uint8(float64(baseG>>8) * brightness)
+	b8 := uint8(float64(baseB>>8) * brightness)
+	a8 := uint8(baseA >> 8)
+
+	return color.RGBA{r8, g8, b8, a8}
+}
+
+// getPulsingExitBackgroundColor returns a pulsing background color for the unlocked exit
+// Uses a distinct color (cyan/blue) that pulses
+func (e *EbitenRenderer) getPulsingExitBackgroundColor() color.Color {
+	// Pulse period: 2 seconds (2000ms)
+	const pulsePeriod = 2000.0
+	now := time.Now().UnixMilli()
+
+	// Calculate pulse value (0.0 to 1.0) using sine wave
+	pulsePhase := float64(now%int64(pulsePeriod)) / pulsePeriod
+	pulseValue := (math.Sin(pulsePhase*2*math.Pi) + 1.0) / 2.0 // 0.0 to 1.0
+
+	// Pulse between 30% and 70% brightness for background (distinct from icon)
+	minBrightness := 0.3
+	maxBrightness := 0.7
+	brightness := minBrightness + (maxBrightness-minBrightness)*pulseValue
+
+	// Use a distinct cyan/blue color for the background
+	baseColor := color.RGBA{50, 150, 255, 255} // Cyan-blue
+	r8 := uint8(float64(baseColor.R) * brightness)
+	g8 := uint8(float64(baseColor.G) * brightness)
+	b8 := uint8(float64(baseColor.B) * brightness)
+
+	return color.RGBA{r8, g8, b8, baseColor.A}
 }
 
 // getCellDisplay returns the icon, color, and whether to draw a background for a cell
@@ -1502,6 +2361,14 @@ func (e *EbitenRenderer) getCellDisplay(g *state.Game, r *world.Cell, snap *rend
 		return IconTerminalUnused, colorTerminal, true
 	}
 
+	// Puzzle Terminal (show if has map or discovered)
+	if gameworld.HasPuzzle(r) && (g.HasMap || r.Discovered) {
+		if data.Puzzle.IsSolved() {
+			return IconTerminalUsed, colorTerminalUsed, false
+		}
+		return IconTerminalUnused, colorTerminal, true
+	}
+
 	// Furniture (show if has map or discovered)
 	if gameworld.HasFurniture(r) && (g.HasMap || r.Discovered) {
 		if data.Furniture.IsChecked() {
@@ -1515,7 +2382,10 @@ func (e *EbitenRenderer) getCellDisplay(g *state.Game, r *world.Cell, snap *rend
 		if r.Locked && !g.AllGeneratorsPowered() {
 			return IconExitLocked, colorExitLocked, true
 		}
-		return IconExitUnlocked, colorExitUnlocked, true
+		// Unlocked exit - apply continuous pulsing animation for icon
+		pulseColor := e.getPulsingExitColor()
+		// Background will be drawn with pulsing color separately
+		return IconExitUnlocked, pulseColor, true
 	}
 
 	// Items on floor (show if has map or discovered)
@@ -1656,14 +2526,101 @@ func (e *EbitenRenderer) getDirectionText(g *state.Game, cell *world.Cell, direc
 
 // drawStatusBarFromSnapshot draws the inventory and generator status using snapshot data
 func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, x, y, width, height int) {
+	// Check if there's anything to show
+	hasObjectives := len(snap.objectives) > 0
+	hasInventory := len(snap.ownedItems) > 0 || snap.batteries > 0
+	hasGenerators := len(snap.generators) > 0
+
+	// Don't draw anything if everything is empty
+	if !hasObjectives && !hasInventory && !hasGenerators {
+		return
+	}
+
 	fontSize := e.getUIFontSize()
 	lineHeight := int(fontSize) + 4
+
+	// Calculate how many lines we need
+	linesNeeded := 0
+	if hasObjectives {
+		linesNeeded += len(snap.objectives)
+	}
+	if hasInventory {
+		linesNeeded++
+	}
+	if hasGenerators {
+		linesNeeded++
+	}
+
+	// Calculate the maximum width needed for all text lines
+	maxTextWidth := 0.0
+	if hasObjectives {
+		for _, objective := range snap.objectives {
+			w := e.getTextWidth(objective)
+			if w > maxTextWidth {
+				maxTextWidth = w
+			}
+		}
+	}
+	if hasInventory {
+		// Build inventory text with markup for width calculation (same format as rendering)
+		invParts := []string{"Inventory:"}
+		for i, itemName := range snap.ownedItems {
+			if i > 0 {
+				invParts = append(invParts, ",")
+			}
+			invParts = append(invParts, fmt.Sprintf("ITEM{%s}", itemName))
+		}
+		if snap.batteries > 0 {
+			if len(snap.ownedItems) > 0 {
+				invParts = append(invParts, ",")
+			}
+			invParts = append(invParts, fmt.Sprintf("ACTION{Batteries x%d}", snap.batteries))
+		}
+		invText := strings.Join(invParts, " ")
+		// Calculate width using parsed segments (actual text width, not markup)
+		segments := e.parseMarkup(invText)
+		textWidth := 0.0
+		for _, seg := range segments {
+			textWidth += e.getTextWidth(seg.text)
+		}
+		if textWidth > maxTextWidth {
+			maxTextWidth = textWidth
+		}
+	}
+	if hasGenerators {
+		genText := "Generators: "
+		genParts := []string{}
+		for i, gen := range snap.generators {
+			if gen.powered {
+				genParts = append(genParts, fmt.Sprintf("#%d POWERED", i+1))
+			} else {
+				genParts = append(genParts, fmt.Sprintf("#%d %d/%d", i+1, gen.batteriesInserted, gen.batteriesRequired))
+			}
+		}
+		genText += strings.Join(genParts, ", ")
+		w := e.getTextWidth(genText)
+		if w > maxTextWidth {
+			maxTextWidth = w
+		}
+	}
+
+	// Adjust panel height based on actual content
+	panelHeight := lineHeight*linesNeeded + 10
+	if panelHeight < int(fontSize)+10 {
+		panelHeight = int(fontSize) + 10
+	}
+
+	// Calculate panel width based on widest text, with padding
+	panelWidth := int(maxTextWidth) + 20 // 10px padding on each side
+	if panelWidth < 100 {
+		panelWidth = 100 // Minimum width
+	}
 
 	// Draw panel background with border (more opaque for overlay on map)
 	bgX := float32(x - 10)
 	bgY := float32(y - 5)
-	bgW := float32(width + 20)
-	bgH := float32(height)
+	bgW := float32(panelWidth)
+	bgH := float32(panelHeight)
 	borderColor := color.RGBA{80, 80, 100, 255}
 	// More opaque background for overlay readability
 	overlayBackground := color.RGBA{20, 20, 35, 250} // More opaque than colorPanelBackground
@@ -1675,24 +2632,50 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 
 	// Calculate vertical center for first line
 	// Since drawColoredText adds fontSize for baseline, we need to adjust
-	firstLineY := y + (height / 2) - (lineHeight / 2) - int(fontSize)
+	firstLineY := y + (panelHeight / 2) - (lineHeight * linesNeeded / 2) - int(fontSize)
 
-	// Inventory line
-	invText := "Inventory: "
-	if len(snap.ownedItems) == 0 && snap.batteries == 0 {
-		invText += "(empty)"
-	} else {
-		items := make([]string, len(snap.ownedItems))
-		copy(items, snap.ownedItems)
-		if snap.batteries > 0 {
-			items = append(items, fmt.Sprintf("Batteries x%d", snap.batteries))
+	currentY := firstLineY
+
+	// Objectives (displayed above inventory)
+	if hasObjectives {
+		for _, objective := range snap.objectives {
+			// Parse markup to properly color ACTION{} segments
+			segments := e.parseMarkup(objective)
+			e.drawColoredTextSegments(screen, segments, x, currentY)
+			currentY += lineHeight
 		}
-		invText += strings.Join(items, ", ")
+		// Add a small gap between objectives and inventory
+		if hasInventory || hasGenerators {
+			currentY += 2
+		}
 	}
-	e.drawColoredText(screen, invText, x, firstLineY, colorText)
+
+	// Inventory line (only if not empty)
+	if hasInventory {
+		// Build inventory text with item colors using markup, commas in default color
+		invParts := []string{"Inventory:"}
+		for i, itemName := range snap.ownedItems {
+			if i > 0 {
+				invParts = append(invParts, ",") // Comma in default text color
+			}
+			invParts = append(invParts, fmt.Sprintf("ITEM{%s}", itemName))
+		}
+		if snap.batteries > 0 {
+			if len(snap.ownedItems) > 0 {
+				invParts = append(invParts, ",") // Comma in default text color
+			}
+			invParts = append(invParts, fmt.Sprintf("ACTION{Batteries x%d}", snap.batteries))
+		}
+		invText := strings.Join(invParts, " ")
+
+		// Parse markup to apply item colors (commas will be in default color)
+		segments := e.parseMarkup(invText)
+		e.drawColoredTextSegments(screen, segments, x, currentY)
+		currentY += lineHeight
+	}
 
 	// Generator status (if applicable)
-	if len(snap.generators) > 0 {
+	if hasGenerators {
 		genText := "Generators: "
 		genParts := []string{}
 		for i, gen := range snap.generators {
@@ -1703,23 +2686,121 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 			}
 		}
 		genText += strings.Join(genParts, ", ")
-		// Second line positioned below first line
-		secondLineY := firstLineY + lineHeight
-		e.drawColoredText(screen, genText, x, secondLineY, colorText)
+		e.drawColoredText(screen, genText, x, currentY, colorText)
 	}
 }
 
-// drawMessagesFromSnapshot draws the messages panel using snapshot data
-func (e *EbitenRenderer) drawMessagesFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, x, y, width, maxHeight int) {
+// drawMessagesFromSnapshot draws the messages panel as a bottom‑aligned overlay using snapshot data.
+// The background panel is only drawn when there are visible (non‑expired) messages and shows at most 4 lines.
+func (e *EbitenRenderer) drawMessagesFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, screenWidth, screenHeight int) {
+	const maxVisibleLines = 4
+
 	fontSize := e.getUIFontSize()
 	lineHeight := int(fontSize) + 4 // Font size plus padding for proper line spacing
 
-	// Use the provided maxHeight for the panel background
-	panelHeight := maxHeight
-	bgX := float32(x - 10)
-	bgY := float32(y - 5)
-	bgW := float32(width + 20)
+	if len(snap.messages) == 0 {
+		// No messages to show, so don't draw any panel background
+		return
+	}
+
+	now := time.Now().UnixMilli()
+	const messageLifetime = 10000 // 10 seconds in milliseconds
+
+	// Collect visible messages (messages are already sorted chronologically in snapshot)
+	type visibleMessage struct {
+		segments []textSegment
+	}
+	visible := make([]visibleMessage, 0, maxVisibleLines)
+
+	// Iterate through messages in chronological order (oldest first)
+	// Take the last maxVisibleLines messages (most recent)
+	startIdx := len(snap.messages) - maxVisibleLines
+	if startIdx < 0 {
+		startIdx = 0
+	}
+
+	for i := startIdx; i < len(snap.messages) && len(visible) < maxVisibleLines; i++ {
+		msgEntry := snap.messages[i]
+		age := now - msgEntry.Timestamp
+		if age >= messageLifetime {
+			continue // Skip fully faded/expired messages (shouldn't happen, but double-check)
+		}
+
+		// Calculate alpha: 1.0 at start, 0.0 at messageLifetime
+		// Fade starts at 7 seconds (70% of lifetime), fully transparent at 10 seconds
+		fadeStart := int64(messageLifetime * 7 / 10) // Start fading at 7 seconds
+		alpha := 1.0
+		if age > fadeStart {
+			// Fade from 1.0 to 0.0 over the last 3 seconds
+			fadeProgress := float64(age-fadeStart) / float64(messageLifetime-fadeStart)
+			alpha = 1.0 - fadeProgress
+			if alpha < 0 {
+				alpha = 0
+			}
+		}
+
+		// Parse markup and apply alpha to segment colors
+		segments := e.parseMarkup(msgEntry.Text)
+		fadedSegments := make([]textSegment, len(segments))
+		for j, seg := range segments {
+			fadedSegments[j] = textSegment{
+				text:  seg.text,
+				color: e.applyAlpha(seg.color, alpha),
+			}
+		}
+
+		visible = append(visible, visibleMessage{segments: fadedSegments})
+	}
+
+	// If no messages are actually visible after fading, don't draw anything
+	if len(visible) == 0 {
+		return
+	}
+
+	// Calculate the maximum width needed for all messages
+	maxTextWidth := 0.0
+	// Include header width
+	headerText := "─── Messages ───"
+	headerWidth := e.getTextWidth(headerText)
+	if headerWidth > maxTextWidth {
+		maxTextWidth = headerWidth
+	}
+	// Calculate width for each visible message (sum of all segments)
+	for _, vm := range visible {
+		msgWidth := 0.0
+		for _, seg := range vm.segments {
+			msgWidth += e.getTextWidth(seg.text)
+		}
+		if msgWidth > maxTextWidth {
+			maxTextWidth = msgWidth
+		}
+	}
+
+	// Calculate dynamic panel height based on number of visible messages
+	headerHeight := int(fontSize) + 8
+	bodyHeight := len(visible) * lineHeight
+	panelHeight := headerHeight + bodyHeight + 10 // Extra padding
+
+	// Calculate panel width based on widest text, with padding
+	panelWidth := int(maxTextWidth) + 20 // 10px padding on each side
+	if panelWidth < 100 {
+		panelWidth = 100 // Minimum width
+	}
+	// Don't exceed screen width
+	if panelWidth > screenWidth-40 {
+		panelWidth = screenWidth - 40
+	}
+
+	// Position panel aligned to the bottom of the window, centered horizontally
+	marginBottom := 20
+	bgX := float32((screenWidth - panelWidth) / 2)
+	bgY := float32(screenHeight - marginBottom - panelHeight)
+	if bgY < 0 {
+		bgY = 0
+	}
+	bgW := float32(panelWidth)
 	bgH := float32(panelHeight)
+
 	borderColor := color.RGBA{80, 80, 100, 255}
 
 	// Border
@@ -1727,53 +2808,16 @@ func (e *EbitenRenderer) drawMessagesFromSnapshot(screen *ebiten.Image, snap *re
 	// Background
 	vector.DrawFilledRect(screen, bgX, bgY, bgW, bgH, colorPanelBackground, false)
 
-	// Header - position at top with proper padding
-	headerY := y + 8 - int(fontSize) // Small padding from top, account for baseline
-	e.drawColoredText(screen, "─── Messages ───", x, headerY, colorSubtle)
+	// Header - position at top with proper padding (centered in panel)
+	x := int(bgX) + 10
+	headerY := int(bgY) + 8 - int(fontSize) // Small padding from top, account for baseline
+	e.drawColoredText(screen, headerText, x, headerY, colorSubtle)
 
 	// Messages - start below header with proper spacing
-	messageStartY := y + int(fontSize) + 12 // Below header with spacing
-	if len(snap.messages) == 0 {
-		e.drawColoredText(screen, "(no messages)", x+10, messageStartY-int(fontSize), colorSubtle)
-	} else {
-		now := time.Now().UnixMilli()
-		const messageLifetime = 10000 // 10 seconds in milliseconds
-
-		for i, msgEntry := range snap.messages {
-			// Calculate fade based on age
-			age := now - msgEntry.Timestamp
-			if age >= messageLifetime {
-				continue // Skip fully faded messages
-			}
-
-			// Calculate alpha: 1.0 at start, 0.0 at messageLifetime
-			// Fade starts at 7 seconds (70% of lifetime), fully transparent at 10 seconds
-			fadeStart := int64(messageLifetime * 7 / 10) // Start fading at 7 seconds
-			var alpha float64 = 1.0
-			if age > fadeStart {
-				// Fade from 1.0 to 0.0 over the last 3 seconds
-				fadeProgress := float64(age-fadeStart) / float64(messageLifetime-fadeStart)
-				alpha = 1.0 - fadeProgress
-				if alpha < 0 {
-					alpha = 0
-				}
-			}
-
-			// Parse markup and draw colored segments with fade
-			segments := e.parseMarkup(msgEntry.Text)
-			// Apply alpha to all segment colors
-			fadedSegments := make([]textSegment, len(segments))
-			for j, seg := range segments {
-				fadedSegments[j] = textSegment{
-					text:  seg.text,
-					color: e.applyAlpha(seg.color, alpha),
-				}
-			}
-
-			// Position each message line
-			msgY := messageStartY + i*lineHeight - int(fontSize)
-			e.drawColoredTextSegments(screen, fadedSegments, x+10, msgY)
-		}
+	messageStartY := int(bgY) + headerHeight + 4
+	for i, vm := range visible {
+		msgY := messageStartY + i*lineHeight - int(fontSize)
+		e.drawColoredTextSegments(screen, vm.segments, x, msgY)
 	}
 }
 

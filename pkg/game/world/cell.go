@@ -10,12 +10,13 @@ import (
 // GameCellData holds game-specific entity references for a cell.
 // This is stored in the engine Cell's GameData field.
 type GameCellData struct {
-	Generator     *entities.Generator     // Power generator in this cell (if any)
-	Door          *entities.Door          // Keycard door in this cell (if any)
-	Terminal      *entities.CCTVTerminal  // CCTV terminal in this cell (if any)
-	Furniture     *entities.Furniture     // Furniture in this cell (if any)
-	Hazard        *entities.Hazard        // Environmental hazard in this cell (if any)
-	HazardControl *entities.HazardControl // Hazard control panel in this cell (if any)
+	Generator     *entities.Generator      // Power generator in this cell (if any)
+	Door          *entities.Door           // Keycard door in this cell (if any)
+	Terminal      *entities.CCTVTerminal   // CCTV terminal in this cell (if any)
+	Puzzle        *entities.PuzzleTerminal // Puzzle terminal in this cell (if any)
+	Furniture     *entities.Furniture      // Furniture in this cell (if any)
+	Hazard        *entities.Hazard         // Environmental hazard in this cell (if any)
+	HazardControl *entities.HazardControl  // Hazard control panel in this cell (if any)
 }
 
 // InitGameData initializes game data for a cell if not already set
@@ -139,4 +140,16 @@ func HasLockedDoor(cell *world.Cell) bool {
 func HasUnlockedDoor(cell *world.Cell) bool {
 	data := GetGameData(cell)
 	return data.Door != nil && !data.Door.Locked
+}
+
+// HasPuzzle returns true if this cell contains a puzzle terminal
+func HasPuzzle(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	return data.Puzzle != nil
+}
+
+// HasUnsolvedPuzzle returns true if this cell has an unsolved puzzle
+func HasUnsolvedPuzzle(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	return data.Puzzle != nil && !data.Puzzle.IsSolved()
 }

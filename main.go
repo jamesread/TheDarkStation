@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/leonelquinteros/gotext"
 	"github.com/zyedidia/generic/mapset"
 
+	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/generator"
@@ -517,13 +519,7 @@ func setupLevel(g *state.Game) {
 		placeHazards(g, &avoid, &lockedDoorCells)
 	}
 
-	// Always place a map in a reachable area
-	reachable := getReachableCells(g.Grid, g.Grid.StartCell(), &lockedDoorCells)
-	mapRoom := findRoomInReachable(reachable, &avoid)
-	if mapRoom != nil {
-		mapRoom.ItemsOnFloor.Put(world.NewItem("Map"))
-		avoid.Put(mapRoom)
-	}
+	// Map is no longer automatically placed - it's now a puzzle reward in later levels
 
 	// Place CCTV terminals (1-3 based on level)
 	numTerminals := 1 + g.Level/3
@@ -552,6 +548,11 @@ func setupLevel(g *state.Game) {
 
 	// Place furniture in rooms (1-2 pieces per unique room type)
 	placeFurniture(g, &avoid)
+
+	// Place puzzle terminals (level 2+)
+	if g.Level >= 2 {
+		placePuzzles(g, &avoid)
+	}
 
 	g.CurrentCell = g.Grid.GetCenterCell()
 
@@ -597,36 +598,67 @@ func placeHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells
 		hazardTypes = append(hazardTypes, entities.HazardRadiation)
 	}
 
-	// Find corridor cells that could block progress
-	corridors := findCorridorCells(g.Grid)
-	rand.Shuffle(len(corridors), func(i, j int) {
-		corridors[i], corridors[j] = corridors[j], corridors[i]
+	// Find room entry points (like doors, hazards block entry to rooms)
+	roomEntries := findRoomEntryPoints(g.Grid)
+
+	// Build list of candidate rooms (rooms with 1-3 entry points that we can fully block)
+	type roomCandidate struct {
+		name    string
+		entries *roomEntryPoints
+	}
+	var candidates []roomCandidate
+	for roomName, entries := range roomEntries {
+		// Only consider rooms with 1-3 entry points (manageable to block)
+		if len(entries.entryCells) >= 1 && len(entries.entryCells) <= 3 {
+			candidates = append(candidates, roomCandidate{name: roomName, entries: entries})
+		}
+	}
+
+	// Shuffle candidates for variety
+	rand.Shuffle(len(candidates), func(i, j int) {
+		candidates[i], candidates[j] = candidates[j], candidates[i]
 	})
 
+	// Track which rooms have hazards
+	roomsWithHazards := mapset.New[string]()
 	hazardsPlaced := 0
-	for _, corridorCell := range corridors {
+
+	// Place hazards to fully block selected rooms (like doors)
+	for _, candidate := range candidates {
 		if hazardsPlaced >= numHazards {
 			break
 		}
 
-		// Skip if already used
-		if avoid.Has(corridorCell) || lockedDoorCells.Has(corridorCell) {
+		roomName := candidate.name
+		entryCells := candidate.entries.entryCells
+
+		// Skip if already has hazards or doors
+		if roomsWithHazards.Has(roomName) {
 			continue
 		}
 
-		// Check if this corridor is reachable from start
+		// Check if all entry cells are available and reachable
 		currentlyReachable := getReachableCells(g.Grid, g.Grid.StartCell(), lockedDoorCells)
-		if !currentlyReachable.Has(corridorCell) {
+		allValid := true
+		for _, cell := range entryCells {
+			if avoid.Has(cell) || lockedDoorCells.Has(cell) || !currentlyReachable.Has(cell) {
+				allValid = false
+				break
+			}
+		}
+		if !allValid {
 			continue
 		}
 
-		// Test if blocking this cell would reduce reachability
+		// Test if blocking ALL entry cells reduces reachability
 		testBlocked := mapset.New[*world.Cell]()
 		lockedDoorCells.Each(func(c *world.Cell) { testBlocked.Put(c) })
-		testBlocked.Put(corridorCell)
+		for _, cell := range entryCells {
+			testBlocked.Put(cell)
+		}
 		reachableWithHazard := getReachableCells(g.Grid, g.Grid.StartCell(), &testBlocked)
 
-		// Only place hazard if it blocks something
+		// Must actually block something
 		if reachableWithHazard.Size() >= currentlyReachable.Size() {
 			continue
 		}
@@ -634,13 +666,18 @@ func placeHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells
 		// Choose a random hazard type
 		hazardType := hazardTypes[rand.Intn(len(hazardTypes))]
 		hazard := entities.NewHazard(hazardType)
-
-		// Place the hazard
-		gameworld.GetGameData(corridorCell).Hazard = hazard
-		avoid.Put(corridorCell)
-
 		info := entities.HazardTypes[hazardType]
 
+		// Place hazards on ALL entry cells (they share the same solution)
+		for _, cell := range entryCells {
+			gameworld.GetGameData(cell).Hazard = hazard
+			avoid.Put(cell)
+		}
+
+		roomsWithHazards.Put(roomName)
+		hazardsPlaced++
+
+		// Place the solution (item or control) in the area reachable BEFORE these hazards
 		if hazard.RequiresItem() {
 			// Place the required item (e.g., Patch Kit) in a reachable area
 			itemRoom := findRoomInReachable(reachableWithHazard, avoid)
@@ -667,7 +704,11 @@ func placeHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells
 			}
 		}
 
-		hazardsPlaced++
+		if len(entryCells) == 1 {
+			g.AddHint(fmt.Sprintf("A %s blocks access to %s", info.Name, renderer.StyledCell(roomName)))
+		} else {
+			g.AddHint(fmt.Sprintf("%d %s hazards block access to %s", len(entryCells), info.Name, renderer.StyledCell(roomName)))
+		}
 	}
 }
 
@@ -702,12 +743,29 @@ func placeFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 			numFurniture = len(templates)
 		}
 
-		// Find valid cells (not already used for something else)
+		// Find valid cells (not already used for something else, and not blocking entrances/exits)
+		// Get room entry points to avoid blocking them
+		roomEntries := findRoomEntryPoints(g.Grid)
+		entryPoints := mapset.New[*world.Cell]()
+		if entryData, ok := roomEntries[roomName]; ok {
+			for _, entryCell := range entryData.entryCells {
+				// Mark the room cells adjacent to entry points as blocked
+				neighbors := []*world.Cell{entryCell.North, entryCell.East, entryCell.South, entryCell.West}
+				for _, neighbor := range neighbors {
+					if neighbor != nil && neighbor.Room && neighbor.Name == roomName {
+						entryPoints.Put(neighbor)
+					}
+				}
+			}
+		}
+
 		var validCells []*world.Cell
 		for _, cell := range cells {
 			data := gameworld.GetGameData(cell)
-			if !avoid.Has(cell) && !cell.ExitCell && data.Generator == nil &&
-				data.Door == nil && data.Terminal == nil && data.Furniture == nil {
+			// Don't place furniture on entry points, exit cells, or cells with other entities
+			if !avoid.Has(cell) && !cell.ExitCell && !entryPoints.Has(cell) &&
+				data.Generator == nil && data.Door == nil && data.Terminal == nil &&
+				data.Furniture == nil && data.Hazard == nil && data.HazardControl == nil {
 				validCells = append(validCells, cell)
 			}
 		}
@@ -732,6 +790,87 @@ func placeFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		if len(placedFurniture) > 0 {
 			hideItemsInFurniture(g, cells, placedFurniture, roomName)
 		}
+	}
+}
+
+// placePuzzles places puzzle terminals that require codes found in furniture
+func placePuzzles(g *state.Game, avoid *mapset.Set[*world.Cell]) {
+	// Place 1-2 puzzles per level (level 2+)
+	numPuzzles := 1
+	if g.Level >= 5 {
+		numPuzzles = 2
+	} else if g.Level >= 3 {
+		numPuzzles = 2
+	}
+
+	// Generate puzzle solutions
+	puzzleSolutions := []string{
+		"1-2-3-4",
+		"2-4-6-8",
+		"up-down-left-right",
+		"north-south-east-west",
+		"alpha-beta-gamma-delta",
+	}
+
+	for i := 0; i < numPuzzles && i < len(puzzleSolutions); i++ {
+		// Find a room for the puzzle
+		puzzleRoom := findRoom(g, g.Grid.StartCell(), avoid)
+		if puzzleRoom == nil {
+			continue
+		}
+
+		solution := puzzleSolutions[i]
+		puzzleType := entities.PuzzleSequence
+		if strings.Contains(solution, "-") && !strings.ContainsAny(solution, "0123456789") {
+			puzzleType = entities.PuzzlePattern
+		}
+
+		// Create puzzle with appropriate reward based on level
+		reward := entities.RewardBattery
+		if g.Level >= 6 && i == 0 {
+			// First puzzle on level 6+ gives the map (powerful reward for complex puzzles)
+			// Maps are only available as puzzle rewards, never as items
+			// This makes the map a late-game reward that requires significant puzzle-solving
+			reward = entities.RewardMap
+		} else if g.Level >= 3 && i == 0 {
+			// First puzzle on level 3 gives a keycard hint
+			reward = entities.RewardKeycard
+		}
+
+		puzzle := entities.NewPuzzleTerminal(
+			fmt.Sprintf("Security Terminal #%d", i+1),
+			puzzleType,
+			solution,
+			fmt.Sprintf("Find the code in logs or furniture descriptions. Look for: Code: %s", solution),
+			reward,
+			"A security terminal requiring an access code.",
+		)
+
+		gameworld.GetGameData(puzzleRoom).Puzzle = puzzle
+		avoid.Put(puzzleRoom)
+
+		// Place the code in a furniture description in a different room
+		codeRoom := findRoom(g, g.Grid.StartCell(), avoid)
+		if codeRoom != nil && codeRoom != puzzleRoom {
+			// Find furniture in this room and add code to its description
+			roomCells := []*world.Cell{}
+			g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+				if cell.Room && cell.Name == codeRoom.Name && gameworld.HasFurniture(cell) {
+					roomCells = append(roomCells, cell)
+				}
+			})
+
+			if len(roomCells) > 0 {
+				// Pick a random furniture in this room
+				furnitureCell := roomCells[rand.Intn(len(roomCells))]
+				furniture := gameworld.GetGameData(furnitureCell).Furniture
+				// Append code to description
+				furniture.Description += fmt.Sprintf(" Code: %s", solution)
+			}
+			avoid.Put(codeRoom)
+		}
+
+		g.AddHint(fmt.Sprintf("A puzzle terminal is in %s", renderer.StyledCell(puzzleRoom.Name)))
 	}
 }
 
@@ -867,10 +1006,6 @@ func canEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 	missingItems := mapset.New[*world.Item]()
 
 	if r == nil || !r.Room {
-		if logReason {
-			logMessage(g, "There is nothing in that direction.")
-		}
-
 		return false, &missingItems
 	}
 
@@ -899,11 +1034,14 @@ func canEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 				}
 			})
 			g.OwnedItems.Remove(keycardItem)
+			// Show unlock message as callout with proper item colors
+			var calloutMsg string
 			if doorsUnlocked > 1 {
-				logMessage(g, "Used %s to unlock %d doors to %s!", renderer.StyledKeycard(keycardName), doorsUnlocked, renderer.StyledCell(rData.Door.RoomName))
+				calloutMsg = fmt.Sprintf("Used ITEM{%s} to unlock ACTION{%d} doors to ROOM{%s}!", keycardName, doorsUnlocked, rData.Door.RoomName)
 			} else {
-				logMessage(g, "Used %s to unlock the %s!", renderer.StyledKeycard(keycardName), renderer.StyledDoor(rData.Door.DoorName()))
+				calloutMsg = fmt.Sprintf("Used ITEM{%s} to unlock the %s!", keycardName, rData.Door.DoorName())
 			}
+			renderer.AddCallout(r.Row, r.Col, calloutMsg, renderer.CalloutColorItem, 0)
 		} else {
 			if logReason {
 				logMessage(g, "This door requires a %s", renderer.StyledKeycard(keycardName))
@@ -912,6 +1050,21 @@ func canEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 			}
 			return false, &missingItems
 		}
+	}
+
+	// Check for furniture (blocks movement)
+	if gameworld.HasFurniture(r) {
+		return false, &missingItems
+	}
+
+	// Check for CCTV terminals (blocks movement)
+	if gameworld.HasTerminal(r) {
+		return false, &missingItems
+	}
+
+	// Check for puzzle terminals (blocks movement)
+	if gameworld.HasPuzzle(r) {
+		return false, &missingItems
 	}
 
 	// Check for environmental hazard
@@ -935,27 +1088,46 @@ func canEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 				logMessage(g, "%s", info.FixedMessage)
 			} else {
 				if logReason {
-					logMessage(g, "%s", renderer.StyledHazard(hazard.Description))
+					// Show hazard description as 2-line callout: first line in hazard color, second line with hint in normal color
+					hazardCallout := formatHazardCallout(hazard)
+					renderer.AddCallout(r.Row, r.Col, hazardCallout, renderer.CalloutColorHazard, 0)
 				}
 				return false, &missingItems
 			}
 		} else {
 			// Hazard requires a control panel to be activated
 			if logReason {
-				logMessage(g, "%s", renderer.StyledHazard(hazard.Description))
+				// Show hazard description as 2-line callout: first line in hazard color, second line with hint in normal color
+				hazardCallout := formatHazardCallout(hazard)
+				renderer.AddCallout(r.Row, r.Col, hazardCallout, renderer.CalloutColorHazard, 0)
 			}
 			return false, &missingItems
 		}
 	}
 
-	// Check for powered generators (only for exit cell)
-	if r.ExitCell && !g.AllGeneratorsPowered() {
-		if logReason {
-			unpowered := g.UnpoweredGeneratorCount()
-			logMessage(g, "The lift requires all generators to be powered!")
-			logMessage(g, "ACTION{%d} generator(s) still need power.", unpowered)
+	// Check for powered generators and cleared hazards (only for exit cell)
+	if r.ExitCell {
+		if !g.AllGeneratorsPowered() {
+			if logReason {
+				unpowered := g.UnpoweredGeneratorCount()
+				logMessage(g, "The lift requires all generators to be powered!")
+				logMessage(g, "ACTION{%d} generator(s) still need power.", unpowered)
+			}
+			return false, &missingItems
 		}
-		return false, &missingItems
+		if !g.AllHazardsCleared() {
+			if logReason {
+				numHazards := 0
+				g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+					if gameworld.HasBlockingHazard(cell) {
+						numHazards++
+					}
+				})
+				logMessage(g, "The lift requires all environmental hazards to be cleared!")
+				logMessage(g, "ACTION{%d} environmental hazard(s) remain.", numHazards)
+			}
+			return false, &missingItems
+		}
 	}
 
 	return true, &missingItems
@@ -963,91 +1135,97 @@ func canEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 
 // moveCell moves the player to a new cell
 func moveCell(g *state.Game, requestedCell *world.Cell) {
-	if res, _ := canEnter(g, requestedCell, true); res {
-		// Only log message if entering a different named room
-		if g.CurrentCell == nil || g.CurrentCell.Name != requestedCell.Name {
-			logMessage(g, gotext.Get("OPEN_DOOR")+"%v", renderer.StyledCell(requestedCell.Name))
+	// Determine direction for debounce animation
+	var direction string
+	if g.CurrentCell != nil {
+		if requestedCell == g.CurrentCell.North {
+			direction = "north"
+		} else if requestedCell == g.CurrentCell.South {
+			direction = "south"
+		} else if requestedCell == g.CurrentCell.East {
+			direction = "east"
+		} else if requestedCell == g.CurrentCell.West {
+			direction = "west"
 		}
+	}
 
+	if res, _ := canEnter(g, requestedCell, true); res {
 		requestedCell.Visited = true
 
 		// Reveal cells within field of view (radius 3, with line-of-sight blocking)
 		world.RevealFOVDefault(g.Grid, requestedCell)
 
+		// Reset interaction order when player moves
+		if g.CurrentCell == nil || g.CurrentCell.Row != requestedCell.Row || g.CurrentCell.Col != requestedCell.Col {
+			g.LastInteractedRow = -1
+			g.LastInteractedCol = -1
+			g.InteractionPlayerRow = requestedCell.Row
+			g.InteractionPlayerCol = requestedCell.Col
+		}
+
 		g.CurrentCell = requestedCell
+	} else {
+		// Movement failed - trigger debounce animation
+		if direction != "" {
+			renderer.SetDebounceAnimation(direction)
+		}
 	}
 }
 
-// processInput handles player input
-func processInput(g *state.Game, in string) {
-	if in == "" {
+// processIntent handles a high-level input intent from the tiered input system.
+func processIntent(g *state.Game, intent engineinput.Intent) {
+	switch intent.Action {
+	case engineinput.ActionNone:
 		return
-	}
 
-	if in == "?" || in == "hint" {
+	case engineinput.ActionOpenMenu:
+		runBindingsMenu(g)
+		return
+
+	case engineinput.ActionHint:
 		idx := rand.Intn(len(g.Hints))
 		logMessage(g, "%s", g.Hints[idx])
 		return
-	}
 
-	if in == "quit" || in == "q" {
+	case engineinput.ActionQuit:
 		fmt.Println(gotext.Get("GOODBYE"))
 		os.Exit(0)
-	}
 
-	if in == "screenshot" {
+	case engineinput.ActionScreenshot:
 		filename := saveScreenshotHTML(g)
 		logMessage(g, "Screenshot saved to ITEM{%s}", filename)
 		return
-	}
 
-	// NSEW navigation
-	if in == "east" || in == "e" || in == "arrow_right" {
+	case engineinput.ActionDevMap:
+		switchToDevMap(g)
+		return
+
+	case engineinput.ActionMoveEast:
 		g.NavStyle = state.NavStyleNSEW
 		moveCell(g, g.CurrentCell.East)
 		return
-	}
 
-	if in == "west" || in == "w" || in == "arrow_left" {
+	case engineinput.ActionMoveWest:
 		g.NavStyle = state.NavStyleNSEW
 		moveCell(g, g.CurrentCell.West)
 		return
-	}
 
-	if in == "north" || in == "n" || in == "arrow_up" {
+	case engineinput.ActionMoveNorth:
 		g.NavStyle = state.NavStyleNSEW
 		moveCell(g, g.CurrentCell.North)
 		return
-	}
 
-	if in == "south" || in == "s" || in == "arrow_down" {
+	case engineinput.ActionMoveSouth:
 		g.NavStyle = state.NavStyleNSEW
 		moveCell(g, g.CurrentCell.South)
 		return
-	}
 
-	// Vim-style navigation (hjkl)
-	if in == "l" {
-		g.NavStyle = state.NavStyleVim
-		moveCell(g, g.CurrentCell.East)
-		return
-	}
-
-	if in == "h" {
-		g.NavStyle = state.NavStyleVim
-		moveCell(g, g.CurrentCell.West)
-		return
-	}
-
-	if in == "k" {
-		g.NavStyle = state.NavStyleVim
-		moveCell(g, g.CurrentCell.North)
-		return
-	}
-
-	if in == "j" {
-		g.NavStyle = state.NavStyleVim
-		moveCell(g, g.CurrentCell.South)
+	case engineinput.ActionInteract:
+		// Check for adjacent interactables in NSEW priority order, cycling through them
+		interacted := checkAdjacentInteractables(g)
+		if !interacted {
+			logMessage(g, "Nothing to interact with here.")
+		}
 		return
 	}
 
@@ -1058,6 +1236,13 @@ func main() {
 	startLevel := flag.Int("level", 1, "starting level/deck number (for developer testing)")
 	useEbiten := flag.Bool("ebiten", false, "use Ebiten graphical renderer instead of TUI")
 	flag.Parse()
+
+	// Check for LEVEL environment variable (takes precedence over flag)
+	if envLevel := os.Getenv("LEVEL"); envLevel != "" {
+		if parsedLevel, err := strconv.Atoi(envLevel); err == nil && parsedLevel > 0 {
+			*startLevel = parsedLevel
+		}
+	}
 
 	initGettext()
 	rand.Seed(time.Now().UnixNano())
@@ -1103,9 +1288,21 @@ func mainLoop(g *state.Game) {
 	// Show room entry callout if player entered a new room (but not corridors)
 	renderer.ShowRoomEntryIfNew(g.CurrentCell.Row, g.CurrentCell.Col, g.CurrentCell.Name)
 
-	if g.CurrentCell.ExitCell {
-		logMessage(g, "%s", gotext.Get("EXIT"))
-		advanceLevel(g)
+	// Check exit animation state
+	if g.ExitAnimating {
+		elapsed := time.Now().UnixMilli() - g.ExitAnimStartTime
+		const exitAnimDuration = 2000 // 2 seconds (matches drawExitAnimation)
+		if elapsed >= exitAnimDuration {
+			// Animation complete, advance to next level
+			g.ExitAnimating = false
+			advanceLevel(g)
+		}
+	} else if g.CurrentCell.ExitCell {
+		// Start exit animation when player enters exit
+		if !g.ExitAnimating {
+			g.ExitAnimating = true
+			g.ExitAnimStartTime = time.Now().UnixMilli()
+		}
 	}
 
 	// Pick up items on the floor
@@ -1113,38 +1310,138 @@ func mainLoop(g *state.Game) {
 		g.CurrentCell.ItemsOnFloor.Remove(item)
 
 		if item.Name == "Map" {
+			// Maps should no longer be found as items - they're puzzle rewards only
+			// But handle it gracefully if one somehow appears
 			g.HasMap = true
 			g.OwnedItems.Put(item)
-			logMessage(g, "Picked up: ITEM{%v}", item.Name)
-			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, "Picked up: Map", renderer.CalloutColorItem, 0)
+			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, "Picked up: ITEM{Map}", renderer.CalloutColorItem, 0)
 		} else if item.Name == "Battery" {
 			g.AddBatteries(1)
-			logMessage(g, "Picked up: ACTION{Battery}")
-			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, "Picked up: Battery", renderer.CalloutColorItem, 0)
+			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, "Picked up: ACTION{Battery}", renderer.CalloutColorItem, 0)
 		} else {
 			g.OwnedItems.Put(item)
-			logMessage(g, "Picked up: ITEM{%v}", item.Name)
-			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, fmt.Sprintf("Picked up: %s", item.Name), renderer.CalloutColorItem, 0)
+			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, fmt.Sprintf("Picked up: ITEM{%s}", item.Name), renderer.CalloutColorItem, 0)
 		}
 	})
 
 	// Check adjacent cells for unpowered generators and auto-insert batteries
 	checkAdjacentGenerators(g)
 
-	// Check adjacent cells for unused CCTV terminals
-	checkAdjacentTerminals(g)
-
-	// Check adjacent cells for inactive hazard controls
-	checkAdjacentHazardControls(g)
+	// Hazard controls, terminals, and puzzles now require explicit interaction (handled in ActionInteract)
 
 	// Check adjacent cells for furniture and show hints
-	checkAdjacentFurniture(g)
+	// Furniture interaction is now explicit (handled in processIntent)
 
 	// Render the complete game frame
 	renderer.RenderFrame(g)
 
-	// Get and process input
-	processInput(g, renderer.GetInput())
+	// Get and process input (tiered input system -> Intent -> game logic)
+	processIntent(g, renderer.Current.GetInput())
+}
+
+// runBindingsMenu presents a simple bindings configuration menu.
+// Controls while in the menu:
+//   - Move selection: up/down actions (north/south)
+//   - Edit selected action: hint action (e.g. "?" or mapped equivalent)
+//   - Exit menu: menu action (F10/Start) or quit action (q/escape)
+func runBindingsMenu(g *state.Game) {
+	actions := []engineinput.Action{
+		engineinput.ActionMoveNorth,
+		engineinput.ActionMoveSouth,
+		engineinput.ActionMoveWest,
+		engineinput.ActionMoveEast,
+		engineinput.ActionHint,
+		// ActionScreenshot, ActionOpenMenu, ActionQuit removed - not rebindable
+	}
+
+	selected := 0
+
+	helpText := ""
+
+	for {
+		// Prefer a renderer-native, full-screen overlay if supported (Ebiten).
+		if mr, ok := renderer.Current.(renderer.BindingsMenuRenderer); ok {
+			mr.RenderBindingsMenu(g, actions, selected, helpText)
+		} else {
+			// Fallback: render menu into the message log for TUI.
+			g.ClearMessages()
+			logMessage(g, "=== Bindings Menu ===")
+			logMessage(g, "Use up/down to select, ? to edit, F10/Start or q to exit.")
+
+			byAction := engineinput.GetBindingsByAction()
+			for i, act := range actions {
+				name := engineinput.ActionName(act)
+				codes := byAction[act]
+				codeText := strings.Join(codes, ", ")
+				prefix := "  "
+				if i == selected {
+					prefix = "> "
+				}
+				if codeText == "" {
+					codeText = "(unbound)"
+				}
+				logMessage(g, "%s%s: %s", prefix, name, codeText)
+			}
+
+			// Re-render frame with updated messages
+			renderer.RenderFrame(g)
+		}
+
+		// Get next intent
+		intent := renderer.Current.GetInput()
+
+		switch intent.Action {
+		case engineinput.ActionMoveNorth:
+			if selected > 0 {
+				selected--
+				helpText = "" // Clear help text when navigating
+			}
+		case engineinput.ActionMoveSouth:
+			if selected < len(actions)-1 {
+				selected++
+				helpText = "" // Clear help text when navigating
+			}
+		case engineinput.ActionAction, engineinput.ActionHint:
+			// Edit binding for selected action: ask for a new code string
+			action := actions[selected]
+			actionName := engineinput.ActionName(action)
+
+			// Set help text to show on menu overlay (for Ebiten) or in messages (for TUI)
+			helpText = fmt.Sprintf("Editing binding for: %s", actionName)
+			if mr, ok := renderer.Current.(renderer.BindingsMenuRenderer); ok {
+				// Ebiten: help text will be drawn on the menu overlay
+				mr.RenderBindingsMenu(g, actions, selected, helpText)
+			} else {
+				// TUI: fall back to messages
+				g.ClearMessages()
+				logMessage(g, helpText)
+				logMessage(g, "Type new binding code (e.g. arrow_up, w, menu) and press Enter.")
+				renderer.RenderFrame(g)
+			}
+
+			// Use renderer.GetInput() to read a raw-ish code string
+			code := renderer.GetInput()
+			if code != "" {
+				engineinput.SetSingleBinding(action, code)
+				// Show confirmation message (will clear on next action)
+				helpText = fmt.Sprintf("Set binding for %s to %s", actionName, code)
+			} else {
+				// User cancelled or entered empty string - clear help text
+				helpText = ""
+			}
+		case engineinput.ActionOpenMenu, engineinput.ActionQuit:
+			// Exit menu (do not quit the game; just return to main loop)
+			g.ClearMessages()
+			if mr, ok := renderer.Current.(renderer.BindingsMenuRenderer); ok {
+				mr.ClearBindingsMenu()
+			}
+			return
+		case engineinput.ActionNone:
+			// Ignore
+		default:
+			// Ignore other actions while in menu
+		}
+	}
 }
 
 // checkAdjacentGenerators checks adjacent cells for unpowered generators and inserts batteries
@@ -1192,8 +1489,38 @@ func checkAdjacentGenerators(g *state.Game) {
 	}
 }
 
+// checkAdjacentTerminalsAtCell checks a specific cell for terminals and interacts with it
+// Returns true if a terminal was interacted with
+func checkAdjacentTerminalsAtCell(g *state.Game, cell *world.Cell) bool {
+	if cell == nil || !gameworld.HasUnusedTerminal(cell) {
+		return false
+	}
+
+	terminal := gameworld.GetGameData(cell).Terminal
+	targetRoom := terminal.TargetRoom
+
+	// Check if the room is already fully revealed
+	alreadyRevealed := isRoomFullyRevealed(g.Grid, targetRoom)
+
+	if alreadyRevealed {
+		logMessage(g, "Accessed %s - ROOM{%s} already explored.", terminal.Name, targetRoom)
+		terminal.Activate()
+		renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("%s already explored", targetRoom), renderer.CalloutColorTerminal, 0)
+	} else {
+		// Reveal the target room
+		if revealRoomByName(g.Grid, targetRoom) {
+			terminal.Activate()
+			logMessage(g, "Accessed %s - revealed ROOM{%s} on security feed!", terminal.Name, targetRoom)
+			renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("Revealed: %s", targetRoom), renderer.CalloutColorTerminal, 0)
+		}
+	}
+	return true
+}
+
 // checkAdjacentTerminals checks adjacent cells for unused CCTV terminals and activates them
-func checkAdjacentTerminals(g *state.Game) {
+// DEPRECATED: Use checkAdjacentInteractables instead for priority-based interaction
+// Returns true if a terminal was interacted with
+func checkAdjacentTerminals(g *state.Game) bool {
 	neighbors := []*world.Cell{
 		g.CurrentCell.North,
 		g.CurrentCell.East,
@@ -1202,33 +1529,241 @@ func checkAdjacentTerminals(g *state.Game) {
 	}
 
 	for _, cell := range neighbors {
-		if cell == nil || !gameworld.HasUnusedTerminal(cell) {
-			continue
+		if checkAdjacentTerminalsAtCell(g, cell) {
+			return true
 		}
+	}
+	return false
+}
 
-		terminal := gameworld.GetGameData(cell).Terminal
-		targetRoom := terminal.TargetRoom
+// checkAdjacentPuzzlesAtCell checks a specific cell for puzzles and interacts with it
+// Returns true if a puzzle was interacted with
+func checkAdjacentPuzzlesAtCell(g *state.Game, cell *world.Cell) bool {
+	if cell == nil || !gameworld.HasUnsolvedPuzzle(cell) {
+		return false
+	}
 
-		// Check if the room is already fully revealed
-		alreadyRevealed := isRoomFullyRevealed(g.Grid, targetRoom)
+	puzzle := gameworld.GetGameData(cell).Puzzle
 
-		if alreadyRevealed {
-			logMessage(g, "Accessed %s - ROOM{%s} already explored.", terminal.Name, targetRoom)
-			terminal.Activate()
-			renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("%s already explored", targetRoom), renderer.CalloutColorTerminal, 0)
+	// Show puzzle description and hint
+	logMessage(g, "Puzzle Terminal: %s", puzzle.Description)
+	if puzzle.Hint != "" {
+		logMessage(g, "Hint: %s", puzzle.Hint)
+	}
+
+	// Check if player has found the solution code
+	if g.HasFoundCode(puzzle.Solution) {
+		// Player has the code, solve the puzzle
+		if !puzzle.IsSolved() {
+			puzzle.Solve()
+			logMessage(g, "Puzzle solved! Solution: %s", puzzle.Solution)
+			applyPuzzleReward(g, puzzle, cell)
+			renderer.AddCallout(cell.Row, cell.Col, "Puzzle solved!", renderer.CalloutColorTerminal, 0)
 		} else {
-			// Reveal the target room
-			if revealRoomByName(g.Grid, targetRoom) {
-				terminal.Activate()
-				logMessage(g, "Accessed %s - revealed ROOM{%s} on security feed!", terminal.Name, targetRoom)
-				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("Revealed: %s", targetRoom), renderer.CalloutColorTerminal, 0)
+			logMessage(g, "This puzzle has already been solved.")
+		}
+	} else {
+		// Show the puzzle challenge
+		if puzzle.PuzzleType == entities.PuzzleSequence {
+			logMessage(g, "Sequence Puzzle: Enter the correct sequence.")
+		} else {
+			logMessage(g, "Pattern Puzzle: Enter the correct pattern.")
+		}
+		logMessage(g, "Look for the solution code in logs and furniture descriptions.")
+	}
+	return true
+}
+
+// checkAdjacentPuzzles checks adjacent cells for unsolved puzzles and allows interaction
+// DEPRECATED: Use checkAdjacentInteractables instead for priority-based interaction
+// Returns true if a puzzle was interacted with
+func checkAdjacentPuzzles(g *state.Game) bool {
+	neighbors := []*world.Cell{
+		g.CurrentCell.North,
+		g.CurrentCell.East,
+		g.CurrentCell.South,
+		g.CurrentCell.West,
+	}
+
+	for _, cell := range neighbors {
+		if checkAdjacentPuzzlesAtCell(g, cell) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkForPuzzleCode extracts puzzle codes from text and adds them to found codes
+func checkForPuzzleCode(g *state.Game, text string) {
+	// Look for patterns like "Code: 1-2-3-4" or "Sequence: up-down-left-right"
+	// Simple pattern matching for codes
+	lowerText := strings.ToLower(text)
+
+	// Check for "code:" or "sequence:" followed by the actual code
+	codePrefixes := []string{"code:", "sequence:", "pattern:", "solution:"}
+	for _, prefix := range codePrefixes {
+		if idx := strings.Index(lowerText, prefix); idx != -1 {
+			// Extract the code after the prefix
+			codeStart := idx + len(prefix)
+			codeText := strings.TrimSpace(text[codeStart:])
+			// Take up to the next sentence or line break
+			if endIdx := strings.IndexAny(codeText, ".,;!?\n"); endIdx != -1 {
+				codeText = codeText[:endIdx]
 			}
+			codeText = strings.TrimSpace(codeText)
+			if codeText != "" {
+				g.AddFoundCode(codeText)
+				logMessage(g, "Discovered code: %s", codeText)
+			}
+			break
 		}
 	}
 }
 
-// checkAdjacentFurniture checks adjacent cells for unchecked furniture and examines them
-func checkAdjacentFurniture(g *state.Game) {
+// applyPuzzleReward applies the reward for solving a puzzle
+func applyPuzzleReward(g *state.Game, puzzle *entities.PuzzleTerminal, cell *world.Cell) {
+	switch puzzle.Reward {
+	case entities.RewardKeycard:
+		// Find a locked door and unlock it
+		// This would be set up during level generation
+		logMessage(g, "A door unlocks somewhere on the station...")
+	case entities.RewardBattery:
+		g.AddBatteries(1)
+		logMessage(g, "Received: ACTION{Battery}")
+		renderer.AddCallout(cell.Row, cell.Col, "Battery received!", renderer.CalloutColorItem, 0)
+	case entities.RewardRevealRoom:
+		// Reveal a random room
+		logMessage(g, "Security feed activated - a new area is revealed.")
+	case entities.RewardUnlockArea:
+		// Unlock a previously locked area
+		logMessage(g, "Access granted to a previously locked section.")
+	case entities.RewardMap:
+		// Give the player the map - powerful reward!
+		g.HasMap = true
+		renderer.AddCallout(cell.Row, cell.Col, "Map acquired!", renderer.CalloutColorItem, 0)
+		logMessage(g, "Received: ITEM{Map}")
+	}
+}
+
+// checkAdjacentInteractables checks adjacent cells in NSEW priority order for interactables
+// Cycles through interactables when player hasn't moved, skipping previously interacted cells
+// Returns true if an interaction occurred
+func checkAdjacentInteractables(g *state.Game) bool {
+	// Check if player has moved since last interaction (reset order if moved)
+	if g.InteractionPlayerRow != g.CurrentCell.Row || g.InteractionPlayerCol != g.CurrentCell.Col {
+		g.LastInteractedRow = -1
+		g.LastInteractedCol = -1
+		g.InteractionPlayerRow = g.CurrentCell.Row
+		g.InteractionPlayerCol = g.CurrentCell.Col
+	}
+
+	// Check cells in NSEW priority order
+	neighbors := []struct {
+		cell      *world.Cell
+		direction string
+	}{
+		{g.CurrentCell.North, "north"},
+		{g.CurrentCell.South, "south"},
+		{g.CurrentCell.East, "east"},
+		{g.CurrentCell.West, "west"},
+	}
+
+	// Find first interactable cell, skipping the last interacted one
+	for _, neighbor := range neighbors {
+		cell := neighbor.cell
+		if cell == nil {
+			continue
+		}
+
+		// Skip if this is the cell we just interacted with
+		if cell.Row == g.LastInteractedRow && cell.Col == g.LastInteractedCol {
+			continue
+		}
+
+		// Check for interactables in priority order: furniture, terminals, puzzles, hazard controls
+		if gameworld.HasFurniture(cell) {
+			if checkAdjacentFurnitureAtCell(g, cell) {
+				g.LastInteractedRow = cell.Row
+				g.LastInteractedCol = cell.Col
+				return true
+			}
+		}
+		if gameworld.HasUnusedTerminal(cell) {
+			if checkAdjacentTerminalsAtCell(g, cell) {
+				g.LastInteractedRow = cell.Row
+				g.LastInteractedCol = cell.Col
+				return true
+			}
+		}
+		if gameworld.HasUnsolvedPuzzle(cell) {
+			if checkAdjacentPuzzlesAtCell(g, cell) {
+				g.LastInteractedRow = cell.Row
+				g.LastInteractedCol = cell.Col
+				return true
+			}
+		}
+		if gameworld.HasInactiveHazardControl(cell) {
+			if checkAdjacentHazardControlsAtCell(g, cell) {
+				g.LastInteractedRow = cell.Row
+				g.LastInteractedCol = cell.Col
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// checkAdjacentFurnitureAtCell checks a specific cell for furniture and interacts with it
+// Returns true if furniture was interacted with
+// Furniture can be interacted with multiple times, but items are only given once
+func checkAdjacentFurnitureAtCell(g *state.Game, cell *world.Cell) bool {
+	if cell == nil || !gameworld.HasFurniture(cell) {
+		return false
+	}
+
+	furniture := gameworld.GetGameData(cell).Furniture
+
+	// Track if this is the first time checking this furniture
+	wasChecked := furniture.IsChecked()
+
+	// Check the furniture and get any contained item (if not already taken)
+	// Check() sets ContainedItem to nil after first check, preventing duplicate items
+	item := furniture.Check()
+
+	// Check if description contains a puzzle code (format: "Code: X-Y-Z" or "Sequence: 1-2-3")
+	// Only check for codes on first interaction
+	if !wasChecked {
+		checkForPuzzleCode(g, furniture.Description)
+	}
+
+	// If furniture contained an item, give it to the player and show callout
+	if item != nil {
+		if item.Name == "Battery" {
+			g.AddBatteries(1)
+			// Show furniture name in furniture color, then "Found: Battery!" in item color
+			calloutText := fmt.Sprintf("FURNITURE{%s}\nFound: ACTION{Battery}!", furniture.Name)
+			renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
+		} else {
+			g.OwnedItems.Put(item)
+			// Show furniture name in furniture color, then "Found: [Item]!" in item color
+			calloutText := fmt.Sprintf("FURNITURE{%s}\nFound: ITEM{%s}!", furniture.Name, item.Name)
+			renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
+		}
+	} else {
+		// Furniture already checked or decorative-only: show description
+		// Show furniture name on first line, description on second line
+		calloutText := fmt.Sprintf("FURNITURE{%s}\n%s", furniture.Name, furniture.Description)
+		renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
+	}
+	return true
+}
+
+// checkAdjacentFurniture checks adjacent cells for furniture and allows interaction
+// DEPRECATED: Use checkAdjacentInteractables instead for priority-based interaction
+// Returns true if furniture was interacted with
+// Furniture can be interacted with multiple times, but items are only given once
+func checkAdjacentFurniture(g *state.Game) bool {
 	neighbors := []*world.Cell{
 		g.CurrentCell.North,
 		g.CurrentCell.East,
@@ -1237,40 +1772,133 @@ func checkAdjacentFurniture(g *state.Game) {
 	}
 
 	for _, cell := range neighbors {
-		if cell == nil || !gameworld.HasUncheckedFurniture(cell) {
+		if cell == nil || !gameworld.HasFurniture(cell) {
 			continue
 		}
 
 		furniture := gameworld.GetGameData(cell).Furniture
 
-		// Check the furniture and get any contained item
+		// Track if this is the first time checking this furniture
+		wasChecked := furniture.IsChecked()
+
+		// Check the furniture and get any contained item (if not already taken)
+		// Check() sets ContainedItem to nil after first check, preventing duplicate items
 		item := furniture.Check()
 
-		// Show the description
-		logMessage(g, "%s: %s", renderer.StyledFurnitureChecked(furniture.Name), furniture.Description)
+		// Check if description contains a puzzle code (format: "Code: X-Y-Z" or "Sequence: 1-2-3")
+		// Only check for codes on first interaction
+		if !wasChecked {
+			checkForPuzzleCode(g, furniture.Description)
+		}
 
 		// If furniture contained an item, give it to the player and show callout
 		if item != nil {
 			if item.Name == "Battery" {
 				g.AddBatteries(1)
-				logMessage(g, "Found inside: ACTION{Battery}")
-				// Use magenta item color for item-giving furniture
-				renderer.AddCallout(cell.Row, cell.Col, "Found: Battery!", renderer.CalloutColorItem, 0)
+				// Show furniture name in furniture color, then "Found: Battery!" in item color
+				calloutText := fmt.Sprintf("FURNITURE{%s}\nFound: ACTION{Battery}!", furniture.Name)
+				renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
 			} else {
 				g.OwnedItems.Put(item)
-				logMessage(g, "Found inside: ITEM{%s}", item.Name)
-				// Use magenta item color for item-giving furniture
-				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("Found: %s!", item.Name), renderer.CalloutColorItem, 0)
+				// Show furniture name in furniture color, then "Found: [Item]!" in item color
+				calloutText := fmt.Sprintf("FURNITURE{%s}\nFound: ITEM{%s}!", furniture.Name, item.Name)
+				renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
 			}
 		} else {
-			// Decorative-only furniture: use brown/tan checked furniture color
-			renderer.AddCallout(cell.Row, cell.Col, furniture.Name, renderer.CalloutColorFurnitureChecked, 0)
+			// Furniture already checked or decorative-only: show description
+			// Show furniture name on first line, description on second line
+			calloutText := fmt.Sprintf("FURNITURE{%s}\n%s", furniture.Name, furniture.Description)
+			renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
+		}
+		return true
+	}
+	return false
+}
+
+// formatHazardCallout formats a hazard description into a 2-line callout
+// First line: hazard description in hazard color (red)
+// Second line: hint (e.g., "Find the Circuit Breaker") in normal text color
+func formatHazardCallout(hazard *entities.Hazard) string {
+	description := hazard.Description
+	info := entities.HazardTypes[hazard.Type]
+
+	// Extract hint from description - look for "Find the" or "Find" pattern
+	// Or use ControlName if available
+	var hint string
+	var mainDescription string
+
+	if info.ControlName != "" {
+		hint = fmt.Sprintf("Find the %s", info.ControlName)
+		// Remove hint from description if it's there
+		if strings.Contains(description, "Find the") {
+			parts := strings.Split(description, "Find the")
+			mainDescription = strings.TrimSpace(parts[0])
+		} else {
+			mainDescription = description
+		}
+	} else if info.ItemName != "" {
+		hint = fmt.Sprintf("Find the %s", info.ItemName)
+		// Remove hint from description if it's there
+		if strings.Contains(description, "Find the") {
+			parts := strings.Split(description, "Find the")
+			mainDescription = strings.TrimSpace(parts[0])
+		} else {
+			mainDescription = description
+		}
+	} else {
+		// Try to extract from description
+		if strings.Contains(description, "Find the") {
+			parts := strings.Split(description, "Find the")
+			if len(parts) > 1 {
+				hint = "Find the" + strings.TrimSpace(parts[1])
+				// Remove hint from description
+				mainDescription = strings.TrimSpace(parts[0])
+			} else {
+				mainDescription = description
+			}
+		} else if strings.Contains(description, "Find ") {
+			parts := strings.Split(description, "Find ")
+			if len(parts) > 1 {
+				hint = "Find " + strings.TrimSpace(parts[1])
+				// Remove hint from description
+				mainDescription = strings.TrimSpace(parts[0])
+			} else {
+				mainDescription = description
+			}
+		} else {
+			mainDescription = description
 		}
 	}
+
+	// Format as 2-line callout with markup
+	// First line uses HAZARD{} markup for red color, second line is normal text
+	if hint != "" {
+		return fmt.Sprintf("HAZARD{%s}\n%s", mainDescription, hint)
+	}
+	// Fallback: just show description in hazard color if we can't extract hint
+	return fmt.Sprintf("HAZARD{%s}", mainDescription)
+}
+
+// checkAdjacentHazardControlsAtCell checks a specific cell for hazard controls and interacts with it
+// Returns true if a hazard control was interacted with
+func checkAdjacentHazardControlsAtCell(g *state.Game, cell *world.Cell) bool {
+	if cell == nil || !gameworld.HasInactiveHazardControl(cell) {
+		return false
+	}
+
+	control := gameworld.GetGameData(cell).HazardControl
+	control.Activate()
+
+	info := entities.HazardTypes[control.Type]
+	logMessage(g, "Activated %s: %s", renderer.StyledHazardCtrl(control.Name), info.FixedMessage)
+	renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("%s activated!", control.Name), renderer.CalloutColorHazardCtrl, 0)
+	return true
 }
 
 // checkAdjacentHazardControls checks adjacent cells for inactive hazard controls and activates them
-func checkAdjacentHazardControls(g *state.Game) {
+// DEPRECATED: Use checkAdjacentInteractables instead for priority-based interaction
+// Returns true if a hazard control was interacted with
+func checkAdjacentHazardControls(g *state.Game) bool {
 	neighbors := []*world.Cell{
 		g.CurrentCell.North,
 		g.CurrentCell.East,
@@ -1279,17 +1907,11 @@ func checkAdjacentHazardControls(g *state.Game) {
 	}
 
 	for _, cell := range neighbors {
-		if cell == nil || !gameworld.HasInactiveHazardControl(cell) {
-			continue
+		if checkAdjacentHazardControlsAtCell(g, cell) {
+			return true
 		}
-
-		control := gameworld.GetGameData(cell).HazardControl
-		control.Activate()
-
-		info := entities.HazardTypes[control.Type]
-		logMessage(g, "Activated %s: %s", renderer.StyledHazardCtrl(control.Name), info.FixedMessage)
-		renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("%s activated!", control.Name), renderer.CalloutColorHazardCtrl, 0)
 	}
+	return false
 }
 
 // saveScreenshotHTML saves the current map view as an HTML file
@@ -1626,6 +2248,227 @@ func cellHasKeycard(c *world.Cell) bool {
 		}
 	})
 	return hasKeycard
+}
+
+// switchToDevMap switches the game to a hard-coded 50x50 developer testing map
+// All possible game cells are placed with a 3-cell margin between each, grouped by type in rows
+func switchToDevMap(g *state.Game) {
+	// Create a 50x50 grid
+	grid := world.NewGrid(50, 50)
+
+	// Build cell connections for navigation
+	grid.BuildAllCellConnections()
+
+	// Initialize all cells as floor cells
+	grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		cell.Room = true
+		cell.Name = "Dev Test Floor"
+		cell.Discovered = true
+		cell.Visited = true
+	})
+
+	// Define spacing: 3-cell margin between items, items placed in rows
+	const margin = 3
+	currentRow := 2
+	currentCol := 2
+
+	// Row 1: Doors (locked and unlocked)
+	doorRow := currentRow
+	doorCol := currentCol
+	doorNames := []string{"Test Room A", "Test Room B", "Test Room C"}
+	for i, roomName := range doorNames {
+		cell := grid.GetCell(doorRow, doorCol+i*(margin+1))
+		if cell != nil {
+			data := gameworld.InitGameData(cell)
+			door := entities.NewDoor(roomName)
+			if i == 0 {
+				door.Unlock() // First door unlocked
+			}
+			data.Door = door
+		}
+	}
+	currentRow += margin + 1
+
+	// Row 2: Generators (unpowered and powered)
+	genRow := currentRow
+	genCol := currentCol
+	for i := 0; i < 3; i++ {
+		cell := grid.GetCell(genRow, genCol+i*(margin+1))
+		if cell != nil {
+			data := gameworld.InitGameData(cell)
+			gen := entities.NewGenerator(fmt.Sprintf("Generator %d", i+1), 2)
+			if i == 2 {
+				// Third generator is powered
+				gen.BatteriesInserted = 2
+			}
+			data.Generator = gen
+			g.AddGenerator(gen)
+		}
+	}
+	currentRow += margin + 1
+
+	// Row 3: CCTV Terminals (unused and used)
+	termRow := currentRow
+	termCol := currentCol
+	for i := 0; i < 2; i++ {
+		cell := grid.GetCell(termRow, termCol+i*(margin+1))
+		if cell != nil {
+			data := gameworld.InitGameData(cell)
+			terminal := entities.NewCCTVTerminal(fmt.Sprintf("CCTV Terminal %d", i+1))
+			if i == 1 {
+				terminal.Activate() // Second terminal is used
+			}
+			terminal.TargetRoom = fmt.Sprintf("Target Room %d", i+1)
+			data.Terminal = terminal
+		}
+	}
+	currentRow += margin + 1
+
+	// Row 4: Puzzle Terminals
+	puzzleRow := currentRow
+	puzzleCol := currentCol
+	for i := 0; i < 2; i++ {
+		cell := grid.GetCell(puzzleRow, puzzleCol+i*(margin+1))
+		if cell != nil {
+			data := gameworld.InitGameData(cell)
+			puzzleType := entities.PuzzleSequence
+			if i == 1 {
+				puzzleType = entities.PuzzlePattern
+			}
+			puzzle := entities.NewPuzzleTerminal(
+				fmt.Sprintf("Puzzle Terminal %d", i+1),
+				puzzleType,
+				fmt.Sprintf("SOL-%d", i+1),
+				fmt.Sprintf("Hint for puzzle %d", i+1),
+				entities.RewardBattery,
+				fmt.Sprintf("Test puzzle %d", i+1),
+			)
+			data.Puzzle = puzzle
+		}
+	}
+	currentRow += margin + 1
+
+	// Row 5: Furniture
+	furnRow := currentRow
+	furnCol := currentCol
+	furnitureTypes := []struct {
+		name, desc, icon string
+		hasItem          bool
+		itemName         string
+	}{
+		{"Desk", "A standard desk", "D", false, ""},
+		{"Cabinet", "Storage cabinet", "C", true, "Battery"},
+		{"Locker", "Personal locker", "L", true, "Test Keycard"},
+		{"Table", "Work table", "T", false, ""},
+	}
+	for i, furn := range furnitureTypes {
+		cell := grid.GetCell(furnRow, furnCol+i*(margin+1))
+		if cell != nil {
+			data := gameworld.InitGameData(cell)
+			furniture := entities.NewFurniture(furn.name, furn.desc, furn.icon)
+			if furn.hasItem {
+				furniture.ContainedItem = world.NewItem(furn.itemName)
+			}
+			data.Furniture = furniture
+		}
+	}
+	currentRow += margin + 1
+
+	// Row 6: Hazards (all types)
+	hazardRow := currentRow
+	hazardCol := currentCol
+	hazardTypes := []entities.HazardType{
+		entities.HazardVacuum,
+		entities.HazardCoolant,
+		entities.HazardElectrical,
+		entities.HazardGas,
+		entities.HazardRadiation,
+	}
+	for i, hazType := range hazardTypes {
+		cell := grid.GetCell(hazardRow, hazardCol+i*(margin+1))
+		if cell != nil {
+			data := gameworld.InitGameData(cell)
+			hazard := entities.NewHazard(hazType)
+			data.Hazard = hazard
+		}
+	}
+	currentRow += margin + 1
+
+	// Row 7: Hazard Controls
+	controlRow := currentRow
+	controlCol := currentCol
+	for i, hazType := range hazardTypes {
+		cell := grid.GetCell(controlRow, controlCol+i*(margin+1))
+		if cell != nil {
+			// Create hazard first
+			hazardCell := grid.GetCell(hazardRow, hazardCol+i*(margin+1))
+			var hazard *entities.Hazard
+			if hazardCell != nil {
+				hazardData := gameworld.GetGameData(hazardCell)
+				hazard = hazardData.Hazard
+			}
+			if hazard == nil {
+				hazard = entities.NewHazard(hazType)
+			}
+
+			data := gameworld.InitGameData(cell)
+			control := entities.NewHazardControl(hazType, hazard)
+			if i == 0 {
+				control.Activate() // First control is activated
+			}
+			data.HazardControl = control
+		}
+	}
+	currentRow += margin + 1
+
+	// Row 8: Items on floor
+	itemRow := currentRow
+	itemCol := currentCol
+	items := []string{"Battery", "Test Keycard", "Patch Kit", "Map"}
+	for i, itemName := range items {
+		cell := grid.GetCell(itemRow, itemCol+i*(margin+1))
+		if cell != nil {
+			item := world.NewItem(itemName)
+			cell.ItemsOnFloor.Put(item)
+		}
+	}
+	currentRow += margin + 1
+
+	// Row 9: Exit (unlocked, all generators powered, all hazards cleared)
+	exitRow := currentRow
+	exitCol := currentCol
+	exitCell := grid.GetCell(exitRow, exitCol)
+	if exitCell != nil {
+		exitCell.ExitCell = true
+		exitCell.Locked = false
+	}
+
+	// Set player start position (top-left, away from entities)
+	startCell := grid.GetCell(1, 1)
+	if startCell != nil {
+		startCell.Room = true
+		startCell.Name = "Dev Test Floor"
+		startCell.Discovered = true
+		startCell.Visited = true
+		grid.SetStartCell(startCell)
+		g.CurrentCell = startCell
+		world.RevealFOVDefault(grid, startCell)
+	}
+
+	// Set exit cell
+	if exitCell != nil {
+		exitCell.Room = true
+		exitCell.Name = "Dev Test Floor"
+		exitCell.Discovered = true
+		grid.SetExitCell(exitCell)
+	}
+
+	// Update game state
+	g.Grid = grid
+	g.Level = 999 // Mark as dev map
+	g.ClearMessages()
+	logMessage(g, "Switched to developer testing map!")
+	logMessage(g, "All entity types are placed in rows with 3-cell margins.")
 }
 
 // cellHasBattery checks if a cell has a battery item on the floor

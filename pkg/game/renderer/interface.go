@@ -3,6 +3,7 @@ package renderer
 import (
 	"image/color"
 
+	"darkstation/pkg/engine/input"
 	"darkstation/pkg/game/state"
 )
 
@@ -42,7 +43,8 @@ type Renderer interface {
 	RenderFrame(g *state.Game)
 
 	// GetInput gets user input (blocking for TUI, event-based for GUI)
-	GetInput() string
+	// It returns a high-level Intent from the tiered input system.
+	GetInput() input.Intent
 
 	// StyleText applies a style to text and returns the styled string
 	// For TUI this applies ANSI colors, for GUI it may return markup
@@ -90,7 +92,28 @@ func RenderFrame(g *state.Game) {
 // GetInput gets user input from the current renderer
 func GetInput() string {
 	if Current != nil {
-		return Current.GetInput()
+		intent := Current.GetInput()
+		// Backwards-compatible helper: most callers only care about the action.
+		switch intent.Action {
+		case input.ActionMoveNorth:
+			return "arrow_up"
+		case input.ActionMoveSouth:
+			return "arrow_down"
+		case input.ActionMoveWest:
+			return "arrow_left"
+		case input.ActionMoveEast:
+			return "arrow_right"
+		case input.ActionHint:
+			return "?"
+		case input.ActionQuit:
+			return "quit"
+		case input.ActionScreenshot:
+			return "screenshot"
+		case input.ActionAction:
+			return "enter"
+		default:
+			return ""
+		}
 	}
 	return ""
 }
@@ -131,9 +154,24 @@ type CalloutRenderer interface {
 	// ClearCalloutsIfMoved clears callouts if player moved from the last known position
 	ClearCalloutsIfMoved(row, col int) bool
 
+	// SetDebounceAnimation triggers a debounce animation in the given direction
+	SetDebounceAnimation(direction string)
+
 	// ShowRoomEntryIfNew shows a room entry callout if the player entered a new room
 	// Returns true if a callout was shown
 	ShowRoomEntryIfNew(row, col int, roomName string) bool
+}
+
+// BindingsMenuRenderer is an optional interface for renderers that can draw
+// a full-screen bindings menu overlay on top of the map.
+type BindingsMenuRenderer interface {
+	// RenderBindingsMenu draws the bindings menu overlay for the given action list
+	// and currently selected index. helpText is optional instruction text to display
+	// on the menu (e.g., "Type new binding code..." when editing).
+	RenderBindingsMenu(g *state.Game, actions []input.Action, selected int, helpText string)
+
+	// ClearBindingsMenu hides any active bindings menu overlay.
+	ClearBindingsMenu()
 }
 
 // Callout colors for different message types (matching cell colors)
@@ -149,6 +187,7 @@ var (
 	CalloutColorFurniture        = color.RGBA{255, 150, 255, 255} // Pink (unchecked)
 	CalloutColorFurnitureChecked = color.RGBA{200, 180, 100, 255} // Tan/brown (checked, decorative)
 	CalloutColorHazardCtrl       = color.RGBA{0, 255, 255, 255}   // Cyan
+	CalloutColorHazard           = color.RGBA{255, 80, 80, 255}   // Red for hazards
 	CalloutColorRoom             = color.RGBA{180, 180, 220, 255} // Light gray-blue for room names
 	CalloutColorDoor             = color.RGBA{255, 255, 0, 255}   // Yellow for locked doors
 )
@@ -157,6 +196,13 @@ var (
 func AddCallout(row, col int, message string, c color.Color, durationMs int) {
 	if cr, ok := Current.(CalloutRenderer); ok {
 		cr.AddCallout(row, col, message, c, durationMs)
+	}
+}
+
+// SetDebounceAnimation triggers a debounce animation in the given direction
+func SetDebounceAnimation(direction string) {
+	if cr, ok := Current.(CalloutRenderer); ok {
+		cr.SetDebounceAnimation(direction)
 	}
 }
 

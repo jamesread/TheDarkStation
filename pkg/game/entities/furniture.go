@@ -24,10 +24,12 @@ func NewFurniture(name, description, icon string) *Furniture {
 }
 
 // Check marks the furniture as examined and returns any contained item
+// Can be called multiple times, but will only return an item on the first call
+// Subsequent calls return nil (item already taken)
 func (f *Furniture) Check() *world.Item {
 	f.Checked = true
 	item := f.ContainedItem
-	f.ContainedItem = nil
+	f.ContainedItem = nil // Clear item after first check to prevent duplicates
 	return item
 }
 
