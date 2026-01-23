@@ -35,6 +35,8 @@ const (
 	ActionAction   // Generic "action/confirm" (e.g., Enter/A)
 	ActionInteract // Interact with furniture/objects (E, Enter, A button)
 	ActionDevMap   // Switch to developer testing map (F9)
+	ActionZoomIn   // Zoom in (increase font/tile size)
+	ActionZoomOut  // Zoom out (decrease font/tile size)
 )
 
 // Intent is the 4th‑layer, high‑level description of what the player wants to do.
@@ -116,6 +118,13 @@ var bindings = map[string]Action{
 	"enter":     ActionInteract,
 	"gamepad_a": ActionInteract, // A button / Cross
 
+	// Zoom (fixed bindings, not rebindable)
+	"=":               ActionZoomIn,
+	"+":               ActionZoomIn,
+	"numpad_add":      ActionZoomIn,
+	"-":               ActionZoomOut,
+	"numpad_subtract": ActionZoomOut,
+
 	// Generic action/confirm inputs (reserved, not unbindable)
 	"action": ActionAction,
 
@@ -157,6 +166,10 @@ func ActionName(a Action) string {
 		return "Action"
 	case ActionInteract:
 		return "Interact"
+	case ActionZoomIn:
+		return "Zoom In"
+	case ActionZoomOut:
+		return "Zoom Out"
 	default:
 		return "None"
 	}

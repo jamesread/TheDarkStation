@@ -63,6 +63,20 @@ type Renderer interface {
 // Current holds the active renderer instance
 var Current Renderer
 
+// Version information (set by main package during initialization)
+var (
+	Version = "dev"
+	Commit  = "unknown"
+	Date    = "unknown"
+)
+
+// SetVersion sets the version information
+func SetVersion(v, c, d string) {
+	Version = v
+	Commit = c
+	Date = d
+}
+
 // SetRenderer sets the active renderer
 func SetRenderer(r Renderer) {
 	Current = r
@@ -168,7 +182,8 @@ type BindingsMenuRenderer interface {
 	// RenderBindingsMenu draws the bindings menu overlay for the given action list
 	// and currently selected index. helpText is optional instruction text to display
 	// on the menu (e.g., "Type new binding code..." when editing).
-	RenderBindingsMenu(g *state.Game, actions []input.Action, selected int, helpText string)
+	// nonRebindable is a set of actions that cannot be rebound (should be displayed differently).
+	RenderBindingsMenu(g *state.Game, actions []input.Action, selected int, helpText string, nonRebindable map[input.Action]bool)
 
 	// ClearBindingsMenu hides any active bindings menu overlay.
 	ClearBindingsMenu()

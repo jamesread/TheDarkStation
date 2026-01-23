@@ -23,6 +23,13 @@ import (
 	gameworld "darkstation/pkg/game/world"
 )
 
+// Version information set via ldflags during build
+var (
+	version = "dev"
+	commit  = "unknown"
+	date    = "unknown"
+)
+
 func initGettext() {
 	gotext.Configure("mo", "en_GB.utf8", "default")
 }
@@ -530,6 +537,8 @@ func setupLevel(g *state.Game) {
 	// Collect all unique room names (excluding corridors)
 	roomNames := collectUniqueRoomNames(g.Grid)
 
+	// roomEntries is already available from earlier in setupLevel (line 379)
+
 	for i := 0; i < numTerminals; i++ {
 		terminalRoom := findRoom(g, g.Grid.StartCell(), &avoid)
 		if terminalRoom != nil && len(roomNames) > 0 {
@@ -541,8 +550,50 @@ func setupLevel(g *state.Game) {
 			// Remove this room from the list so each terminal reveals a different room
 			roomNames = append(roomNames[:targetIdx], roomNames[targetIdx+1:]...)
 
-			gameworld.GetGameData(terminalRoom).Terminal = terminal
-			avoid.Put(terminalRoom)
+			// Find a valid cell in the room that doesn't block entrances
+			roomName := terminalRoom.Name
+			entryPoints := mapset.New[*world.Cell]()
+			if entryData, ok := roomEntries[roomName]; ok {
+				for _, entryCell := range entryData.entryCells {
+					// Mark the room cells adjacent to entry points as blocked
+					neighbors := []*world.Cell{entryCell.North, entryCell.East, entryCell.South, entryCell.West}
+					for _, neighbor := range neighbors {
+						if neighbor != nil && neighbor.Room && neighbor.Name == roomName {
+							entryPoints.Put(neighbor)
+						}
+					}
+				}
+			}
+
+			// Collect all cells in this room
+			var roomCells []*world.Cell
+			g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+				if cell != nil && cell.Room && cell.Name == roomName {
+					roomCells = append(roomCells, cell)
+				}
+			})
+
+			// Find valid cells (not entry points, not already used, not exit cells)
+			var validCells []*world.Cell
+			for _, cell := range roomCells {
+				data := gameworld.GetGameData(cell)
+				// Don't place terminal on entry points, exit cells, or cells with other entities
+				if !avoid.Has(cell) && !cell.ExitCell && !entryPoints.Has(cell) &&
+					data.Generator == nil && data.Door == nil && data.Terminal == nil &&
+					data.Furniture == nil && data.Hazard == nil && data.HazardControl == nil {
+					validCells = append(validCells, cell)
+				}
+			}
+
+			// If no valid cells found, fall back to the original room (but this shouldn't happen)
+			if len(validCells) == 0 {
+				validCells = []*world.Cell{terminalRoom}
+			}
+
+			// Pick a random valid cell
+			selectedCell := validCells[rand.Intn(len(validCells))]
+			gameworld.GetGameData(selectedCell).Terminal = terminal
+			avoid.Put(selectedCell)
 		}
 	}
 
@@ -963,9 +1014,7 @@ func advanceLevel(g *state.Game) {
 func showLevelObjectives(g *state.Game) {
 	// Count doors
 	numDoors := countDoors(g)
-	if numDoors > 0 {
-		logMessage(g, "Find keycards to unlock ACTION{%d} door(s).", numDoors)
-	}
+	// Note: Keycard message removed - players can discover locked doors naturally
 	if len(g.Generators) > 0 {
 		logMessage(g, "Power up ACTION{%d} generator(s) with batteries.", len(g.Generators))
 	}
@@ -1161,6 +1210,10 @@ func moveCell(g *state.Game, requestedCell *world.Cell) {
 			g.LastInteractedCol = -1
 			g.InteractionPlayerRow = requestedCell.Row
 			g.InteractionPlayerCol = requestedCell.Col
+			// Increment movement count for hint system (only if player actually moved from a previous position)
+			if g.CurrentCell != nil {
+				g.MovementCount++
+			}
 		}
 
 		g.CurrentCell = requestedCell
@@ -1247,6 +1300,9 @@ func main() {
 	initGettext()
 	rand.Seed(time.Now().UnixNano())
 
+	// Set version information for renderers
+	renderer.SetVersion(version, commit, date)
+
 	if *useEbiten {
 		// Initialize the Ebiten renderer
 		ebitRenderer := ebitenRenderer.New()
@@ -1327,6 +1383,15 @@ func mainLoop(g *state.Game) {
 	// Check adjacent cells for unpowered generators and auto-insert batteries
 	checkAdjacentGenerators(g)
 
+	// Remove messages older than 10 seconds from the buffer
+	g.RemoveOldMessages()
+
+	// Show hints for interactable objects (only for first 3 interactions)
+	showInteractableHints(g)
+
+	// Show movement hint (only for first 3 movements)
+	showMovementHint(g)
+
 	// Hazard controls, terminals, and puzzles now require explicit interaction (handled in ActionInteract)
 
 	// Check adjacent cells for furniture and show hints
@@ -1337,6 +1402,13 @@ func mainLoop(g *state.Game) {
 
 	// Get and process input (tiered input system -> Intent -> game logic)
 	processIntent(g, renderer.Current.GetInput())
+}
+
+// isNonRebindable checks if an action cannot be rebound
+func isNonRebindable(action engineinput.Action) bool {
+	return action == engineinput.ActionInteract ||
+		action == engineinput.ActionZoomIn ||
+		action == engineinput.ActionZoomOut
 }
 
 // runBindingsMenu presents a simple bindings configuration menu.
@@ -1351,6 +1423,9 @@ func runBindingsMenu(g *state.Game) {
 		engineinput.ActionMoveWest,
 		engineinput.ActionMoveEast,
 		engineinput.ActionHint,
+		engineinput.ActionInteract,
+		engineinput.ActionZoomIn,
+		engineinput.ActionZoomOut,
 		// ActionScreenshot, ActionOpenMenu, ActionQuit removed - not rebindable
 	}
 
@@ -1358,15 +1433,33 @@ func runBindingsMenu(g *state.Game) {
 
 	helpText := ""
 
+	// Build set of non-rebindable actions
+	nonRebindable := make(map[engineinput.Action]bool)
+	for _, act := range actions {
+		if isNonRebindable(act) {
+			nonRebindable[act] = true
+		}
+	}
+
 	for {
 		// Prefer a renderer-native, full-screen overlay if supported (Ebiten).
 		if mr, ok := renderer.Current.(renderer.BindingsMenuRenderer); ok {
-			mr.RenderBindingsMenu(g, actions, selected, helpText)
+			mr.RenderBindingsMenu(g, actions, selected, helpText, nonRebindable)
 		} else {
 			// Fallback: render menu into the message log for TUI.
 			g.ClearMessages()
 			logMessage(g, "=== Bindings Menu ===")
-			logMessage(g, "Use up/down to select, ? to edit, F10/Start or q to exit.")
+			versionText := fmt.Sprintf("Version: %s", renderer.Version)
+			if renderer.Commit != "unknown" && len(renderer.Commit) > 0 {
+				versionText += fmt.Sprintf(" (%s)", renderer.Commit[:7])
+			}
+			logMessage(g, versionText)
+			// Show instructions, but only mention "? to edit" if selected action is rebindable
+			if selected < len(actions) && !isNonRebindable(actions[selected]) {
+				logMessage(g, "Use up/down to select, ? to edit, F10/Start or q to exit.")
+			} else {
+				logMessage(g, "Use up/down to select, F10/Start or q to exit.")
+			}
 
 			byAction := engineinput.GetBindingsByAction()
 			for i, act := range actions {
@@ -1380,7 +1473,12 @@ func runBindingsMenu(g *state.Game) {
 				if codeText == "" {
 					codeText = "(unbound)"
 				}
-				logMessage(g, "%s%s: %s", prefix, name, codeText)
+				// Use different styling for non-rebindable actions
+				if isNonRebindable(act) {
+					logMessage(g, "%s%s: %s (fixed)", prefix, renderer.StyledSubtle(name), codeText)
+				} else {
+					logMessage(g, "%s%s: %s", prefix, name, codeText)
+				}
 			}
 
 			// Re-render frame with updated messages
@@ -1404,13 +1502,21 @@ func runBindingsMenu(g *state.Game) {
 		case engineinput.ActionAction, engineinput.ActionHint:
 			// Edit binding for selected action: ask for a new code string
 			action := actions[selected]
+
+			// Check if action is non-rebindable - don't allow editing
+			if isNonRebindable(action) {
+				// Don't show any help text for non-rebindable actions
+				helpText = ""
+				continue
+			}
+
 			actionName := engineinput.ActionName(action)
 
 			// Set help text to show on menu overlay (for Ebiten) or in messages (for TUI)
 			helpText = fmt.Sprintf("Editing binding for: %s", actionName)
 			if mr, ok := renderer.Current.(renderer.BindingsMenuRenderer); ok {
 				// Ebiten: help text will be drawn on the menu overlay
-				mr.RenderBindingsMenu(g, actions, selected, helpText)
+				mr.RenderBindingsMenu(g, actions, selected, helpText, nonRebindable)
 			} else {
 				// TUI: fall back to messages
 				g.ClearMessages()
@@ -1645,6 +1751,66 @@ func applyPuzzleReward(g *state.Game, puzzle *entities.PuzzleTerminal, cell *wor
 	}
 }
 
+// showMovementHint shows a callout hint next to the player for movement controls
+// Only shows hint if the player has moved fewer than 3 times
+func showMovementHint(g *state.Game) {
+	// Only show hint for the first 3 movements
+	if g.MovementCount >= 3 {
+		return
+	}
+
+	// Show hint next to the player
+	if g.CurrentCell != nil {
+		renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, "Press WASD or arrow keys to move", renderer.CalloutColorInfo, 0)
+	}
+}
+
+// showInteractableHints shows callout hints for interactable objects adjacent to the player
+// Only shows hints if the player has interacted with fewer than 3 objects
+func showInteractableHints(g *state.Game) {
+	// Only show hints for the first 3 interactions
+	if g.InteractionsCount >= 3 {
+		return
+	}
+
+	// Check adjacent cells for interactable objects
+	neighbors := []*world.Cell{
+		g.CurrentCell.North,
+		g.CurrentCell.South,
+		g.CurrentCell.East,
+		g.CurrentCell.West,
+	}
+
+	for _, cell := range neighbors {
+		if cell == nil {
+			continue
+		}
+
+		// Check for interactables that are still interactable (not already used/checked)
+		// Priority order: furniture, terminals, puzzles, hazard controls
+		if gameworld.HasFurniture(cell) {
+			// Furniture can always be checked (even if already checked), so show hint
+			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
+			return // Only show one hint at a time
+		}
+		if gameworld.HasUnusedTerminal(cell) {
+			// Terminal is unused, show hint
+			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
+			return
+		}
+		if gameworld.HasUnsolvedPuzzle(cell) {
+			// Puzzle is unsolved, show hint
+			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
+			return
+		}
+		if gameworld.HasInactiveHazardControl(cell) {
+			// Hazard control is inactive, show hint
+			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
+			return
+		}
+	}
+}
+
 // checkAdjacentInteractables checks adjacent cells in NSEW priority order for interactables
 // Cycles through interactables when player hasn't moved, skipping previously interacted cells
 // Returns true if an interaction occurred
@@ -1685,6 +1851,7 @@ func checkAdjacentInteractables(g *state.Game) bool {
 			if checkAdjacentFurnitureAtCell(g, cell) {
 				g.LastInteractedRow = cell.Row
 				g.LastInteractedCol = cell.Col
+				g.InteractionsCount++
 				return true
 			}
 		}
@@ -1692,6 +1859,7 @@ func checkAdjacentInteractables(g *state.Game) bool {
 			if checkAdjacentTerminalsAtCell(g, cell) {
 				g.LastInteractedRow = cell.Row
 				g.LastInteractedCol = cell.Col
+				g.InteractionsCount++
 				return true
 			}
 		}
@@ -1699,6 +1867,7 @@ func checkAdjacentInteractables(g *state.Game) bool {
 			if checkAdjacentPuzzlesAtCell(g, cell) {
 				g.LastInteractedRow = cell.Row
 				g.LastInteractedCol = cell.Col
+				g.InteractionsCount++
 				return true
 			}
 		}
@@ -1706,6 +1875,7 @@ func checkAdjacentInteractables(g *state.Game) bool {
 			if checkAdjacentHazardControlsAtCell(g, cell) {
 				g.LastInteractedRow = cell.Row
 				g.LastInteractedCol = cell.Col
+				g.InteractionsCount++
 				return true
 			}
 		}
@@ -2066,7 +2236,7 @@ func saveScreenshotHTML(g *state.Game) string {
 		html.WriteString(`    <div class="messages">` + "\n")
 		for _, msg := range g.Messages {
 			// Strip ANSI codes for HTML output
-			cleanMsg := stripANSI(msg)
+			cleanMsg := stripANSI(msg.Text)
 			html.WriteString(fmt.Sprintf(`        <div class="message">%s</div>`+"\n", cleanMsg))
 		}
 		html.WriteString(`    </div>` + "\n")

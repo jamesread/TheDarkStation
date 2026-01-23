@@ -114,6 +114,8 @@ func New() *TUIRenderer {
 
 // Init initializes the TUI renderer (colors, etc.)
 func (t *TUIRenderer) Init() {
+	fmt.Println("[Font] Using terminal default font")
+
 	t.colorCell = color.Style{color.FgGray}
 	t.colorCellText = color.Style{color.FgBlue}
 	t.colorAction = color.Style{color.FgMagenta}
@@ -673,7 +675,7 @@ func (t *TUIRenderer) printMessagesPane(g *state.Game) {
 		fmt.Println(t.colorSubtle.Sprint("  (no messages)"))
 	} else {
 		for _, msg := range g.Messages {
-			fmt.Printf("  %s\n", msg)
+			fmt.Printf("  %s\n", msg.Text)
 		}
 	}
 

@@ -1,6 +1,8 @@
 package state
 
 import (
+	"time"
+
 	"github.com/zyedidia/generic/mapset"
 
 	"darkstation/pkg/engine/world"
@@ -29,7 +31,7 @@ type Game struct {
 
 	OwnedItems world.ItemSet
 
-	Messages []string
+	Messages []MessageEntry
 
 	NavStyle NavStyle
 
@@ -44,6 +46,14 @@ type Game struct {
 	LastInteractedCol    int                   // Col of last cell interacted with (for cycling)
 	InteractionPlayerRow int                   // Player row when interaction order was established
 	InteractionPlayerCol int                   // Player col when interaction order was established
+	InteractionsCount    int                   // Number of objects the player has interacted with (for hint system)
+	MovementCount        int                   // Number of times the player has moved (for movement hint)
+}
+
+// MessageEntry represents a message with a timestamp
+type MessageEntry struct {
+	Text      string
+	Timestamp int64 // Unix timestamp in milliseconds when message was added
 }
 
 // NewGame creates a new game instance
@@ -51,7 +61,7 @@ func NewGame() *Game {
 	return &Game{
 		OwnedItems: mapset.New[*world.Item](),
 		HasMap:     false,
-		Messages:   make([]string, 0),
+		Messages:   make([]MessageEntry, 0),
 		Level:      1,
 		Batteries:  0,
 		Generators: make([]*entities.Generator, 0),
@@ -119,7 +129,15 @@ func (g *Game) UnpoweredGeneratorCount() int {
 // AddMessage adds a message to the game's message log
 func (g *Game) AddMessage(msg string) {
 	const maxMessages = 5
-	g.Messages = append(g.Messages, msg)
+	now := time.Now().UnixMilli()
+
+	// Remove messages older than 10 seconds before adding new one
+	g.RemoveOldMessages()
+
+	g.Messages = append(g.Messages, MessageEntry{
+		Text:      msg,
+		Timestamp: now,
+	})
 
 	// Keep only the last maxMessages
 	if len(g.Messages) > maxMessages {
@@ -127,9 +145,24 @@ func (g *Game) AddMessage(msg string) {
 	}
 }
 
+// RemoveOldMessages removes messages older than 10 seconds from the buffer
+func (g *Game) RemoveOldMessages() {
+	const messageLifetime = 10000 // 10 seconds in milliseconds
+	now := time.Now().UnixMilli()
+
+	filtered := make([]MessageEntry, 0, len(g.Messages))
+	for _, msg := range g.Messages {
+		age := now - msg.Timestamp
+		if age < messageLifetime {
+			filtered = append(filtered, msg)
+		}
+	}
+	g.Messages = filtered
+}
+
 // ClearMessages clears all messages
 func (g *Game) ClearMessages() {
-	g.Messages = make([]string, 0)
+	g.Messages = make([]MessageEntry, 0)
 }
 
 // AddHint adds a hint to the game

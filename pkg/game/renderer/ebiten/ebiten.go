@@ -8,7 +8,6 @@ import (
 	"image/color"
 	"math"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -30,38 +29,40 @@ import (
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
+	"darkstation/pkg/resources"
 )
 
 // Color palette for the game - brighter colors for visibility
 var (
-	colorBackground      = color.RGBA{26, 26, 46, 255}    // Dark blue-gray
-	colorMapBackground   = color.RGBA{15, 15, 26, 255}    // Darker for map area
-	colorPlayer          = color.RGBA{0, 255, 0, 255}     // Bright green
-	colorWall            = color.RGBA{180, 180, 200, 255} // Light gray-blue for wall text
-	colorWallBg          = color.RGBA{60, 60, 80, 255}    // Darker background for walls
-	colorFloor           = color.RGBA{100, 100, 120, 255} // Medium gray for undiscovered
-	colorFloorVisited    = color.RGBA{160, 160, 180, 255} // Lighter gray for visited
-	colorDoorLocked      = color.RGBA{255, 255, 0, 255}   // Bright yellow
-	colorDoorUnlocked    = color.RGBA{0, 220, 0, 255}     // Bright green
-	colorKeycard         = color.RGBA{100, 150, 255, 255} // Bright blue
-	colorItem            = color.RGBA{220, 170, 255, 255} // Bright purple
-	colorBattery         = color.RGBA{255, 200, 100, 255} // Orange for batteries
-	colorHazard          = color.RGBA{255, 80, 80, 255}   // Bright red
-	colorHazardCtrl      = color.RGBA{0, 255, 255, 255}   // Bright cyan
-	colorGeneratorOff    = color.RGBA{255, 100, 100, 255} // Bright red
-	colorGeneratorOn     = color.RGBA{0, 255, 100, 255}   // Bright green
-	colorTerminal        = color.RGBA{100, 150, 255, 255} // Bright blue
-	colorTerminalUsed    = color.RGBA{120, 120, 140, 255} // Medium gray
-	colorFurniture       = color.RGBA{255, 150, 255, 255} // Bright pink
-	colorFurnitureCheck  = color.RGBA{200, 180, 100, 255} // Tan/brown
-	colorExitLocked      = color.RGBA{255, 100, 100, 255} // Bright red
-	colorExitUnlocked    = color.RGBA{100, 255, 100, 255} // Bright green
-	colorSubtle          = color.RGBA{120, 120, 140, 255} // Medium gray
-	colorText            = color.RGBA{240, 240, 255, 255} // Bright off-white
-	colorAction          = color.RGBA{220, 170, 255, 255} // Bright purple
-	colorDenied          = color.RGBA{255, 100, 100, 255} // Bright red
-	colorPanelBackground = color.RGBA{30, 30, 50, 220}    // Semi-transparent dark
-	colorFocusBackground = color.RGBA{60, 80, 100, 200}   // Dark blue-gray for focused/interacted cell (darker than cell text)
+	colorBackground        = color.RGBA{26, 26, 46, 255}    // Dark blue-gray
+	colorMapBackground     = color.RGBA{15, 15, 26, 255}    // Darker for map area
+	colorPlayer            = color.RGBA{0, 255, 0, 255}     // Bright green
+	colorWall              = color.RGBA{180, 180, 200, 255} // Light gray-blue for wall text
+	colorWallBg            = color.RGBA{60, 60, 80, 255}    // Darker background for walls
+	colorFloor             = color.RGBA{100, 100, 120, 255} // Medium gray for undiscovered
+	colorFloorVisited      = color.RGBA{160, 160, 180, 255} // Lighter gray for visited
+	colorDoorLocked        = color.RGBA{255, 255, 0, 255}   // Bright yellow
+	colorDoorUnlocked      = color.RGBA{0, 220, 0, 255}     // Bright green
+	colorKeycard           = color.RGBA{100, 150, 255, 255} // Bright blue
+	colorItem              = color.RGBA{220, 170, 255, 255} // Bright purple
+	colorBattery           = color.RGBA{255, 200, 100, 255} // Orange for batteries
+	colorHazard            = color.RGBA{255, 80, 80, 255}   // Bright red
+	colorHazardCtrl        = color.RGBA{0, 255, 255, 255}   // Bright cyan
+	colorGeneratorOff      = color.RGBA{255, 100, 100, 255} // Bright red
+	colorGeneratorOn       = color.RGBA{0, 255, 100, 255}   // Bright green
+	colorTerminal          = color.RGBA{100, 150, 255, 255} // Bright blue
+	colorTerminalUsed      = color.RGBA{120, 120, 140, 255} // Medium gray
+	colorFurniture         = color.RGBA{255, 150, 255, 255} // Bright pink
+	colorFurnitureCheck    = color.RGBA{200, 180, 100, 255} // Tan/brown
+	colorExitLocked        = color.RGBA{255, 100, 100, 255} // Bright red
+	colorExitUnlocked      = color.RGBA{100, 255, 100, 255} // Bright green
+	colorSubtle            = color.RGBA{120, 120, 140, 255} // Medium gray
+	colorText              = color.RGBA{240, 240, 255, 255} // Bright off-white
+	colorAction            = color.RGBA{220, 170, 255, 255} // Bright purple
+	colorDenied            = color.RGBA{255, 100, 100, 255} // Bright red
+	colorPanelBackground   = color.RGBA{30, 30, 50, 220}    // Semi-transparent dark
+	colorFocusBackground   = color.RGBA{60, 80, 100, 200}   // Dark blue-gray for focused/interacted cell (darker than cell text)
+	colorBlockedBackground = color.RGBA{100, 100, 130, 220} // Brighter background for hazards and locked doors that need to be cleared
 
 	// Callout colors
 	ColorCalloutInfo    = color.RGBA{200, 200, 255, 255} // Light blue for info
@@ -171,6 +172,10 @@ type renderSnapshot struct {
 	exitAnimStartTime int64    // Timestamp when exit animation started
 	focusedCellRow    int      // Row of cell with active callout (for focus background)
 	focusedCellCol    int      // Col of cell with active callout (for focus background)
+	interactableCells []struct {
+		row int
+		col int
+	} // Cells with interactable objects (for focus background)
 }
 
 // generatorState holds generator info for rendering
@@ -232,11 +237,12 @@ type EbitenRenderer struct {
 	messagesMutex   sync.RWMutex
 
 	// Bindings menu overlay state
-	menuActive   bool
-	menuActions  []engineinput.Action
-	menuSelected int
-	menuHelpText string
-	menuMutex    sync.RWMutex
+	menuActive        bool
+	menuActions       []engineinput.Action
+	menuSelected      int
+	menuHelpText      string
+	menuNonRebindable map[engineinput.Action]bool
+	menuMutex         sync.RWMutex
 
 	// Analog stick state tracking (for edge detection)
 	// Maps gamepad ID to previous stick state (x, y values)
@@ -298,19 +304,17 @@ func (e *EbitenRenderer) Init() {
 		e.tileSize = cfg.TileSize
 	}
 
-	// Load the monospace font for map tiles
-	// Try to load Cascadia Code NF from system, fall back to Go Mono
-	monoSrc, fontPath := e.loadCascadiaCodeNF()
-	if monoSrc == nil {
-		// Fall back to embedded Go Mono
-		fmt.Println("[Font] Using fallback font: Go Mono (embedded)")
-		var err error
+	// Load the monospace font for map tiles (embedded Cascadia Code NF)
+	monoSrc, err := text.NewGoTextFaceSource(bytes.NewReader(resources.CascadiaCodeNFRegular))
+	if err != nil {
+		// Fall back to embedded Go Mono if Cascadia Code NF fails to load
+		fmt.Println("[Font] Monospace: Cascadia Code NF failed to load, using Go Mono (embedded)")
 		monoSrc, err = text.NewGoTextFaceSource(bytes.NewReader(gomono.TTF))
 		if err != nil {
 			panic(fmt.Sprintf("failed to load mono font: %v", err))
 		}
 	} else {
-		fmt.Printf("[Font] Loaded: %s\n", fontPath)
+		fmt.Println("[Font] Monospace: Cascadia Code NF (embedded)")
 	}
 	e.monoFontSource = monoSrc
 
@@ -319,97 +323,11 @@ func (e *EbitenRenderer) Init() {
 	if err != nil {
 		panic(fmt.Sprintf("failed to load sans font: %v", err))
 	}
+	fmt.Println("[Font] Sans-serif: Go Regular (embedded)")
 	e.sansFontSource = sansSrc
 
 	// Calculate initial viewport based on window and tile size
 	e.recalculateViewport()
-}
-
-// loadCascadiaCodeNF attempts to load Cascadia Code NF from common system font locations
-// Returns the font source and the path it was loaded from (empty if not found)
-func (e *EbitenRenderer) loadCascadiaCodeNF() (*text.GoTextFaceSource, string) {
-	// Common font file names for Cascadia Code NF
-	fontNames := []string{
-		"CascadiaCodeNF-Regular.otf",
-		"CascadiaCodeNF-Regular.ttf",
-		"CascadiaCodeNFMono-Regular.ttf",
-		"CaskaydiaCoveNerdFont-Regular.ttf",
-		"CaskaydiaCoveNerdFontMono-Regular.ttf",
-		"Caskaydia Cove Nerd Font Complete Mono.ttf",
-		"CascadiaCode-Regular.ttf",
-		"CascadiaMono-Regular.ttf",
-	}
-
-	// Common font directories
-	fontDirs := []string{}
-
-	// User font directories
-	if home, err := os.UserHomeDir(); err == nil {
-		fontDirs = append(fontDirs,
-			filepath.Join(home, ".local", "share", "fonts"),
-			filepath.Join(home, ".fonts"),
-		)
-	}
-
-	// System font directories
-	fontDirs = append(fontDirs,
-		"/usr/share/fonts/truetype",
-		"/usr/share/fonts/TTF",
-		"/usr/share/fonts",
-		"/usr/local/share/fonts",
-	)
-
-	// Search for the font
-	for _, dir := range fontDirs {
-		for _, name := range fontNames {
-			// Try direct path
-			fontPath := filepath.Join(dir, name)
-			if src := e.tryLoadFont(fontPath); src != nil {
-				return src, fontPath
-			}
-
-			// Try in subdirectories (fonts are often in brand-named folders)
-			subdirs := []string{"cascadia-code", "cascadia-code-nf-fonts", "cascadia", "nerd-fonts", "CascadiaCode", "TTF"}
-			for _, subdir := range subdirs {
-				fontPath = filepath.Join(dir, subdir, name)
-				if src := e.tryLoadFont(fontPath); src != nil {
-					return src, fontPath
-				}
-			}
-		}
-
-		// Also try glob pattern for any Cascadia/Caskaydia font
-		patterns := []string{
-			filepath.Join(dir, "**/Caskaydia*Mono*.ttf"),
-			filepath.Join(dir, "**/CascadiaCode*.ttf"),
-			filepath.Join(dir, "**/CascadiaMono*.ttf"),
-		}
-		for _, pattern := range patterns {
-			matches, _ := filepath.Glob(pattern)
-			for _, match := range matches {
-				if src := e.tryLoadFont(match); src != nil {
-					return src, match
-				}
-			}
-		}
-	}
-
-	return nil, ""
-}
-
-// tryLoadFont attempts to load a font from the given path
-func (e *EbitenRenderer) tryLoadFont(path string) *text.GoTextFaceSource {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-
-	src, err := text.NewGoTextFaceSource(bytes.NewReader(data))
-	if err != nil {
-		return nil
-	}
-
-	return src
 }
 
 // Clear clears the display (no-op for Ebiten, clearing happens in Draw)
@@ -536,7 +454,7 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 	// Create a map of current game messages for quick lookup
 	currentMessages := make(map[string]bool)
 	for _, msg := range g.Messages {
-		currentMessages[msg] = true
+		currentMessages[msg.Text] = true
 	}
 
 	// Update tracked messages: add new ones, keep existing ones (even if removed from game), remove expired ones
@@ -555,15 +473,15 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 	for _, msg := range g.Messages {
 		found := false
 		for _, tracked := range e.trackedMessages {
-			if tracked.Text == msg {
+			if tracked.Text == msg.Text {
 				found = true
 				break
 			}
 		}
 		if !found {
 			updatedMessages = append(updatedMessages, messageEntry{
-				Text:      msg,
-				Timestamp: now,
+				Text:      msg.Text,
+				Timestamp: msg.Timestamp,
 			})
 		}
 	}
@@ -627,6 +545,35 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 		e.snapshot.focusedCellCol = mostRecentCallout.Col
 	}
 	e.calloutsMutex.RUnlock()
+
+	// Find interactable cells adjacent to player (for focus background)
+	e.snapshot.interactableCells = make([]struct {
+		row int
+		col int
+	}, 0)
+	if g.CurrentCell != nil {
+		neighbors := []*world.Cell{
+			g.CurrentCell.North,
+			g.CurrentCell.South,
+			g.CurrentCell.East,
+			g.CurrentCell.West,
+		}
+		for _, cell := range neighbors {
+			if cell == nil {
+				continue
+			}
+			// Check if cell has interactable objects
+			if gameworld.HasFurniture(cell) ||
+				gameworld.HasUnusedTerminal(cell) ||
+				gameworld.HasUnsolvedPuzzle(cell) ||
+				gameworld.HasInactiveHazardControl(cell) {
+				e.snapshot.interactableCells = append(e.snapshot.interactableCells, struct {
+					row int
+					col int
+				}{cell.Row, cell.Col})
+			}
+		}
+	}
 
 	// Copy active callouts (with expiration filtering)
 	e.calloutsMutex.Lock()
@@ -1358,7 +1305,7 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	mapX := (screenWidth - mapAreaWidth) / 2
 	mapY := headerHeight + frameBorder
 
-	// Draw header (deck number and room name) - use snapshot data
+	// Draw header (empty now - deck number moved to objectives panel)
 	e.drawHeaderFromSnapshot(screen, &snap, screenWidth, headerHeight)
 
 	// Draw map background
@@ -1387,7 +1334,7 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 
 // RenderBindingsMenu implements renderer.BindingsMenuRenderer for Ebiten.
 // It captures the current frame and marks the menu overlay as active.
-func (e *EbitenRenderer) RenderBindingsMenu(g *state.Game, actions []engineinput.Action, selected int, helpText string) {
+func (e *EbitenRenderer) RenderBindingsMenu(g *state.Game, actions []engineinput.Action, selected int, helpText string, nonRebindable map[engineinput.Action]bool) {
 	// Keep the underlying game/map snapshot up to date
 	e.RenderFrame(g)
 
@@ -1398,6 +1345,10 @@ func (e *EbitenRenderer) RenderBindingsMenu(g *state.Game, actions []engineinput
 	e.menuHelpText = helpText
 	e.menuActions = make([]engineinput.Action, len(actions))
 	copy(e.menuActions, actions)
+	e.menuNonRebindable = make(map[engineinput.Action]bool)
+	for act, val := range nonRebindable {
+		e.menuNonRebindable[act] = val
+	}
 }
 
 // ClearBindingsMenu hides the bindings menu overlay.
@@ -1407,6 +1358,7 @@ func (e *EbitenRenderer) ClearBindingsMenu() {
 	e.menuActive = false
 	e.menuActions = nil
 	e.menuHelpText = ""
+	e.menuNonRebindable = nil
 }
 
 // drawBindingsMenuOverlay draws a semi-transparent panel over most of the screen
@@ -1417,6 +1369,10 @@ func (e *EbitenRenderer) drawBindingsMenuOverlay(screen *ebiten.Image) {
 	copy(actions, e.menuActions)
 	selected := e.menuSelected
 	helpText := e.menuHelpText
+	nonRebindable := make(map[engineinput.Action]bool)
+	for act, val := range e.menuNonRebindable {
+		nonRebindable[act] = val
+	}
 	e.menuMutex.RUnlock()
 
 	if len(actions) == 0 {
@@ -1461,11 +1417,28 @@ func (e *EbitenRenderer) drawBindingsMenuOverlay(screen *ebiten.Image) {
 	e.drawColoredText(screen, "Bindings", x, y-int(fontSize), colorAction)
 	y += lineHeight
 
+	// Show version information
+	versionText := fmt.Sprintf("Version: %s", renderer.Version)
+	if renderer.Commit != "unknown" && len(renderer.Commit) > 0 {
+		versionText += fmt.Sprintf(" (%s)", renderer.Commit[:7])
+	}
+	e.drawColoredText(screen, versionText, x, y-int(fontSize), colorSubtle)
+	y += lineHeight
+
 	// Show help text if provided (e.g., when editing a binding), otherwise show default instructions
+	// Don't show "?: edit binding" hint if selected action is non-rebindable
 	if helpText != "" {
 		e.drawColoredText(screen, helpText, x, y-int(fontSize), colorAction)
 	} else {
-		e.drawColoredText(screen, "Up/Down: select    ?: edit binding    F10/Start or q: close", x, y-int(fontSize), colorSubtle)
+		selectedAction := engineinput.ActionNone
+		if selected >= 0 && selected < len(actions) {
+			selectedAction = actions[selected]
+		}
+		if nonRebindable[selectedAction] {
+			e.drawColoredText(screen, "Up/Down: select    F10/Start or q: close", x, y-int(fontSize), colorSubtle)
+		} else {
+			e.drawColoredText(screen, "Up/Down: select    ?: edit binding    F10/Start or q: close", x, y-int(fontSize), colorSubtle)
+		}
 	}
 	y += lineHeight * 2
 
@@ -1497,32 +1470,29 @@ func (e *EbitenRenderer) drawBindingsMenuOverlay(screen *ebiten.Image) {
 		if codeText == "" {
 			codeText = "(unbound)"
 		}
+		// Add "(fixed)" indicator for non-rebindable actions
+		if nonRebindable[act] {
+			codeText += " (fixed)"
+		}
 
 		// Use a shared origin for text and rectangle calculations (see above).
 		rowParamY := y + i*lineHeight
 
-		e.drawColoredText(screen, name, x, rowParamY, colorText)
+		// Use different color for non-rebindable actions
+		nameColor := colorText
+		if nonRebindable[act] {
+			nameColor = colorSubtle // Use subtle color for non-rebindable actions
+		}
+		e.drawColoredText(screen, name, x, rowParamY, nameColor)
 		//		codeX := x + int(e.getTextWidth(name)) + 32
 		codeX := x + 200
 		e.drawColoredText(screen, codeText, codeX, rowParamY, colorSubtle)
 	}
 }
 
-// drawHeaderFromSnapshot draws the deck number and room name using snapshot data
+// drawHeaderFromSnapshot draws the header (currently empty - deck number moved to objectives panel)
 func (e *EbitenRenderer) drawHeaderFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, screenWidth int, headerHeight int) {
-	fontSize := e.getUIFontSize()
-	// Calculate vertical center: headerHeight/2, but since drawColoredText adds fontSize for baseline,
-	// we need to subtract fontSize to get the correct y position
-	centerY := headerHeight/2 - int(fontSize)
-
-	// Deck number
-	deckText := fmt.Sprintf("Deck %d", snap.level)
-	e.drawColoredText(screen, deckText, 20, centerY, colorAction)
-
-	// Room name (centered)
-	roomText := fmt.Sprintf("In: %s", snap.cellName)
-	textWidth := e.getTextWidth(roomText)
-	e.drawColoredText(screen, roomText, (screenWidth-int(textWidth))/2, centerY, colorFloorVisited)
+	// Header is now empty - deck number has been moved to the objectives panel
 }
 
 // drawMap renders the game map
@@ -1564,9 +1534,31 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, mapX, mapY
 			x := mapX + vCol*e.tileSize
 			y := mapY + vRow*e.tileSize
 
-			// Check if this is the focused cell (has active callout) - use focus background
+			// Check if this is the focused cell (has active callout) or an interactable cell - use focus background
 			var customBg color.Color
-			if cell != nil && cell.Row == snap.focusedCellRow && cell.Col == snap.focusedCellCol {
+			isFocused := cell != nil && cell.Row == snap.focusedCellRow && cell.Col == snap.focusedCellCol
+			isInteractable := false
+			if cell != nil {
+				for _, ic := range snap.interactableCells {
+					if cell.Row == ic.row && cell.Col == ic.col {
+						isInteractable = true
+						break
+					}
+				}
+			}
+
+			// Check for blocking hazards or locked doors that need to be cleared - use brighter background
+			needsClearing := false
+			if cell != nil && (g.HasMap || cell.Discovered) {
+				if gameworld.HasBlockingHazard(cell) || gameworld.HasLockedDoor(cell) {
+					needsClearing = true
+				}
+			}
+
+			if needsClearing {
+				// Brighter background to indicate this should be made passable
+				customBg = colorBlockedBackground
+			} else if isFocused || isInteractable {
 				customBg = colorFocusBackground
 			} else if cell != nil && cell.ExitCell && (g.HasMap || cell.Discovered) && !cell.Locked && g.AllGeneratorsPowered() && g.AllHazardsCleared() {
 				// Unlocked exit cell - use pulsing background (requires generators powered and hazards cleared)
@@ -1669,20 +1661,20 @@ func (e *EbitenRenderer) drawExitAnimation(screen *ebiten.Image, snap *renderSna
 		w, h = e.windowWidth, e.windowHeight
 	}
 
-	// Phase 1: Fade to white (first 40% of animation)
-	// Phase 2: Show message on white background (middle 40%)
+	// Phase 1: Fade to dark background (first 40% of animation)
+	// Phase 2: Show message on dark background (middle 40%)
 	// Phase 3: Fade message out (last 20%)
 	var overlayAlpha float64
 	var textAlpha float64
 	var showText bool
 
 	if progress < 0.4 {
-		// Phase 1: Fade to white
+		// Phase 1: Fade to dark background
 		overlayAlpha = progress / 0.4
 		textAlpha = 0
 		showText = false
 	} else if progress < 0.8 {
-		// Phase 2: Show message on white background
+		// Phase 2: Show message on dark background
 		overlayAlpha = 1.0
 		textProgress := (progress - 0.4) / 0.4
 		textAlpha = textProgress
@@ -1691,7 +1683,7 @@ func (e *EbitenRenderer) drawExitAnimation(screen *ebiten.Image, snap *renderSna
 		}
 		showText = true
 	} else {
-		// Phase 3: Fade message out, keep white background
+		// Phase 3: Fade message out, keep dark background
 		overlayAlpha = 1.0
 		fadeProgress := (progress - 0.8) / 0.2
 		textAlpha = 1.0 - fadeProgress
@@ -1701,8 +1693,8 @@ func (e *EbitenRenderer) drawExitAnimation(screen *ebiten.Image, snap *renderSna
 		showText = textAlpha > 0
 	}
 
-	// Draw white overlay
-	overlayColor := color.RGBA{255, 255, 255, uint8(255 * overlayAlpha)}
+	// Draw dark overlay matching the game's aesthetic
+	overlayColor := color.RGBA{15, 15, 26, uint8(255 * overlayAlpha)} // Same as colorMapBackground
 	vector.DrawFilledRect(screen, 0, 0, float32(w), float32(h), overlayColor, false)
 
 	// Draw transition message
@@ -1727,17 +1719,18 @@ func (e *EbitenRenderer) drawExitAnimation(screen *ebiten.Image, snap *renderSna
 		subMessageX := centerX - float64(subMessageWidth)/2
 		subMessageY := centerY + fontSize + 10
 
-		// Draw main message with fade
-		textColor := color.RGBA{0, 0, 0, uint8(255 * textAlpha)}
+		// Draw main message with fade (using action color for emphasis)
+		mainTextColor := color.RGBA{220, 170, 255, uint8(255 * textAlpha)} // colorAction
 		op := &text.DrawOptions{}
 		op.GeoM.Translate(messageX, messageY+fontSize)
-		op.ColorScale.ScaleWithColor(textColor)
+		op.ColorScale.ScaleWithColor(mainTextColor)
 		text.Draw(screen, message, face, op)
 
-		// Draw sub message with fade
+		// Draw sub message with fade (using text color)
+		subTextColor := color.RGBA{240, 240, 255, uint8(255 * textAlpha)} // colorText
 		op2 := &text.DrawOptions{}
 		op2.GeoM.Translate(subMessageX, subMessageY+fontSize)
-		op2.ColorScale.ScaleWithColor(textColor)
+		op2.ColorScale.ScaleWithColor(subTextColor)
 		text.Draw(screen, subMessage, face, op2)
 	}
 }
@@ -2531,16 +2524,22 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 	hasInventory := len(snap.ownedItems) > 0 || snap.batteries > 0
 	hasGenerators := len(snap.generators) > 0
 
-	// Don't draw anything if everything is empty
-	if !hasObjectives && !hasInventory && !hasGenerators {
+	// Always show at least the deck number
+	hasDeckNumber := true
+
+	// Don't draw anything if everything is empty (but we always have deck number)
+	if !hasDeckNumber && !hasObjectives && !hasInventory && !hasGenerators {
 		return
 	}
 
 	fontSize := e.getUIFontSize()
 	lineHeight := int(fontSize) + 4
 
-	// Calculate how many lines we need
+	// Calculate how many lines we need (always include deck number)
 	linesNeeded := 0
+	if hasDeckNumber {
+		linesNeeded++ // Deck number is always first
+	}
 	if hasObjectives {
 		linesNeeded += len(snap.objectives)
 	}
@@ -2553,6 +2552,12 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 
 	// Calculate the maximum width needed for all text lines
 	maxTextWidth := 0.0
+	// Deck number text
+	deckText := fmt.Sprintf("Deck %d", snap.level)
+	deckWidth := e.getTextWidth(deckText)
+	if deckWidth > maxTextWidth {
+		maxTextWidth = deckWidth
+	}
 	if hasObjectives {
 		for _, objective := range snap.objectives {
 			w := e.getTextWidth(objective)
@@ -2636,7 +2641,18 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 
 	currentY := firstLineY
 
-	// Objectives (displayed above inventory)
+	// Deck number (always first line)
+	if hasDeckNumber {
+		deckText := fmt.Sprintf("Deck %d", snap.level)
+		e.drawColoredText(screen, deckText, x, currentY, colorAction)
+		currentY += lineHeight
+		// Add a small gap between deck number and objectives
+		if hasObjectives {
+			currentY += 2
+		}
+	}
+
+	// Objectives (displayed after deck number)
 	if hasObjectives {
 		for _, objective := range snap.objectives {
 			// Parse markup to properly color ACTION{} segments
