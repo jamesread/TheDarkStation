@@ -26,6 +26,7 @@ import (
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/config"
 	"darkstation/pkg/game/entities"
+	gamemenu "darkstation/pkg/game/menu"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
@@ -39,6 +40,7 @@ var (
 	colorPlayer            = color.RGBA{0, 255, 0, 255}     // Bright green
 	colorWall              = color.RGBA{180, 180, 200, 255} // Light gray-blue for wall text
 	colorWallBg            = color.RGBA{60, 60, 80, 255}    // Darker background for walls
+	colorWallBgPowered     = color.RGBA{40, 80, 40, 255}    // Dark green background for walls in powered rooms
 	colorFloor             = color.RGBA{100, 100, 120, 255} // Medium gray for undiscovered
 	colorFloorVisited      = color.RGBA{160, 160, 180, 255} // Lighter gray for visited
 	colorDoorLocked        = color.RGBA{255, 255, 0, 255}   // Bright yellow
@@ -52,6 +54,7 @@ var (
 	colorGeneratorOn       = color.RGBA{0, 255, 100, 255}   // Bright green
 	colorTerminal          = color.RGBA{100, 150, 255, 255} // Bright blue
 	colorTerminalUsed      = color.RGBA{120, 120, 140, 255} // Medium gray
+	colorMaintenance       = color.RGBA{255, 165, 0, 255}   // Orange for maintenance terminals
 	colorFurniture         = color.RGBA{255, 150, 255, 255} // Bright pink
 	colorFurnitureCheck    = color.RGBA{200, 180, 100, 255} // Tan/brown
 	colorExitLocked        = color.RGBA{255, 100, 100, 255} // Bright red
@@ -91,6 +94,7 @@ const (
 	IconDoorUnlocked       = "□" // Unlocked door
 	IconTerminalUnused     = "▫" // Unused CCTV terminal
 	IconTerminalUsed       = "▪" // Used CCTV terminal
+	IconMaintenance        = "▤" // Maintenance terminal
 )
 
 // Floor icons for different room types (visited/unvisited pairs)
@@ -236,13 +240,21 @@ type EbitenRenderer struct {
 	trackedMessages []messageEntry
 	messagesMutex   sync.RWMutex
 
-	// Bindings menu overlay state
+	// Bindings menu overlay state (deprecated - use generic menu state)
 	menuActive        bool
 	menuActions       []engineinput.Action
 	menuSelected      int
 	menuHelpText      string
 	menuNonRebindable map[engineinput.Action]bool
 	menuMutex         sync.RWMutex
+
+	// Generic menu overlay state
+	genericMenuActive   bool
+	genericMenuItems    []gamemenu.MenuItem
+	genericMenuSelected int
+	genericMenuHelpText string
+	genericMenuTitle    string
+	genericMenuMutex        sync.RWMutex
 
 	// Analog stick state tracking (for edge detection)
 	// Maps gamepad ID to previous stick state (x, y values)
@@ -407,7 +419,7 @@ func (e *EbitenRenderer) calculateObjectives(g *state.Game) []string {
 
 	// If all objectives are complete, show exit message
 	if len(g.Generators) == 0 && numHazards == 0 {
-		objectives = append(objectives, "Find the lift to the next deck.")
+		objectives = append(objectives, "Find the EXIT{lift} to the next deck.")
 	}
 
 	return objectives
@@ -1214,6 +1226,11 @@ func (e *EbitenRenderer) checkInput() engineinput.Intent {
 		}))
 	}
 
+	// Reset level (F5)
+	if inpututil.IsKeyJustPressed(ebiten.KeyF5) {
+		return engineinput.Intent{Action: engineinput.ActionResetLevel}
+	}
+
 	// Quit
 	if inpututil.IsKeyJustPressed(ebiten.KeyQ) {
 		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
@@ -1329,6 +1346,13 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	e.menuMutex.RUnlock()
 	if menuActive {
 		e.drawBindingsMenuOverlay(screen)
+	}
+	// Draw generic menu overlay if active
+	e.genericMenuMutex.RLock()
+	genericMenuActive := e.genericMenuActive
+	e.genericMenuMutex.RUnlock()
+	if genericMenuActive {
+		e.drawGenericMenuOverlay(screen)
 	}
 }
 
@@ -1490,6 +1514,148 @@ func (e *EbitenRenderer) drawBindingsMenuOverlay(screen *ebiten.Image) {
 	}
 }
 
+// RenderMenu implements gamemenu.MenuRenderer for Ebiten.
+// It captures the current frame and marks the menu overlay as active.
+func (e *EbitenRenderer) RenderMenu(g *state.Game, items []gamemenu.MenuItem, selected int, helpText string, title string) {
+	// Keep the underlying game/map snapshot up to date
+	e.RenderFrame(g)
+
+	e.genericMenuMutex.Lock()
+	defer e.genericMenuMutex.Unlock()
+	e.genericMenuActive = true
+	e.genericMenuSelected = selected
+	e.genericMenuHelpText = helpText
+	e.genericMenuTitle = title
+	e.genericMenuItems = make([]gamemenu.MenuItem, len(items))
+	copy(e.genericMenuItems, items)
+}
+
+// ClearMenu hides the generic menu overlay.
+func (e *EbitenRenderer) ClearMenu() {
+	e.genericMenuMutex.Lock()
+	defer e.genericMenuMutex.Unlock()
+	e.genericMenuActive = false
+	e.genericMenuItems = nil
+	e.genericMenuHelpText = ""
+	e.genericMenuTitle = ""
+}
+
+// drawGenericMenuOverlay draws a semi-transparent panel over most of the screen
+// with the menu list and a clear highlight for the selected entry.
+func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
+	e.genericMenuMutex.RLock()
+	items := make([]gamemenu.MenuItem, len(e.genericMenuItems))
+	copy(items, e.genericMenuItems)
+	selected := e.genericMenuSelected
+	helpText := e.genericMenuHelpText
+	title := e.genericMenuTitle
+	e.genericMenuMutex.RUnlock()
+
+	if len(items) == 0 {
+		return
+	}
+
+	screenWidth, screenHeight := screen.Bounds().Dx(), screen.Bounds().Dy()
+
+	// Panel covers ~70% of screen, centered
+	panelW := int(float32(screenWidth) * 0.7)
+	panelH := int(float32(screenHeight) * 0.7)
+	panelX := (screenWidth - panelW) / 2
+	panelY := (screenHeight - panelH) / 2
+
+	bg := color.RGBA{12, 12, 24, 230}
+	border := color.RGBA{180, 180, 220, 255}
+
+	// Border
+	vector.DrawFilledRect(screen,
+		float32(panelX-2), float32(panelY-2),
+		float32(panelW+4), float32(panelH+4),
+		border, false)
+	// Background
+	vector.DrawFilledRect(screen,
+		float32(panelX), float32(panelY),
+		float32(panelW), float32(panelH),
+		bg, false)
+
+	paddingX := 24
+	paddingY := 24
+	x := panelX + paddingX
+	y := panelY + paddingY
+
+	fontSize := e.getUIFontSize()
+	lineHeight := int(fontSize) + 6
+
+	// Use UI font metrics so the highlight rectangle can tightly wrap the text.
+	face := e.getSansFontFace()
+	_, textHeight := text.Measure("Ag", face, 0)
+
+	// Title
+	if title != "" {
+		e.drawColoredText(screen, title, x, y-int(fontSize), colorAction)
+		y += lineHeight
+	}
+
+	// Show version information
+	versionText := fmt.Sprintf("Version: %s", renderer.Version)
+	if renderer.Commit != "unknown" && len(renderer.Commit) > 0 {
+		versionText += fmt.Sprintf(" (%s)", renderer.Commit[:7])
+	}
+	e.drawColoredText(screen, versionText, x, y-int(fontSize), colorSubtle)
+	y += lineHeight
+
+	// Show help text if provided (parse markup for proper colors)
+	if helpText != "" {
+		helpSegments := e.parseMarkup(helpText)
+		if len(helpSegments) > 0 {
+			e.drawColoredTextSegments(screen, helpSegments, x, y-int(fontSize))
+		} else {
+			e.drawColoredText(screen, helpText, x, y-int(fontSize), colorAction)
+		}
+		y += lineHeight
+	}
+
+	y += lineHeight
+
+	// First pass: draw highlight rectangles (so they are always below text)
+	for i := range items {
+		if i != selected || !items[i].IsSelectable() {
+			continue
+		}
+
+		// Match the vertical span of the text: from (baseline - textHeight) to baseline.
+		rowParamY := y + i*lineHeight              // y passed into drawColoredText
+		baselineY := float64(rowParamY) + fontSize // actual baseline y used by text.Draw
+		rectTop := baselineY                       // top of glyph box
+		rectHeight := textHeight + 4               // small padding below glyphs
+		highlight := color.RGBA{40, 60, 120, 255}
+		vector.DrawFilledRect(screen,
+			float32(panelX+8), float32(rectTop),
+			float32(panelW-16), float32(rectHeight),
+			highlight, false)
+	}
+
+	// Second pass: draw menu items on top of the highlights
+	for i, item := range items {
+		label := item.GetLabel()
+
+		// Use a shared origin for text and rectangle calculations (see above).
+		rowParamY := y + i*lineHeight
+
+		// Parse markup and draw with proper colors
+		segments := e.parseMarkup(label)
+		if len(segments) > 0 {
+			e.drawColoredTextSegments(screen, segments, x, rowParamY)
+		} else {
+			// Fallback: use different color for non-selectable items
+			labelColor := colorText
+			if !item.IsSelectable() {
+				labelColor = colorSubtle
+			}
+			e.drawColoredText(screen, label, x, rowParamY, labelColor)
+		}
+	}
+}
+
 // drawHeaderFromSnapshot draws the header (currently empty - deck number moved to objectives panel)
 func (e *EbitenRenderer) drawHeaderFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, screenWidth int, headerHeight int) {
 	// Header is now empty - deck number has been moved to the objectives panel
@@ -1555,10 +1721,42 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, mapX, mapY
 				}
 			}
 
+			// Check if this is a wall or corner in a powered room - use dark green background
+			// This should persist even when focused/interactable
+			isPoweredWall := false
+			if cell != nil && !cell.Room {
+				if e.roomHasPower(g, cell) {
+					// For corners and walls (non-exit cells), always show powered color
+					// For exit cells, only show powered color if locked or not all generators/hazards cleared
+					if !needsClearing {
+						if !cell.ExitCell {
+							// Corners and walls always get powered background
+							isPoweredWall = true
+						} else if cell.Locked || !g.AllGeneratorsPowered() || !g.AllHazardsCleared() {
+							// Exit cell only gets powered background if locked or not ready
+							isPoweredWall = true
+						}
+					}
+				}
+			}
+
+			// Check if this cell has a powered generator - use dark green background
+			hasPoweredGenerator := false
+			if cell != nil && (g.HasMap || cell.Discovered) {
+				if gameworld.HasPoweredGenerator(cell) {
+					hasPoweredGenerator = true
+				}
+			}
+
+			// Set background color with priority order
 			if needsClearing {
 				// Brighter background to indicate this should be made passable
 				customBg = colorBlockedBackground
+			} else if isPoweredWall || hasPoweredGenerator {
+				// Powered walls and powered generators always show green background, even when focused/interactable
+				customBg = colorWallBgPowered
 			} else if isFocused || isInteractable {
+				// Focus/interactable color for non-powered walls
 				customBg = colorFocusBackground
 			} else if cell != nil && cell.ExitCell && (g.HasMap || cell.Discovered) && !cell.Locked && g.AllGeneratorsPowered() && g.AllHazardsCleared() {
 				// Unlocked exit cell - use pulsing background (requires generators powered and hazards cleared)
@@ -1655,10 +1853,14 @@ func (e *EbitenRenderer) drawExitAnimation(screen *ebiten.Image, snap *renderSna
 	// Calculate fade progress (0.0 to 1.0)
 	progress := float64(elapsed) / exitAnimDuration
 
-	// Get screen dimensions
-	w, h := ebiten.WindowSize()
+	// Get screen dimensions - use actual screen bounds to ensure full coverage
+	w, h := screen.Bounds().Dx(), screen.Bounds().Dy()
 	if w == 0 || h == 0 {
-		w, h = e.windowWidth, e.windowHeight
+		// Fallback to window size if screen bounds are invalid
+		w, h = ebiten.WindowSize()
+		if w == 0 || h == 0 {
+			w, h = e.windowWidth, e.windowHeight
+		}
 	}
 
 	// Phase 1: Fade to dark background (first 40% of animation)
@@ -2159,6 +2361,8 @@ func (e *EbitenRenderer) parseMarkup(msg string) []textSegment {
 			segColor = colorFloorVisited // Light gray-blue for room names
 		case "ACTION":
 			segColor = colorAction
+		case "EXIT":
+			segColor = colorExitUnlocked // Bright green for exit/lift
 		case "GT":
 			// GT{} is for translations - look up the translation
 			content = gotext.Get(content)
@@ -2346,6 +2550,11 @@ func (e *EbitenRenderer) getCellDisplay(g *state.Game, r *world.Cell, snap *rend
 		return IconGeneratorUnpowered, colorGeneratorOff, true
 	}
 
+	// Maintenance Terminal (always visible, distinctive orange color) - high priority
+	if gameworld.HasMaintenanceTerminal(r) {
+		return IconMaintenance, colorMaintenance, true
+	}
+
 	// CCTV Terminal (show if has map or discovered)
 	if gameworld.HasTerminal(r) && (g.HasMap || r.Discovered) {
 		if data.Terminal.IsUsed() {
@@ -2462,6 +2671,30 @@ func hasAdjacentDiscoveredRoom(c *world.Cell) bool {
 	neighbors := []*world.Cell{c.North, c.East, c.South, c.West}
 	for _, n := range neighbors {
 		if n != nil && n.Room && (n.Discovered || n.Visited) {
+			return true
+		}
+	}
+	return false
+}
+
+// roomHasPower checks if the room adjacent to a wall cell has power
+func (e *EbitenRenderer) roomHasPower(g *state.Game, wallCell *world.Cell) bool {
+	if wallCell == nil || g == nil || g.Grid == nil {
+		return false
+	}
+
+	// Check if there's available power (power supply > consumption)
+	availablePower := g.GetAvailablePower()
+	if availablePower <= 0 {
+		return false
+	}
+
+	// If there's available power, check if any adjacent room exists
+	// (if there's power, rooms should be considered powered)
+	neighbors := []*world.Cell{wallCell.North, wallCell.East, wallCell.South, wallCell.West}
+	for _, neighbor := range neighbors {
+		if neighbor != nil && neighbor.Room {
+			// Room exists and there's available power - room is powered
 			return true
 		}
 	}
