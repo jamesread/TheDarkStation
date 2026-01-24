@@ -60,11 +60,18 @@ func (g *BSPGenerator) Generate(level int) *world.Grid {
 	roomCounter = 0
 
 	// Start small and scale grid size with level (add 2 for perimeter)
-	// Level 1: 14x28, Level 5: 30x58, Level 10: 50x88
-	baseRows := 12 + 2
-	baseCols := 24 + 2
-	rows := baseRows + (level * 4)
-	cols := baseCols + (level * 6)
+	// Level 1: 8x16 (simplified), Level 2+: 14x28, Level 5: 30x58, Level 10: 50x88
+	var rows, cols int
+	if level == 1 {
+		// Much smaller grid for level 1 to reduce complexity
+		rows = 8 + 2
+		cols = 16 + 2
+	} else {
+		baseRows := 12 + 2
+		baseCols := 24 + 2
+		rows = baseRows + ((level - 1) * 4) // Adjust for level 2 starting point
+		cols = baseCols + ((level - 1) * 6)
+	}
 
 	// Cap maximum size
 	if rows > 60 {

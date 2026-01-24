@@ -48,6 +48,10 @@ type Game struct {
 	InteractionPlayerCol int                   // Player col when interaction order was established
 	InteractionsCount    int                   // Number of objects the player has interacted with (for hint system)
 	MovementCount        int                   // Number of times the player has moved (for movement hint)
+	LevelSeed            int64                 // Random seed used for current level generation (for reset)
+	PowerSupply          int                   // Total available power from generators
+	PowerConsumption     int                   // Total power being consumed by active devices
+	PowerOverloadWarned  bool                  // Whether we've warned about power overload this cycle
 }
 
 // MessageEntry represents a message with a timestamp
@@ -59,13 +63,16 @@ type MessageEntry struct {
 // NewGame creates a new game instance
 func NewGame() *Game {
 	return &Game{
-		OwnedItems: mapset.New[*world.Item](),
-		HasMap:     false,
-		Messages:   make([]MessageEntry, 0),
-		Level:      1,
-		Batteries:  0,
-		Generators: make([]*entities.Generator, 0),
-		FoundCodes: make(map[string]bool),
+		OwnedItems:          mapset.New[*world.Item](),
+		HasMap:              false,
+		Messages:            make([]MessageEntry, 0),
+		Level:               1,
+		Batteries:           0,
+		Generators:          make([]*entities.Generator, 0),
+		FoundCodes:          make(map[string]bool),
+		PowerSupply:         0,
+		PowerConsumption:    0,
+		PowerOverloadWarned: false,
 	}
 }
 
@@ -189,6 +196,26 @@ func (g *Game) AdvanceLevel() {
 	g.Batteries = 0
 	g.Generators = make([]*entities.Generator, 0)
 	g.FoundCodes = make(map[string]bool)
+	g.PowerSupply = 0
+	g.PowerConsumption = 0
+	g.PowerOverloadWarned = false
+}
+
+// GetAvailablePower returns the available power (supply - consumption)
+func (g *Game) GetAvailablePower() int {
+	return g.PowerSupply - g.PowerConsumption
+}
+
+// UpdatePowerSupply recalculates power supply from powered generators
+func (g *Game) UpdatePowerSupply() {
+	totalPower := 0
+	for _, gen := range g.Generators {
+		if gen.IsPowered() {
+			// Each generator provides 100 watts
+			totalPower += 100
+		}
+	}
+	g.PowerSupply = totalPower
 }
 
 // AddFoundCode records that the player has found a puzzle code

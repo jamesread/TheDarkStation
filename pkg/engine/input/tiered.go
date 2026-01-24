@@ -32,11 +32,12 @@ const (
 	ActionQuit
 	ActionScreenshot
 	ActionOpenMenu
-	ActionAction   // Generic "action/confirm" (e.g., Enter/A)
-	ActionInteract // Interact with furniture/objects (E, Enter, A button)
-	ActionDevMap   // Switch to developer testing map (F9)
-	ActionZoomIn   // Zoom in (increase font/tile size)
-	ActionZoomOut  // Zoom out (decrease font/tile size)
+	ActionAction     // Generic "action/confirm" (e.g., Enter/A)
+	ActionInteract   // Interact with furniture/objects (E, Enter, A button)
+	ActionDevMap     // Switch to developer testing map (F9)
+	ActionResetLevel // Reset current level (F5)
+	ActionZoomIn     // Zoom in (increase font/tile size)
+	ActionZoomOut    // Zoom out (decrease font/tile size)
 )
 
 // Intent is the 4th‑layer, high‑level description of what the player wants to do.
@@ -166,6 +167,8 @@ func ActionName(a Action) string {
 		return "Action"
 	case ActionInteract:
 		return "Interact"
+	case ActionResetLevel:
+		return "Reset Level"
 	case ActionZoomIn:
 		return "Zoom In"
 	case ActionZoomOut:

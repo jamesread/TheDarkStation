@@ -10,13 +10,16 @@ import (
 // GameCellData holds game-specific entity references for a cell.
 // This is stored in the engine Cell's GameData field.
 type GameCellData struct {
-	Generator     *entities.Generator      // Power generator in this cell (if any)
-	Door          *entities.Door           // Keycard door in this cell (if any)
-	Terminal      *entities.CCTVTerminal   // CCTV terminal in this cell (if any)
-	Puzzle        *entities.PuzzleTerminal // Puzzle terminal in this cell (if any)
-	Furniture     *entities.Furniture      // Furniture in this cell (if any)
-	Hazard        *entities.Hazard         // Environmental hazard in this cell (if any)
-	HazardControl *entities.HazardControl  // Hazard control panel in this cell (if any)
+	Generator       *entities.Generator           // Power generator in this cell (if any)
+	Door            *entities.Door                // Keycard door in this cell (if any)
+	Terminal        *entities.CCTVTerminal        // CCTV terminal in this cell (if any)
+	Puzzle          *entities.PuzzleTerminal      // Puzzle terminal in this cell (if any)
+	Furniture       *entities.Furniture           // Furniture in this cell (if any)
+	Hazard          *entities.Hazard              // Environmental hazard in this cell (if any)
+	HazardControl   *entities.HazardControl       // Hazard control panel in this cell (if any)
+	MaintenanceTerm *entities.MaintenanceTerminal // Maintenance terminal in this cell (if any)
+	LightsOn        bool                          // Whether lights are on in this cell
+	Lighted         bool                          // Whether this cell has been lit (stays explored)
 }
 
 // InitGameData initializes game data for a cell if not already set
@@ -152,4 +155,34 @@ func HasPuzzle(cell *world.Cell) bool {
 func HasUnsolvedPuzzle(cell *world.Cell) bool {
 	data := GetGameData(cell)
 	return data.Puzzle != nil && !data.Puzzle.IsSolved()
+}
+
+// HasMaintenanceTerminal returns true if this cell contains a maintenance terminal
+func HasMaintenanceTerminal(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	return data.MaintenanceTerm != nil
+}
+
+// AreLightsOn returns true if lights are on in this cell
+func AreLightsOn(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	return data.LightsOn
+}
+
+// SetLightsOn sets the lighting state for this cell
+func SetLightsOn(cell *world.Cell, on bool) {
+	data := GetGameData(cell)
+	data.LightsOn = on
+	if on {
+		data.Lighted = true // Once lit, stays lit
+		// If lights are on, mark as discovered and visited
+		cell.Discovered = true
+		cell.Visited = true
+	}
+}
+
+// IsLighted returns true if this cell has been lit (stays explored)
+func IsLighted(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	return data.Lighted
 }

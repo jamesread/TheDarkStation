@@ -178,6 +178,7 @@ type CalloutRenderer interface {
 
 // BindingsMenuRenderer is an optional interface for renderers that can draw
 // a full-screen bindings menu overlay on top of the map.
+// DEPRECATED: Use MenuRenderer from pkg/game/menu instead.
 type BindingsMenuRenderer interface {
 	// RenderBindingsMenu draws the bindings menu overlay for the given action list
 	// and currently selected index. helpText is optional instruction text to display
@@ -205,6 +206,7 @@ var (
 	CalloutColorHazard           = color.RGBA{255, 80, 80, 255}   // Red for hazards
 	CalloutColorRoom             = color.RGBA{180, 180, 220, 255} // Light gray-blue for room names
 	CalloutColorDoor             = color.RGBA{255, 255, 0, 255}   // Yellow for locked doors
+	CalloutColorMaintenance      = color.RGBA{255, 165, 0, 255}   // Orange for maintenance terminals
 )
 
 // AddCallout adds a callout if the current renderer supports it

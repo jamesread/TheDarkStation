@@ -254,7 +254,7 @@ type EbitenRenderer struct {
 	genericMenuSelected int
 	genericMenuHelpText string
 	genericMenuTitle    string
-	genericMenuMutex        sync.RWMutex
+	genericMenuMutex    sync.RWMutex
 
 	// Analog stick state tracking (for edge detection)
 	// Maps gamepad ID to previous stick state (x, y values)

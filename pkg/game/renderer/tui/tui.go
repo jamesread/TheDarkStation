@@ -37,6 +37,7 @@ const (
 	IconDoorUnlocked       = "□" // Unlocked door
 	IconTerminalUnused     = "▫" // Unused CCTV terminal
 	IconTerminalUsed       = "▪" // Used CCTV terminal
+	IconMaintenance        = "▤" // Maintenance terminal
 )
 
 // Floor icons for different room types (visited/unvisited pairs)
@@ -101,8 +102,10 @@ type TUIRenderer struct {
 	colorKeycard        color.Style
 	colorFurniture      color.Style
 	colorFurnitureCheck color.Style
+	colorMaintenance    color.Style
 	colorHazard         color.Style
 	colorHazardCtrl     color.Style
+	colorWallPowered    color.Style // Dark green for walls in powered rooms
 
 	regexpStringFunctions *regexp.Regexp
 }
@@ -129,8 +132,10 @@ func (t *TUIRenderer) Init() {
 	t.colorKeycard = color.Style{color.FgBlue}                    // Dark blue for keycards
 	t.colorFurniture = color.Style{color.FgMagenta, color.OpBold} // Pink for unchecked furniture
 	t.colorFurnitureCheck = color.Style{color.FgYellow}           // Brown/dark yellow for checked furniture
+	t.colorMaintenance = color.Style{color.FgRed, color.OpBold}   // Orange/red for maintenance terminals
 	t.colorHazard = color.Style{color.FgRed}                      // Red for hazards
 	t.colorHazardCtrl = color.Style{color.FgCyan}                 // Cyan for hazard controls
+	t.colorWallPowered = color.Style{color.FgGreen}               // Dark green for walls in powered rooms
 
 	t.regexpStringFunctions = regexp.MustCompile(`([a-zA-Z_]*){([a-z A-Z0-9_,:]+)}`)
 }
@@ -362,6 +367,11 @@ func (t *TUIRenderer) renderCell(g *state.Game, r *world.Cell) string {
 		return t.colorDenied.Sprint(IconGeneratorUnpowered)
 	}
 
+	// Maintenance Terminal (always visible, distinctive orange/red color) - high priority
+	if gameworld.HasMaintenanceTerminal(r) {
+		return t.colorMaintenance.Sprint(IconMaintenance)
+	}
+
 	// CCTV Terminal (show if has map or discovered)
 	if gameworld.HasTerminal(r) && (g.HasMap || r.Discovered) {
 		if data.Terminal.IsUsed() {
@@ -408,6 +418,10 @@ func (t *TUIRenderer) renderCell(g *state.Game, r *world.Cell) string {
 		if r.Room {
 			return t.colorSubtle.Sprint(getFloorIcon(r.Name, false))
 		}
+		// Check if adjacent room has power for wall color
+		if t.roomHasPower(g, r) {
+			return t.colorWallPowered.Sprint(IconWall)
+		}
 		return t.colorSubtle.Sprint(IconWall)
 	}
 
@@ -419,6 +433,10 @@ func (t *TUIRenderer) renderCell(g *state.Game, r *world.Cell) string {
 	// Non-room cells adjacent to discovered/visited rooms render as walls
 	// This ensures perimeter cells show as walls when you can see them
 	if !r.Room && hasAdjacentDiscoveredRoom(r) {
+		// Check if adjacent room has power for wall color
+		if t.roomHasPower(g, r) {
+			return t.colorWallPowered.Sprint(IconWall)
+		}
 		return t.colorSubtle.Sprint(IconWall)
 	}
 
@@ -453,6 +471,30 @@ func hasAdjacentDiscoveredRoom(c *world.Cell) bool {
 	neighbors := []*world.Cell{c.North, c.East, c.South, c.West}
 	for _, n := range neighbors {
 		if n != nil && n.Room && (n.Discovered || n.Visited) {
+			return true
+		}
+	}
+	return false
+}
+
+// roomHasPower checks if the room adjacent to a wall cell has power
+func (t *TUIRenderer) roomHasPower(g *state.Game, wallCell *world.Cell) bool {
+	if wallCell == nil || g == nil || g.Grid == nil {
+		return false
+	}
+
+	// Check if there's available power (power supply > consumption)
+	availablePower := g.GetAvailablePower()
+	if availablePower <= 0 {
+		return false
+	}
+
+	// If there's available power, check if any adjacent room exists
+	// (if there's power, rooms should be considered powered)
+	neighbors := []*world.Cell{wallCell.North, wallCell.East, wallCell.South, wallCell.West}
+	for _, neighbor := range neighbors {
+		if neighbor != nil && neighbor.Room {
+			// Room exists and there's available power - room is powered
 			return true
 		}
 	}

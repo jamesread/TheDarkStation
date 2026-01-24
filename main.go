@@ -16,6 +16,7 @@ import (
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/generator"
+	gamemenu "darkstation/pkg/game/menu"
 	"darkstation/pkg/game/renderer"
 	ebitenRenderer "darkstation/pkg/game/renderer/ebiten"
 	"darkstation/pkg/game/renderer/tui"
@@ -160,6 +161,12 @@ func buildGame(startLevel int) *state.Game {
 	if startLevel > 1 {
 		g.Level = startLevel
 	}
+
+	// Store seed before generation for reset functionality
+	// Use level number as deterministic seed, or time-based for variety
+	seed := time.Now().UnixNano()
+	g.LevelSeed = seed
+	rand.Seed(seed)
 
 	g.Grid = generateGrid(g.Level)
 	setupLevel(g)
@@ -363,8 +370,8 @@ func setupLevel(g *state.Game) {
 	lockedDoorCells := mapset.New[*world.Cell]()
 
 	// Determine number of locked rooms based on level
-	// Level 1: 1 room, Level 2: 2 rooms, Level 3+: scales up
-	numLockedRooms := 1
+	// Level 1: 0 rooms (simplified), Level 2: 2 rooms, Level 3+: scales up
+	numLockedRooms := 0
 	if g.Level >= 2 {
 		numLockedRooms = 2
 	}
@@ -473,15 +480,77 @@ func setupLevel(g *state.Game) {
 		}
 	}
 
-	// Levels 3+: Exit requires generators
+	// Always place at least one generator in spawn room
+	// Levels 3+: Exit requires generators (more generators needed)
+	spawnCell := g.Grid.StartCell()
+	spawnRoomName := spawnCell.Name
+
+	// Find a valid cell in the spawn room for the generator (avoid chokepoints)
+	var spawnRoomCell *world.Cell
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell != nil && cell.Room && cell.Name == spawnRoomName && spawnRoomCell == nil {
+			data := gameworld.GetGameData(cell)
+			// Check if cell is valid for generator placement and not a chokepoint
+			if !avoid.Has(cell) && !cell.ExitCell &&
+				data.Generator == nil && data.Door == nil && data.Terminal == nil &&
+				data.Puzzle == nil && data.Furniture == nil && data.Hazard == nil &&
+				data.HazardControl == nil && data.MaintenanceTerm == nil {
+				// Prefer non-chokepoint cells to avoid blocking pathfinding
+				if !isChokepoint(g.Grid, cell, spawnCell) {
+					spawnRoomCell = cell
+				}
+			}
+		}
+	})
+
+	// If no non-chokepoint cell found, use any valid cell
+	if spawnRoomCell == nil {
+		g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+			if cell != nil && cell.Room && cell.Name == spawnRoomName && spawnRoomCell == nil {
+				data := gameworld.GetGameData(cell)
+				if !avoid.Has(cell) && !cell.ExitCell &&
+					data.Generator == nil && data.Door == nil && data.Terminal == nil &&
+					data.Puzzle == nil && data.Furniture == nil && data.Hazard == nil &&
+					data.HazardControl == nil && data.MaintenanceTerm == nil {
+					spawnRoomCell = cell
+				}
+			}
+		})
+	}
+
+	// Place generator in spawn room (always)
+	if spawnRoomCell != nil {
+		// Level 1-2: 1 battery, Level 3+: 1-3 batteries
+		batteriesRequired := 1
+		if g.Level >= 3 {
+			batteriesRequired = 1 + rand.Intn(3) // 1-3 batteries
+		}
+
+		gen := entities.NewGenerator("Generator #1", batteriesRequired)
+		// Auto-power the spawn room generator
+		gen.InsertBatteries(batteriesRequired)
+		gameworld.GetGameData(spawnRoomCell).Generator = gen
+		g.AddGenerator(gen)
+		avoid.Put(spawnRoomCell)
+
+		// Update power supply immediately
+		g.UpdatePowerSupply()
+
+		g.AddHint("A generator is in " + renderer.StyledCell(spawnRoomName))
+	}
+
+	// Levels 3+: Exit requires additional generators
 	if g.Level >= 3 {
 		g.Grid.ExitCell().Locked = true
 
-		// Place generators: level 3 = 1 generator, level 4 = 2, etc.
-		numGenerators := g.Level - 2
+		// Place additional generators: level 3 = 1 more (total 2), level 4 = 2 more (total 3), etc.
+		numAdditionalGenerators := g.Level - 3
 		totalBatteriesNeeded := 0
 
-		for i := 0; i < numGenerators; i++ {
+		// Count batteries needed for spawn room generator (but it's already powered, so don't count it)
+		// Spawn generator is already powered, so we don't need batteries for it
+
+		for i := 0; i < numAdditionalGenerators; i++ {
 			// Each generator needs 1-5 batteries, scaling with level
 			minBatteries := 1 + (g.Level-3)/3
 			maxBatteries := 2 + (g.Level-3)/2
@@ -498,20 +567,64 @@ func setupLevel(g *state.Game) {
 			batteriesRequired := minBatteries + rand.Intn(maxBatteries-minBatteries+1)
 			totalBatteriesNeeded += batteriesRequired
 
-			gen := entities.NewGenerator(fmt.Sprintf("Generator #%d", i+1), batteriesRequired)
+			gen := entities.NewGenerator(fmt.Sprintf("Generator #%d", i+2), batteriesRequired)
+			// Find a room and valid cell that won't block pathfinding
 			genRoom := findRoom(g, g.Grid.StartCell(), &avoid)
-			if genRoom != nil {
-				gameworld.GetGameData(genRoom).Generator = gen
-				g.AddGenerator(gen)
-				avoid.Put(genRoom)
 
-				g.AddHint("A generator is in " + renderer.StyledCell(genRoom.Name))
+			if genRoom != nil {
+				// Find a valid cell in the room that's not a chokepoint
+				var validGenCell *world.Cell
+				g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+					if cell != nil && cell.Room && cell.Name == genRoom.Name && validGenCell == nil {
+						data := gameworld.GetGameData(cell)
+						// Check if cell is valid and not a chokepoint
+						if !avoid.Has(cell) && !cell.ExitCell &&
+							data.Generator == nil && data.Door == nil && data.Terminal == nil &&
+							data.Puzzle == nil && data.Furniture == nil && data.Hazard == nil &&
+							data.HazardControl == nil && data.MaintenanceTerm == nil {
+							// Check if this is a chokepoint (would block pathfinding)
+							if !isChokepoint(g.Grid, cell, g.Grid.StartCell()) {
+								validGenCell = cell
+							}
+						}
+					}
+				})
+
+				// If no non-chokepoint cell found, use the room center or any valid cell
+				if validGenCell == nil {
+					g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+						if cell != nil && cell.Room && cell.Name == genRoom.Name && validGenCell == nil {
+							data := gameworld.GetGameData(cell)
+							if !avoid.Has(cell) && !cell.ExitCell &&
+								data.Generator == nil && data.Door == nil && data.Terminal == nil &&
+								data.Puzzle == nil && data.Furniture == nil && data.Hazard == nil &&
+								data.HazardControl == nil && data.MaintenanceTerm == nil {
+								validGenCell = cell
+							}
+						}
+					})
+				}
+
+				if validGenCell != nil {
+					gameworld.GetGameData(validGenCell).Generator = gen
+					g.AddGenerator(gen)
+					avoid.Put(validGenCell)
+
+					g.AddHint("A generator is in " + renderer.StyledCell(genRoom.Name))
+				}
 			}
 		}
 
-		// Place batteries: total needed + 1-2 extra per level for some buffer
+		// Place batteries: total needed (excluding already-powered spawn generator) + 1-2 extra per level for some buffer
+		// Don't count spawn generator batteries since it's already powered
+		spawnGenBatteries := 0
+		if len(g.Generators) > 0 && g.Generators[0].IsPowered() {
+			// Spawn generator is already powered, don't count its batteries
+			spawnGenBatteries = g.Generators[0].BatteriesRequired
+		}
+		batteriesNeededForUnpowered := totalBatteriesNeeded - spawnGenBatteries
 		extraBatteries := 1 + rand.Intn(2)
-		totalBatteries := totalBatteriesNeeded + extraBatteries
+		totalBatteries := batteriesNeededForUnpowered + extraBatteries
 
 		for i := 0; i < totalBatteries; i++ {
 			battery := world.NewItem("Battery")
@@ -519,6 +632,9 @@ func setupLevel(g *state.Game) {
 		}
 	} else {
 		g.Grid.ExitCell().Locked = false
+
+		// Level 1-2: Spawn generator is already powered, so no batteries needed
+		// Batteries can be found in furniture for other uses
 	}
 
 	// Place environmental hazards (level 2+)
@@ -528,10 +644,15 @@ func setupLevel(g *state.Game) {
 
 	// Map is no longer automatically placed - it's now a puzzle reward in later levels
 
-	// Place CCTV terminals (1-3 based on level)
-	numTerminals := 1 + g.Level/3
-	if numTerminals > 3 {
-		numTerminals = 3
+	// Place CCTV terminals (level 2+, 1-3 based on level)
+	var numTerminals int
+	if g.Level >= 2 {
+		numTerminals = 1 + (g.Level-1)/3 // Level 2 = 1, Level 3 = 1, Level 4 = 2, etc.
+		if numTerminals > 3 {
+			numTerminals = 3
+		}
+	} else {
+		numTerminals = 0 // No terminals on level 1
 	}
 
 	// Collect all unique room names (excluding corridors)
@@ -604,6 +725,9 @@ func setupLevel(g *state.Game) {
 	if g.Level >= 2 {
 		placePuzzles(g, &avoid)
 	}
+
+	// Place maintenance terminals in every room (one per room, against walls)
+	placeMaintenanceTerminals(g, &avoid)
 
 	g.CurrentCell = g.Grid.GetCenterCell()
 
@@ -760,6 +884,88 @@ func placeHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells
 		} else {
 			g.AddHint(fmt.Sprintf("%d %s hazards block access to %s", len(entryCells), info.Name, renderer.StyledCell(roomName)))
 		}
+	}
+}
+
+// placeFurnitureLimited places exactly maxCount pieces of furniture across all rooms
+func placeFurnitureLimited(g *state.Game, avoid *mapset.Set[*world.Cell], maxCount int) {
+	// Collect all unique rooms and their cells
+	roomCells := make(map[string][]*world.Cell)
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell.Room && cell.Name != "Corridor" && cell.Name != "" {
+			roomCells[cell.Name] = append(roomCells[cell.Name], cell)
+		}
+	})
+
+	// Get room entry points to avoid blocking them
+	roomEntries := findRoomEntryPoints(g.Grid)
+
+	// Collect all valid cells across all rooms
+	var allValidCells []*world.Cell
+	roomNames := make([]string, 0, len(roomCells))
+	for roomName := range roomCells {
+		roomNames = append(roomNames, roomName)
+	}
+
+	// Shuffle room order for variety
+	rand.Shuffle(len(roomNames), func(i, j int) {
+		roomNames[i], roomNames[j] = roomNames[j], roomNames[i]
+	})
+
+	// Collect valid cells from all rooms
+	for _, roomName := range roomNames {
+		cells := roomCells[roomName]
+		templates := entities.GetAllFurnitureForRoom(roomName)
+		if len(templates) == 0 {
+			continue
+		}
+
+		entryPoints := mapset.New[*world.Cell]()
+		if entryData, ok := roomEntries[roomName]; ok {
+			for _, entryCell := range entryData.entryCells {
+				neighbors := []*world.Cell{entryCell.North, entryCell.East, entryCell.South, entryCell.West}
+				for _, neighbor := range neighbors {
+					if neighbor != nil && neighbor.Room && neighbor.Name == roomName {
+						entryPoints.Put(neighbor)
+					}
+				}
+			}
+		}
+
+		for _, cell := range cells {
+			data := gameworld.GetGameData(cell)
+			if !avoid.Has(cell) && !cell.ExitCell && !entryPoints.Has(cell) &&
+				data.Generator == nil && data.Door == nil && data.Terminal == nil &&
+				data.Furniture == nil && data.Hazard == nil && data.HazardControl == nil {
+				allValidCells = append(allValidCells, cell)
+			}
+		}
+	}
+
+	// Shuffle all valid cells
+	rand.Shuffle(len(allValidCells), func(i, j int) {
+		allValidCells[i], allValidCells[j] = allValidCells[j], allValidCells[i]
+	})
+
+	// Place exactly maxCount pieces
+	placed := 0
+	for _, cell := range allValidCells {
+		if placed >= maxCount {
+			break
+		}
+
+		roomName := cell.Name
+		templates := entities.GetAllFurnitureForRoom(roomName)
+		if len(templates) == 0 {
+			continue
+		}
+
+		// Pick a random template for this room
+		template := templates[rand.Intn(len(templates))]
+		furniture := entities.NewFurniture(template.Name, template.Description, template.Icon)
+		gameworld.GetGameData(cell).Furniture = furniture
+		avoid.Put(cell)
+		placed++
 	}
 }
 
@@ -925,6 +1131,107 @@ func placePuzzles(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 	}
 }
 
+// placeMaintenanceTerminals places one maintenance terminal per room, aligned against walls
+func placeMaintenanceTerminals(g *state.Game, avoid *mapset.Set[*world.Cell]) {
+	// Collect all unique rooms
+	roomCells := make(map[string][]*world.Cell)
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell.Room && cell.Name != "Corridor" && cell.Name != "" {
+			roomCells[cell.Name] = append(roomCells[cell.Name], cell)
+		}
+	})
+
+	// Get room entry points to avoid blocking them
+	roomEntries := findRoomEntryPoints(g.Grid)
+
+	// Place one maintenance terminal per room
+	for roomName, cells := range roomCells {
+		if len(cells) == 0 {
+			continue
+		}
+
+		// Find cells that are against walls (have at least one non-room neighbor OR corridor neighbor)
+		// Also prefer cells on the edge of the room (fewer room neighbors)
+		var wallCells []*world.Cell
+		var edgeCells []*world.Cell
+
+		for _, cell := range cells {
+			data := gameworld.GetGameData(cell)
+
+			// Skip if already has entities
+			if !avoid.Has(cell) && !cell.ExitCell &&
+				data.Generator == nil && data.Door == nil && data.Terminal == nil &&
+				data.Puzzle == nil && data.Furniture == nil && data.Hazard == nil &&
+				data.HazardControl == nil && data.MaintenanceTerm == nil {
+
+				// Check if cell is against a wall (has a non-room neighbor)
+				isWallCell := false
+				neighbors := []*world.Cell{cell.North, cell.East, cell.South, cell.West}
+				roomNeighborCount := 0
+
+				for _, neighbor := range neighbors {
+					if neighbor == nil {
+						isWallCell = true // Edge of map
+					} else if !neighbor.Room {
+						isWallCell = true // Wall
+					} else if neighbor.Room && neighbor.Name == roomName {
+						roomNeighborCount++
+					}
+				}
+
+				// Check entry points
+				entryPoints := mapset.New[*world.Cell]()
+				if entryData, ok := roomEntries[roomName]; ok {
+					for _, entryCell := range entryData.entryCells {
+						entryNeighbors := []*world.Cell{entryCell.North, entryCell.East, entryCell.South, entryCell.West}
+						for _, neighbor := range entryNeighbors {
+							if neighbor != nil && neighbor.Room && neighbor.Name == roomName {
+								entryPoints.Put(neighbor)
+							}
+						}
+					}
+				}
+
+				if !entryPoints.Has(cell) {
+					if isWallCell {
+						wallCells = append(wallCells, cell)
+					} else if roomNeighborCount <= 2 {
+						// Edge of room (2 or fewer room neighbors)
+						edgeCells = append(edgeCells, cell)
+					}
+				}
+			}
+		}
+
+		// Prefer wall cells, fall back to edge cells, then any valid cell
+		var validCells []*world.Cell
+		if len(wallCells) > 0 {
+			validCells = wallCells
+		} else if len(edgeCells) > 0 {
+			validCells = edgeCells
+		} else {
+			// Last resort: any valid cell in the room
+			for _, cell := range cells {
+				data := gameworld.GetGameData(cell)
+				if !avoid.Has(cell) && !cell.ExitCell &&
+					data.Generator == nil && data.Door == nil && data.Terminal == nil &&
+					data.Puzzle == nil && data.Furniture == nil && data.Hazard == nil &&
+					data.HazardControl == nil && data.MaintenanceTerm == nil {
+					validCells = append(validCells, cell)
+				}
+			}
+		}
+
+		// Place maintenance terminal
+		if len(validCells) > 0 {
+			selectedCell := validCells[rand.Intn(len(validCells))]
+			maintenanceTerm := entities.NewMaintenanceTerminal(fmt.Sprintf("Maintenance Terminal - %s", roomName), roomName)
+			gameworld.GetGameData(selectedCell).MaintenanceTerm = maintenanceTerm
+			avoid.Put(selectedCell)
+		}
+	}
+}
+
 // hideItemsInFurniture moves items from floor cells into furniture with a chance
 func hideItemsInFurniture(g *state.Game, roomCells []*world.Cell, furniture []*entities.Furniture, roomName string) {
 	// Find items on the floor in this room (keycards, patch kits - not batteries or maps)
@@ -997,11 +1304,72 @@ func revealRoomByName(grid *world.Grid, roomName string) bool {
 	return revealed
 }
 
+// resetLevel resets the current level using the same seed/map
+func resetLevel(g *state.Game) {
+	currentLevel := g.Level
+
+	// Clear inventory and level-specific state
+	g.OwnedItems = mapset.New[*world.Item]()
+	g.Batteries = 0
+	g.HasMap = false
+	g.FoundCodes = make(map[string]bool)
+	g.Generators = make([]*entities.Generator, 0)
+	g.Hints = nil
+	g.PowerSupply = 0
+	g.PowerConsumption = 0
+	g.PowerOverloadWarned = false
+
+	// Reset interaction/movement counters
+	g.MovementCount = 0
+	g.InteractionsCount = 0
+	g.LastInteractedRow = -1
+	g.LastInteractedCol = -1
+	g.InteractionPlayerRow = -1
+	g.InteractionPlayerCol = -1
+
+	// Reset exit animation state
+	g.ExitAnimating = false
+	g.ExitAnimStartTime = 0
+
+	// Regenerate grid with the same seed (or use level as seed if not set)
+	var seed int64
+	if g.LevelSeed != 0 {
+		seed = g.LevelSeed
+	} else {
+		// Fallback: use level number as seed (deterministic)
+		seed = int64(currentLevel)
+	}
+
+	// Set seed before generating to ensure same map layout
+	rand.Seed(seed)
+	g.Grid = generateGrid(currentLevel)
+
+	// Setup level again (will place entities in same positions due to same seed)
+	setupLevel(g)
+
+	// Store the seed for future resets
+	g.LevelSeed = seed
+
+	// Update power and lighting after setup
+	updateLightingExploration(g)
+
+	// Clear messages and show reset message
+	g.ClearMessages()
+	logMessage(g, "Level reset!")
+	logMessage(g, "You are on deck %d.", g.Level)
+	showLevelObjectives(g)
+}
+
 // advanceLevel generates a new map and advances to the next level
 func advanceLevel(g *state.Game) {
 	g.AdvanceLevel()
-	g.Grid = generateGrid(g.Level)
 
+	// Store seed for new level (for reset functionality)
+	seed := time.Now().UnixNano()
+	g.LevelSeed = seed
+	rand.Seed(seed)
+
+	g.Grid = generateGrid(g.Level)
 	setupLevel(g)
 
 	// Clear movement messages and show level info
@@ -1024,7 +1392,7 @@ func showLevelObjectives(g *state.Game) {
 		logMessage(g, "Clear ACTION{%d} environmental hazard(s).", numHazards)
 	}
 	if numDoors == 0 && len(g.Generators) == 0 && numHazards == 0 {
-		logMessage(g, "Find the lift to the next deck.")
+		logMessage(g, "Find the EXIT{lift} to the next deck.")
 	}
 }
 
@@ -1101,6 +1469,11 @@ func canEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 		}
 	}
 
+	// Check for generator (blocks movement)
+	if gameworld.HasGenerator(r) {
+		return false, &missingItems
+	}
+
 	// Check for furniture (blocks movement)
 	if gameworld.HasFurniture(r) {
 		return false, &missingItems
@@ -1113,6 +1486,11 @@ func canEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 
 	// Check for puzzle terminals (blocks movement)
 	if gameworld.HasPuzzle(r) {
+		return false, &missingItems
+	}
+
+	// Check for maintenance terminals (blocks movement)
+	if gameworld.HasMaintenanceTerminal(r) {
 		return false, &missingItems
 	}
 
@@ -1199,10 +1577,24 @@ func moveCell(g *state.Game, requestedCell *world.Cell) {
 	}
 
 	if res, _ := canEnter(g, requestedCell, true); res {
-		requestedCell.Visited = true
+		// Check if lights are on - if not, cells won't stay explored
+		cellData := gameworld.GetGameData(requestedCell)
+		if cellData.LightsOn {
+			requestedCell.Visited = true
+			cellData.Lighted = true
+		} else {
+			// If lights are off, only mark as visited temporarily
+			requestedCell.Visited = true
+		}
 
 		// Reveal cells within field of view (radius 3, with line-of-sight blocking)
 		world.RevealFOVDefault(g.Grid, requestedCell)
+
+		// Ensure 3x3 radius cells are always visible (even without power)
+		ensureNearbyCellsVisible(g, requestedCell)
+
+		// Update lighting-based exploration
+		updateLightingExploration(g)
 
 		// Reset interaction order when player moves
 		if g.CurrentCell == nil || g.CurrentCell.Row != requestedCell.Row || g.CurrentCell.Col != requestedCell.Col {
@@ -1251,6 +1643,10 @@ func processIntent(g *state.Game, intent engineinput.Intent) {
 
 	case engineinput.ActionDevMap:
 		switchToDevMap(g)
+		return
+
+	case engineinput.ActionResetLevel:
+		resetLevel(g)
 		return
 
 	case engineinput.ActionMoveEast:
@@ -1383,6 +1779,9 @@ func mainLoop(g *state.Game) {
 	// Check adjacent cells for unpowered generators and auto-insert batteries
 	checkAdjacentGenerators(g)
 
+	// Update lighting and power consumption
+	updateLightingExploration(g)
+
 	// Remove messages older than 10 seconds from the buffer
 	g.RemoveOldMessages()
 
@@ -1400,6 +1799,14 @@ func mainLoop(g *state.Game) {
 	// Render the complete game frame
 	renderer.RenderFrame(g)
 
+	// If exit animation is running, continue loop without waiting for input
+	// This allows the animation to complete automatically
+	if g.ExitAnimating {
+		// Small delay to allow animation to render smoothly
+		time.Sleep(16 * time.Millisecond) // ~60 FPS
+		return
+	}
+
 	// Get and process input (tiered input system -> Intent -> game logic)
 	processIntent(g, renderer.Current.GetInput())
 }
@@ -1411,143 +1818,48 @@ func isNonRebindable(action engineinput.Action) bool {
 		action == engineinput.ActionZoomOut
 }
 
-// runBindingsMenu presents a simple bindings configuration menu.
-// Controls while in the menu:
-//   - Move selection: up/down actions (north/south)
-//   - Edit selected action: hint action (e.g. "?" or mapped equivalent)
-//   - Exit menu: menu action (F10/Start) or quit action (q/escape)
+// runBindingsMenu presents a simple bindings configuration menu using the generic menu system.
 func runBindingsMenu(g *state.Game) {
-	actions := []engineinput.Action{
-		engineinput.ActionMoveNorth,
-		engineinput.ActionMoveSouth,
-		engineinput.ActionMoveWest,
-		engineinput.ActionMoveEast,
-		engineinput.ActionHint,
-		engineinput.ActionInteract,
-		engineinput.ActionZoomIn,
-		engineinput.ActionZoomOut,
-		// ActionScreenshot, ActionOpenMenu, ActionQuit removed - not rebindable
+	handler := gamemenu.NewBindingsMenuHandler()
+	items := handler.GetMenuItems()
+	gamemenu.RunMenu(g, items, handler)
+}
+
+// checkAdjacentGeneratorAtCell checks a specific cell for generator and shows power info
+// Returns true if generator was interacted with
+func checkAdjacentGeneratorAtCell(g *state.Game, cell *world.Cell) bool {
+	if cell == nil || !gameworld.HasGenerator(cell) {
+		return false
 	}
 
-	selected := 0
+	gen := gameworld.GetGameData(cell).Generator
 
-	helpText := ""
+	// Build tooltip message with generator status and power information
+	var calloutText strings.Builder
+	calloutText.WriteString(fmt.Sprintf("=== %s ===\n", gen.Name))
 
-	// Build set of non-rebindable actions
-	nonRebindable := make(map[engineinput.Action]bool)
-	for _, act := range actions {
-		if isNonRebindable(act) {
-			nonRebindable[act] = true
-		}
+	if gen.IsPowered() {
+		calloutText.WriteString("Status: POWERED\n")
+		calloutText.WriteString(fmt.Sprintf("Batteries: ACTION{%d}/ACTION{%d}\n", gen.BatteriesInserted, gen.BatteriesRequired))
+	} else {
+		calloutText.WriteString("Status: UNPOWERED\n")
+		calloutText.WriteString(fmt.Sprintf("Batteries: ACTION{%d}/ACTION{%d}\n", gen.BatteriesInserted, gen.BatteriesRequired))
+		calloutText.WriteString(fmt.Sprintf("Needs: ACTION{%d} more batteries\n", gen.BatteriesNeeded()))
+	}
+	calloutText.WriteString("\n")
+	calloutText.WriteString(fmt.Sprintf("Power Supply: ACTION{%d} watts\n", g.PowerSupply))
+	calloutText.WriteString(fmt.Sprintf("Power Consumption: ACTION{%d} watts\n", g.PowerConsumption))
+	calloutText.WriteString(fmt.Sprintf("Available Power: ACTION{%d} watts", g.GetAvailablePower()))
+
+	// Use appropriate color based on power status
+	calloutColor := renderer.CalloutColorGenerator
+	if gen.IsPowered() {
+		calloutColor = renderer.CalloutColorGeneratorOn
 	}
 
-	for {
-		// Prefer a renderer-native, full-screen overlay if supported (Ebiten).
-		if mr, ok := renderer.Current.(renderer.BindingsMenuRenderer); ok {
-			mr.RenderBindingsMenu(g, actions, selected, helpText, nonRebindable)
-		} else {
-			// Fallback: render menu into the message log for TUI.
-			g.ClearMessages()
-			logMessage(g, "=== Bindings Menu ===")
-			versionText := fmt.Sprintf("Version: %s", renderer.Version)
-			if renderer.Commit != "unknown" && len(renderer.Commit) > 0 {
-				versionText += fmt.Sprintf(" (%s)", renderer.Commit[:7])
-			}
-			logMessage(g, versionText)
-			// Show instructions, but only mention "? to edit" if selected action is rebindable
-			if selected < len(actions) && !isNonRebindable(actions[selected]) {
-				logMessage(g, "Use up/down to select, ? to edit, F10/Start or q to exit.")
-			} else {
-				logMessage(g, "Use up/down to select, F10/Start or q to exit.")
-			}
+	renderer.AddCallout(cell.Row, cell.Col, calloutText.String(), calloutColor, 0)
 
-			byAction := engineinput.GetBindingsByAction()
-			for i, act := range actions {
-				name := engineinput.ActionName(act)
-				codes := byAction[act]
-				codeText := strings.Join(codes, ", ")
-				prefix := "  "
-				if i == selected {
-					prefix = "> "
-				}
-				if codeText == "" {
-					codeText = "(unbound)"
-				}
-				// Use different styling for non-rebindable actions
-				if isNonRebindable(act) {
-					logMessage(g, "%s%s: %s (fixed)", prefix, renderer.StyledSubtle(name), codeText)
-				} else {
-					logMessage(g, "%s%s: %s", prefix, name, codeText)
-				}
-			}
-
-			// Re-render frame with updated messages
-			renderer.RenderFrame(g)
-		}
-
-		// Get next intent
-		intent := renderer.Current.GetInput()
-
-		switch intent.Action {
-		case engineinput.ActionMoveNorth:
-			if selected > 0 {
-				selected--
-				helpText = "" // Clear help text when navigating
-			}
-		case engineinput.ActionMoveSouth:
-			if selected < len(actions)-1 {
-				selected++
-				helpText = "" // Clear help text when navigating
-			}
-		case engineinput.ActionAction, engineinput.ActionHint:
-			// Edit binding for selected action: ask for a new code string
-			action := actions[selected]
-
-			// Check if action is non-rebindable - don't allow editing
-			if isNonRebindable(action) {
-				// Don't show any help text for non-rebindable actions
-				helpText = ""
-				continue
-			}
-
-			actionName := engineinput.ActionName(action)
-
-			// Set help text to show on menu overlay (for Ebiten) or in messages (for TUI)
-			helpText = fmt.Sprintf("Editing binding for: %s", actionName)
-			if mr, ok := renderer.Current.(renderer.BindingsMenuRenderer); ok {
-				// Ebiten: help text will be drawn on the menu overlay
-				mr.RenderBindingsMenu(g, actions, selected, helpText, nonRebindable)
-			} else {
-				// TUI: fall back to messages
-				g.ClearMessages()
-				logMessage(g, helpText)
-				logMessage(g, "Type new binding code (e.g. arrow_up, w, menu) and press Enter.")
-				renderer.RenderFrame(g)
-			}
-
-			// Use renderer.GetInput() to read a raw-ish code string
-			code := renderer.GetInput()
-			if code != "" {
-				engineinput.SetSingleBinding(action, code)
-				// Show confirmation message (will clear on next action)
-				helpText = fmt.Sprintf("Set binding for %s to %s", actionName, code)
-			} else {
-				// User cancelled or entered empty string - clear help text
-				helpText = ""
-			}
-		case engineinput.ActionOpenMenu, engineinput.ActionQuit:
-			// Exit menu (do not quit the game; just return to main loop)
-			g.ClearMessages()
-			if mr, ok := renderer.Current.(renderer.BindingsMenuRenderer); ok {
-				mr.ClearBindingsMenu()
-			}
-			return
-		case engineinput.ActionNone:
-			// Ignore
-		default:
-			// Ignore other actions while in menu
-		}
-	}
+	return true
 }
 
 // checkAdjacentGenerators checks adjacent cells for unpowered generators and inserts batteries
@@ -1587,6 +1899,11 @@ func checkAdjacentGenerators(g *state.Game) {
 			if gen.IsPowered() {
 				logMessage(g, "ITEM{%s} is now powered!", gen.Name)
 				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("%s POWERED!", gen.Name), renderer.CalloutColorGeneratorOn, 0)
+				// Update power supply when generator is powered
+				g.UpdatePowerSupply()
+				// Update lighting based on new power availability
+				updateLightingExploration(g)
+				logMessage(g, "Power supply: ACTION{%d} watts available", g.GetAvailablePower())
 			} else {
 				logMessage(g, "%s needs ACTION{%d} more batteries", gen.Name, gen.BatteriesNeeded())
 				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("+%d batteries (%d more needed)", inserted, gen.BatteriesNeeded()), renderer.CalloutColorGenerator, 0)
@@ -1789,8 +2106,15 @@ func showInteractableHints(g *state.Game) {
 		// Check for interactables that are still interactable (not already used/checked)
 		// Priority order: furniture, terminals, puzzles, hazard controls
 		if gameworld.HasFurniture(cell) {
-			// Furniture can always be checked (even if already checked), so show hint
-			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
+			furniture := gameworld.GetGameData(cell).Furniture
+			if furniture.IsChecked() {
+				// Furniture already checked: show normal description tooltip
+				calloutText := fmt.Sprintf("FURNITURE{%s}\n%s", furniture.Name, furniture.Description)
+				renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
+			} else {
+				// Furniture not checked yet: show interaction hint (only for first 3 interactions)
+				renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
+			}
 			return // Only show one hint at a time
 		}
 		if gameworld.HasUnusedTerminal(cell) {
@@ -1803,8 +2127,18 @@ func showInteractableHints(g *state.Game) {
 			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
 			return
 		}
+		if gameworld.HasGenerator(cell) {
+			// Generator, show hint
+			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
+			return
+		}
 		if gameworld.HasInactiveHazardControl(cell) {
 			// Hazard control is inactive, show hint
+			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
+			return
+		}
+		if gameworld.HasMaintenanceTerminal(cell) {
+			// Maintenance terminal, show hint
 			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
 			return
 		}
@@ -1846,7 +2180,15 @@ func checkAdjacentInteractables(g *state.Game) bool {
 			continue
 		}
 
-		// Check for interactables in priority order: furniture, terminals, puzzles, hazard controls
+		// Check for interactables in priority order: generators, furniture, terminals, puzzles, hazard controls
+		if gameworld.HasGenerator(cell) {
+			if checkAdjacentGeneratorAtCell(g, cell) {
+				g.LastInteractedRow = cell.Row
+				g.LastInteractedCol = cell.Col
+				g.InteractionsCount++
+				return true
+			}
+		}
 		if gameworld.HasFurniture(cell) {
 			if checkAdjacentFurnitureAtCell(g, cell) {
 				g.LastInteractedRow = cell.Row
@@ -1875,6 +2217,15 @@ func checkAdjacentInteractables(g *state.Game) bool {
 			if checkAdjacentHazardControlsAtCell(g, cell) {
 				g.LastInteractedRow = cell.Row
 				g.LastInteractedCol = cell.Col
+				g.InteractionsCount++
+				return true
+			}
+		}
+		if gameworld.HasMaintenanceTerminal(cell) {
+			if checkAdjacentMaintenanceTerminalAtCell(g, cell) {
+				// Reset last interacted cell so maintenance terminal can be reopened immediately
+				g.LastInteractedRow = -1
+				g.LastInteractedCol = -1
 				g.InteractionsCount++
 				return true
 			}
@@ -2082,6 +2433,169 @@ func checkAdjacentHazardControls(g *state.Game) bool {
 		}
 	}
 	return false
+}
+
+// checkAdjacentMaintenanceTerminalAtCell checks a specific cell for maintenance terminal and opens menu
+// Returns true if maintenance terminal was interacted with
+func checkAdjacentMaintenanceTerminalAtCell(g *state.Game, cell *world.Cell) bool {
+	if cell == nil || !gameworld.HasMaintenanceTerminal(cell) {
+		return false
+	}
+
+	maintenanceTerm := gameworld.GetGameData(cell).MaintenanceTerm
+	// Don't mark as used - allow multiple interactions
+	// maintenanceTerm.Activate()
+
+	// Open maintenance terminal menu
+	runMaintenanceMenu(g, cell, maintenanceTerm)
+	return true
+}
+
+// ensureNearbyCellsVisible ensures cells within 5x5 radius of player are always visible
+func ensureNearbyCellsVisible(g *state.Game, centerCell *world.Cell) {
+	if g.Grid == nil || centerCell == nil {
+		return
+	}
+
+	centerRow := centerCell.Row
+	centerCol := centerCell.Col
+
+	// Ensure all cells within 5x5 radius (2 cells in each direction) are visible
+	for row := centerRow - 2; row <= centerRow+2; row++ {
+		for col := centerCol - 2; col <= centerCol+2; col++ {
+			cell := g.Grid.GetCell(row, col)
+			if cell != nil && cell.Room {
+				// Always keep nearby cells visible for exploration
+				cell.Discovered = true
+				if cell.Visited {
+					// Keep visited state
+				}
+			}
+		}
+	}
+}
+
+// updateLightingExploration updates cell exploration based on lighting
+func updateLightingExploration(g *state.Game) {
+	if g.Grid == nil || g.CurrentCell == nil {
+		return
+	}
+
+	// Calculate total power consumption
+	totalConsumption := calculatePowerConsumption(g)
+	g.PowerConsumption = totalConsumption
+
+	// Update power supply from generators
+	g.UpdatePowerSupply()
+
+	availablePower := g.GetAvailablePower()
+
+	// Check if power consumption exceeds supply and warn the player
+	if g.PowerConsumption > g.PowerSupply && !g.PowerOverloadWarned {
+		logMessage(g, "WARNING: Power consumption (ACTION{%d} watts) exceeds supply (ACTION{%d} watts)!", g.PowerConsumption, g.PowerSupply)
+		g.PowerOverloadWarned = true
+	} else if g.PowerConsumption <= g.PowerSupply {
+		// Reset warning flag when power is sufficient
+		g.PowerOverloadWarned = false
+	}
+	playerRow := g.CurrentCell.Row
+	playerCol := g.CurrentCell.Col
+
+	// If we have power, turn on lights in visited cells
+	// If no power, turn off lights (cells will fade from explored)
+	// Exception: cells within 3x3 radius of player always stay visible
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room {
+			return
+		}
+
+		data := gameworld.GetGameData(cell)
+
+		// Calculate distance from player (Manhattan distance for 5x5 radius)
+		rowDist := row - playerRow
+		colDist := col - playerCol
+		if rowDist < 0 {
+			rowDist = -rowDist
+		}
+		if colDist < 0 {
+			colDist = -colDist
+		}
+		// 5x5 radius means max distance of 2 in each direction
+		isNearPlayer := rowDist <= 2 && colDist <= 2
+
+		// If cell was visited and we have power, lights should be on
+		if cell.Visited && availablePower > 0 {
+			if !data.LightsOn {
+				data.LightsOn = true
+				data.Lighted = true
+				// Ensure cell stays explored when lights are on
+				cell.Discovered = true
+				cell.Visited = true
+			}
+		} else if availablePower <= 0 {
+			// No power - lights off
+			data.LightsOn = false
+
+			// Cells near player always stay visible (3x3 radius)
+			if isNearPlayer {
+				// Keep nearby cells visible even without power
+				cell.Discovered = true
+				if cell.Visited {
+					// Mark as temporarily visible (not permanently lighted)
+					// This allows exploration without power
+				}
+			} else {
+				// Far cells fade if not permanently lighted
+				if !data.Lighted {
+					cell.Discovered = false
+					cell.Visited = false
+				}
+			}
+		}
+	})
+}
+
+// calculatePowerConsumption calculates total power consumption from all active devices
+func calculatePowerConsumption(g *state.Game) int {
+	if g.Grid == nil {
+		return 0
+	}
+
+	totalConsumption := 0
+
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room {
+			return
+		}
+
+		data := gameworld.GetGameData(cell)
+
+		// Lights consume power if on
+		if data.LightsOn {
+			totalConsumption += 1 // 1 watt per lit cell
+		}
+
+		// CCTV terminals consume power if used
+		if data.Terminal != nil && data.Terminal.Used {
+			totalConsumption += 5 // 5 watts per active terminal
+		}
+
+		// Puzzle terminals consume power if solved
+		if data.Puzzle != nil && data.Puzzle.IsSolved() {
+			totalConsumption += 3 // 3 watts per solved puzzle
+		}
+
+		// Maintenance terminals don't consume power - they're just information displays
+	})
+
+	return totalConsumption
+}
+
+// runMaintenanceMenu shows the maintenance terminal menu with room devices and power consumption using the generic menu system.
+func runMaintenanceMenu(g *state.Game, cell *world.Cell, maintenanceTerm *entities.MaintenanceTerminal) {
+	handler := gamemenu.NewMaintenanceMenuHandler(g, cell, maintenanceTerm)
+	items := handler.GetMenuItems()
+	gamemenu.RunMenu(g, items, handler)
 }
 
 // saveScreenshotHTML saves the current map view as an HTML file
