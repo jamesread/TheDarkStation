@@ -1,6 +1,7 @@
 # Build output
 dist/
 darkstation
+main
 *.exe
 
 # IDE

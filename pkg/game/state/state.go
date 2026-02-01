@@ -52,6 +52,12 @@ type Game struct {
 	PowerSupply          int                   // Total available power from generators
 	PowerConsumption     int                   // Total power being consumed by active devices
 	PowerOverloadWarned  bool                  // Whether we've warned about power overload this cycle
+	QuitToTitle          bool                  // Set to true to quit to main menu
+
+	// Room power: doors and CCTV/hazard controls are unpowered by default.
+	// Start room's doors are powered so the player can leave.
+	RoomDoorsPowered map[string]bool // room name -> doors powered
+	RoomCCTVPowered  map[string]bool // room name -> CCTV terminals and hazard controls powered
 }
 
 // MessageEntry represents a message with a timestamp
@@ -73,6 +79,8 @@ func NewGame() *Game {
 		PowerSupply:         0,
 		PowerConsumption:    0,
 		PowerOverloadWarned: false,
+		RoomDoorsPowered:    make(map[string]bool),
+		RoomCCTVPowered:     make(map[string]bool),
 	}
 }
 
@@ -199,6 +207,8 @@ func (g *Game) AdvanceLevel() {
 	g.PowerSupply = 0
 	g.PowerConsumption = 0
 	g.PowerOverloadWarned = false
+	g.RoomDoorsPowered = make(map[string]bool)
+	g.RoomCCTVPowered = make(map[string]bool)
 }
 
 // GetAvailablePower returns the available power (supply - consumption)
@@ -216,6 +226,85 @@ func (g *Game) UpdatePowerSupply() {
 		}
 	}
 	g.PowerSupply = totalPower
+}
+
+// CalculatePowerConsumption returns total power consumption from all active devices
+// (doors, CCTV, solved puzzles). Used for display and for overload/short-out logic.
+func (g *Game) CalculatePowerConsumption() int {
+	if g.Grid == nil {
+		return 0
+	}
+	totalConsumption := 0
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.Terminal != nil && g.RoomCCTVPowered[cell.Name] {
+			totalConsumption += 10
+		}
+		if data.Door != nil && g.RoomDoorsPowered[data.Door.RoomName] {
+			totalConsumption += 10
+		}
+		if data.Puzzle != nil && data.Puzzle.IsSolved() {
+			totalConsumption += 3
+		}
+	})
+	return totalConsumption
+}
+
+// ShortOutIfOverload runs after a room power toggle to ON: if consumption exceeds supply,
+// "shorts out" by unpowering other rooms' doors and CCTV (never protectedRoomName)
+// until consumption <= supply. Caller must have already applied the toggle.
+// Updates g.PowerConsumption. Returns true if any systems were unpowered.
+func (g *Game) ShortOutIfOverload(protectedRoomName string) bool {
+	g.UpdatePowerSupply()
+	consumption := g.CalculatePowerConsumption()
+	g.PowerConsumption = consumption
+	if consumption <= g.PowerSupply {
+		return false
+	}
+	type consumer struct{ room, kind string }
+	var list []consumer
+	for roomName := range g.RoomDoorsPowered {
+		if roomName == protectedRoomName {
+			continue
+		}
+		if g.RoomDoorsPowered[roomName] {
+			list = append(list, consumer{roomName, "doors"})
+		}
+	}
+	for roomName := range g.RoomCCTVPowered {
+		if roomName == protectedRoomName {
+			continue
+		}
+		if g.RoomCCTVPowered[roomName] {
+			list = append(list, consumer{roomName, "cctv"})
+		}
+	}
+	for i := 0; i < len(list); i++ {
+		for j := i + 1; j < len(list); j++ {
+			if list[j].room < list[i].room || (list[j].room == list[i].room && list[j].kind == "doors" && list[i].kind == "cctv") {
+				list[i], list[j] = list[j], list[i]
+			}
+		}
+	}
+	shortOut := false
+	for _, c := range list {
+		if consumption <= g.PowerSupply {
+			break
+		}
+		if c.kind == "doors" && g.RoomDoorsPowered[c.room] {
+			g.RoomDoorsPowered[c.room] = false
+			shortOut = true
+		} else if c.kind == "cctv" && g.RoomCCTVPowered[c.room] {
+			g.RoomCCTVPowered[c.room] = false
+			shortOut = true
+		}
+		consumption = g.CalculatePowerConsumption()
+		g.PowerConsumption = consumption
+	}
+	return shortOut
 }
 
 // AddFoundCode records that the player has found a puzzle code

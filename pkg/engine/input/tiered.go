@@ -32,12 +32,13 @@ const (
 	ActionQuit
 	ActionScreenshot
 	ActionOpenMenu
-	ActionAction     // Generic "action/confirm" (e.g., Enter/A)
-	ActionInteract   // Interact with furniture/objects (E, Enter, A button)
-	ActionDevMap     // Switch to developer testing map (F9)
-	ActionResetLevel // Reset current level (F5)
-	ActionZoomIn     // Zoom in (increase font/tile size)
-	ActionZoomOut    // Zoom out (decrease font/tile size)
+	ActionAction       // Generic "action/confirm" (e.g., Enter/A)
+	ActionInteract     // Interact with furniture/objects (E, Enter, A button)
+	ActionDevMap       // Switch to developer testing map (F9)
+	ActionDebugMapDump // Dump revealed map to map.txt (F8)
+	ActionResetLevel   // Reset current level (F5)
+	ActionZoomIn       // Zoom in (increase font/tile size)
+	ActionZoomOut      // Zoom out (decrease font/tile size)
 )
 
 // Intent is the 4th‑layer, high‑level description of what the player wants to do.
@@ -107,6 +108,7 @@ var bindings = map[string]Action{
 	// Menu
 	"menu": ActionOpenMenu,
 	"f9":   ActionDevMap,
+	"f8":   ActionDebugMapDump,
 
 	// Controller/gamepad specific bindings
 	"gamepad_dpad_up":    ActionMoveNorth,
@@ -163,6 +165,8 @@ func ActionName(a Action) string {
 		return "Open Menu"
 	case ActionDevMap:
 		return "Dev Map"
+	case ActionDebugMapDump:
+		return "Debug Map Dump"
 	case ActionAction:
 		return "Action"
 	case ActionInteract:

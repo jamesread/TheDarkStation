@@ -1,6 +1,6 @@
 // Package renderer provides the rendering abstraction layer for the game.
 // It defines the Renderer interface and provides a pluggable architecture
-// for different rendering backends (TUI, Ebiten, etc.)
+// for different rendering backends (currently only Ebiten is supported).
 package renderer
 
 import (
@@ -14,7 +14,7 @@ func ApplyMarkup(msg string, a ...any) string {
 	return FormatText(msg, a...)
 }
 
-// PrintString prints a formatted string (TUI-specific, kept for backwards compatibility)
+// PrintString prints a formatted string (kept for backwards compatibility)
 // For new code, prefer using RenderFrame or the renderer interface directly.
 func PrintString(msg string, a ...any) {
 	if Current != nil {

@@ -1,0 +1,124 @@
+=== MAP DUMP DEBUG (level layout, routing, entities) ===
+
+--- Metadata ---
+level: 2
+level_seed: 1769907272600603232
+grid_rows: 18
+grid_cols: 32
+coordinate_system: row,col (0-based, row=vertical, col=horizontal)
+player_row: 4
+player_col: 10
+player_cell: 4,10
+start_cell: 12,26
+has_map: false
+power_supply: 100
+power_consumption: 229
+power_available: -129
+batteries_in_inventory: 1
+
+--- Legend (cell symbols) ---
+. = walkable empty  # = unrevealed or wall  D = door  G = generator  T = CCTV terminal  P = puzzle terminal  M = maintenance terminal  F = furniture  ! = blocking hazard  C = hazard control  i = items on floor  @ = player  E = exit
+
+--- Map (revealed cells only; unrevealed = #) ---
+################################
+#########....###################
+#########F...###################
+#######.D.F..D.........D.F...###
+#########M@..##.########.....###
+###############.########.....###
+###############.########F....###
+###############.########...M.###
+###############.##########D#####
+###############D##########D#####
+###########.........##G..M...F##
+###########F........##.....F..##
+###########.........##........##
+###########.........##........##
+###########..PF.....##........##
+#####E#####.......M.############
+################################
+################################
+
+--- Map (fully revealed; full layout) ---
+################################
+###..F..#....###################
+###.....#F...###################
+###M..T.D.F..D.........D.F...###
+###....F#M@..##.########.....###
+###.###########.########.....###
+###.###########.########F....###
+###.###########.########...M.###
+###.###########.##########D#####
+###.###########D##########D#####
+###D#######.........##G..M...F##
+#.F...#####F........##.....F..##
+#.....#####.........##........##
+#.....#####.........##........##
+#....F#####..PF.....##........##
+#..M.E#####.......M.############
+################################
+################################
+
+--- Entities (all with row,col and state) ---
+Doors:
+  row: 3 col: 8 room_name: "Depressurized Bridge" locked: false keycard: "Depressurized Bridge Keycard"
+  row: 3 col: 13 room_name: "Depressurized Bridge" locked: false keycard: "Depressurized Bridge Keycard"
+  row: 3 col: 23 room_name: "Derelict Crew Quarters" locked: false keycard: "Derelict Crew Quarters Keycard"
+  row: 8 col: 26 room_name: "Derelict Crew Quarters" locked: false keycard: "Derelict Crew Quarters Keycard"
+  row: 9 col: 15 room_name: "Emergency Cargo Bay" locked: false keycard: "Emergency Cargo Bay Keycard"
+  row: 9 col: 26 room_name: "Overgrown Communications" locked: false keycard: "Overgrown Communications Keycard"
+  row: 10 col: 3 room_name: "Depressurized Mess Hall" locked: false keycard: "Depressurized Mess Hall Keycard"
+
+Generators:
+  row: 10 col: 22 name: "Generator #1" batteries_inserted: 1 batteries_required: 1 powered: true
+
+CCTV Terminals:
+  row: 3 col: 6 name: "CCTV Terminal #1" used: false target_room: "Depressurized Bridge"
+
+Puzzle Terminals:
+  row: 14 col: 13 name: "Security Terminal #1" solved: true solution: "1-2-3-4" hint: "Find the code in logs or furniture descriptions. Look for: Code: 1-2-3-4" reward: battery
+
+Maintenance Terminals:
+  row: 3 col: 3 name: "Maintenance Terminal - Emergency Command Center" room_name: "Emergency Command Center" used: false
+  row: 4 col: 9 name: "Maintenance Terminal - Depressurized Bridge" room_name: "Depressurized Bridge" used: false
+  row: 7 col: 27 name: "Maintenance Terminal - Derelict Crew Quarters" room_name: "Derelict Crew Quarters" used: false
+  row: 10 col: 25 name: "Maintenance Terminal - Overgrown Communications" room_name: "Overgrown Communications" used: false
+  row: 15 col: 3 name: "Maintenance Terminal - Depressurized Mess Hall" room_name: "Depressurized Mess Hall" used: false
+  row: 15 col: 18 name: "Maintenance Terminal - Emergency Cargo Bay" room_name: "Emergency Cargo Bay" used: false
+
+Furniture:
+  row: 1 col: 5 name: "Communications Array" checked: false has_contained_item: false contained_item_name: "" description: "Banks of switches and indicator lights."
+  row: 2 col: 9 name: "Captain's Chair" checked: false has_contained_item: false contained_item_name: "" description: "A worn command chair faces the main viewscreen."
+  row: 3 col: 10 name: "Navigation Console" checked: true has_contained_item: false contained_item_name: "" description: "Star charts flicker on a dusty display."
+  row: 3 col: 25 name: "Bunk Bed" checked: true has_contained_item: false contained_item_name: "" description: "Personal effects scattered on unmade sheets."
+  row: 4 col: 7 name: "Status Board" checked: false has_contained_item: false contained_item_name: "" description: "Crew assignments, most names crossed out."
+  row: 6 col: 24 name: "Photo Display" checked: true has_contained_item: false contained_item_name: "" description: "Faded images of distant families."
+  row: 10 col: 29 name: "Signal Decoder" checked: false has_contained_item: false contained_item_name: "" description: "Encrypted message logs scroll endlessly."
+  row: 11 col: 2 name: "Food Dispenser" checked: false has_contained_item: false contained_item_name: "" description: "Vending machine, selections limited."
+  row: 11 col: 11 name: "Shipping Container" checked: false has_contained_item: false contained_item_name: "" description: "Dented metal crate, manifest unreadable."
+  row: 11 col: 27 name: "Antenna Controls" checked: true has_contained_item: false contained_item_name: "" description: "Dish alignment controls, slightly off-calibration. Code: 1-2-3-4"
+  row: 14 col: 5 name: "Dining Table" checked: false has_contained_item: false contained_item_name: "" description: "Trays of food, long since spoiled."
+  row: 14 col: 14 name: "Loading Dolly" checked: true has_contained_item: false contained_item_name: "" description: "Wheeled cart, one wheel broken."
+
+Hazards:
+
+Hazard Controls:
+
+Items on floor:
+
+Player inventory (owned items):
+  (none)
+
+Room power state:
+  room: "Corridor" doors_powered: false cctv_powered: false
+  room: "Depressurized Bridge" doors_powered: true cctv_powered: false
+  room: "Depressurized Mess Hall" doors_powered: true cctv_powered: false
+  room: "Derelict Crew Quarters" doors_powered: true cctv_powered: false
+  room: "Emergency Cargo Bay" doors_powered: true cctv_powered: false
+  room: "Emergency Command Center" doors_powered: false cctv_powered: false
+  room: "Overgrown Communications" doors_powered: true cctv_powered: false
+
+Exit cell:
+  row: 15 col: 5
+
+=== END MAP DUMP ===

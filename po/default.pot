@@ -1,6 +1,6 @@
 # gettext translation
-# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
-# This file is distributed under the same license as the PACKAGE package.
+# Copyright (C) 2026 James Read
+# This file is distributed under the same license as the TheDarkStation package.
 
 msgid   ""
 msgstr  "Project-Id-Version: \n"
@@ -55,3 +55,69 @@ msgstr[1] "You are holding %d items."
 
 msgid 	"OPEN_DOOR"
 msgstr 	"You push on the door, and it opens into a "
+
+msgid	"DECK_CLEARED"
+msgstr	"DECK %d CLEARED"
+
+msgid	"PROCEEDING_TO_NEXT_LEVEL"
+msgstr	"Proceeding to next level..."
+
+msgid	"NORTH"
+msgstr	"North"
+
+msgid	"SOUTH"
+msgstr	"South"
+
+msgid	"EAST"
+msgstr	"East"
+
+msgid	"WEST"
+msgstr	"West"
+
+msgid	"WALL"
+msgstr	"# Wall #"
+
+msgid	"DIRECTION_NEED_KEYCARD"
+msgstr	"%s (need %s)"
+
+msgid	"DIRECTION_BLOCKED"
+msgstr	"%s (blocked)"
+
+msgid	"DECK_NUMBER"
+msgstr	"Deck %d"
+
+msgid	"BINDINGS"
+msgstr	"Bindings"
+
+msgid	"VERSION"
+msgstr	"Version: %s"
+
+msgid	"MENU_HELP_CLOSE"
+msgstr	"Up/Down: select    F10/Start or q: close"
+
+msgid	"MENU_HELP_EDIT"
+msgstr	"Up/Down: select    ?: edit binding    F10/Start or q: close"
+
+msgid	"UNBOUND"
+msgstr	"(unbound)"
+
+msgid	"FIXED"
+msgstr	"(fixed)"
+
+msgid	"INVENTORY"
+msgstr	"Inventory:"
+
+msgid	"GENERATORS"
+msgstr	"Generators"
+
+msgid	"POWER_UP_ONE_GENERATOR"
+msgstr	"Power up ACTION{1} more generator with batteries."
+
+msgid	"POWER_UP_GENERATORS"
+msgstr	"Power up ACTION{%d} more generators with batteries."
+
+msgid	"CLEAR_HAZARDS"
+msgstr	"Clear ACTION{%d} environmental hazard(s)."
+
+msgid	"FIND_LIFT"
+msgstr	"Find the POWERED{lift} to the next deck!"

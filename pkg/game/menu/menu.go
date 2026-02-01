@@ -23,6 +23,7 @@ type MenuItem interface {
 type MenuHandler interface {
 	// OnSelect is called when an item is selected (navigated to).
 	OnSelect(item MenuItem, index int)
+
 	// OnActivate is called when an item is activated (e.g., Enter pressed).
 	// Returns true if the menu should close, and any help text to display.
 	OnActivate(item MenuItem, index int) (shouldClose bool, helpText string)
@@ -59,12 +60,12 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 	}
 
 	for {
-		// Prefer a renderer-native, full-screen overlay if supported (Ebiten).
+		// Use renderer-native, full-screen overlay (Ebiten).
 		if mr, ok := renderer.Current.(MenuRenderer); ok {
 			mr.RenderMenu(g, items, selected, helpText, handler.GetTitle())
 		} else {
-			// Fallback: render menu into the message log for TUI.
-			renderMenuTUI(g, items, selected, helpText, handler)
+			// Fallback: render menu into the message log (should not happen with Ebiten).
+			renderMenuFallback(g, items, selected, helpText, handler)
 		}
 
 		// Get next intent
@@ -83,23 +84,49 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 
 		switch intent.Action {
 		case engineinput.ActionMoveNorth:
-			// Move selection up to previous selectable item
+			// Move selection up to previous selectable item (with wrap-around)
+			found := false
 			for i := selected - 1; i >= 0; i-- {
 				if items[i].IsSelectable() {
 					selected = i
 					helpText = "" // Clear help text when navigating
 					handler.OnSelect(items[selected], selected)
+					found = true
 					break
 				}
 			}
+			// If no item found above, wrap to the last selectable item
+			if !found {
+				for i := len(items) - 1; i > selected; i-- {
+					if items[i].IsSelectable() {
+						selected = i
+						helpText = "" // Clear help text when navigating
+						handler.OnSelect(items[selected], selected)
+						break
+					}
+				}
+			}
 		case engineinput.ActionMoveSouth:
-			// Move selection down to next selectable item
+			// Move selection down to next selectable item (with wrap-around)
+			found := false
 			for i := selected + 1; i < len(items); i++ {
 				if items[i].IsSelectable() {
 					selected = i
 					helpText = "" // Clear help text when navigating
 					handler.OnSelect(items[selected], selected)
+					found = true
 					break
+				}
+			}
+			// If no item found below, wrap to the first selectable item
+			if !found {
+				for i := 0; i < selected; i++ {
+					if items[i].IsSelectable() {
+						selected = i
+						helpText = "" // Clear help text when navigating
+						handler.OnSelect(items[selected], selected)
+						break
+					}
 				}
 			}
 		case engineinput.ActionAction, engineinput.ActionInteract:
@@ -132,8 +159,9 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 	}
 }
 
-// renderMenuTUI renders the menu in the message log for TUI renderers.
-func renderMenuTUI(g *state.Game, items []MenuItem, selected int, helpText string, handler MenuHandler) {
+// renderMenuFallback renders the menu in the message log as a fallback.
+// This should not be used with Ebiten renderer, which supports MenuRenderer.
+func renderMenuFallback(g *state.Game, items []MenuItem, selected int, helpText string, handler MenuHandler) {
 	g.ClearMessages()
 	logMessage(g, "=== %s ===", handler.GetTitle())
 

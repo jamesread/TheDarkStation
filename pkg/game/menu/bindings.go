@@ -44,14 +44,34 @@ func (b *BindingMenuItem) GetHelpText() string {
 	return fmt.Sprintf("Editing binding for: %s", engineinput.ActionName(b.Action))
 }
 
+// BackMenuItem represents a "Back" menu item for returning to the previous menu.
+type BackMenuItem struct{}
+
+// GetLabel returns the display label for the back menu item.
+func (b *BackMenuItem) GetLabel() string {
+	return "Back"
+}
+
+// IsSelectable returns whether this item can be selected.
+func (b *BackMenuItem) IsSelectable() bool {
+	return true
+}
+
+// GetHelpText returns help text for the back menu item.
+func (b *BackMenuItem) GetHelpText() string {
+	return "Return to the previous menu"
+}
+
 // BindingsMenuHandler handles the bindings menu.
 type BindingsMenuHandler struct {
 	actions       []engineinput.Action
 	nonRebindable map[engineinput.Action]bool
+	fromMainMenu  bool
 }
 
 // NewBindingsMenuHandler creates a new bindings menu handler.
-func NewBindingsMenuHandler() *BindingsMenuHandler {
+// If fromMainMenu is true, a "Back" option will be added to return to the main menu.
+func NewBindingsMenuHandler(fromMainMenu bool) *BindingsMenuHandler {
 	actions := []engineinput.Action{
 		engineinput.ActionMoveNorth,
 		engineinput.ActionMoveSouth,
@@ -73,6 +93,7 @@ func NewBindingsMenuHandler() *BindingsMenuHandler {
 	return &BindingsMenuHandler{
 		actions:       actions,
 		nonRebindable: nonRebindable,
+		fromMainMenu:  fromMainMenu,
 	}
 }
 
@@ -83,19 +104,29 @@ func (h *BindingsMenuHandler) GetTitle() string {
 
 // GetInstructions returns the menu instructions.
 func (h *BindingsMenuHandler) GetInstructions(selected MenuItem) string {
+	exitHint := "F10/Start or q to exit"
+	if h.fromMainMenu {
+		exitHint = "Enter to go back, F10/Start or q to exit"
+	}
+
 	if selected == nil {
-		return "Use up/down to select, F10/Start or q to exit."
+		return fmt.Sprintf("Use up/down to select, %s.", exitHint)
+	}
+
+	// Check if it's the Back menu item
+	if _, ok := selected.(*BackMenuItem); ok {
+		return fmt.Sprintf("Press Enter to return to the main menu, %s.", exitHint)
 	}
 
 	bindingItem, ok := selected.(*BindingMenuItem)
 	if !ok {
-		return "Use up/down to select, F10/Start or q to exit."
+		return fmt.Sprintf("Use up/down to select, %s.", exitHint)
 	}
 
 	if !bindingItem.NonRebindable {
-		return "Use up/down to select, ? to edit, F10/Start or q to exit."
+		return fmt.Sprintf("Use up/down to select, Enter to edit, %s.", exitHint)
 	}
-	return "Use up/down to select, F10/Start or q to exit."
+	return fmt.Sprintf("Use up/down to select, %s.", exitHint)
 }
 
 // OnSelect is called when an item is selected.
@@ -105,6 +136,12 @@ func (h *BindingsMenuHandler) OnSelect(item MenuItem, index int) {
 
 // OnActivate is called when an item is activated.
 func (h *BindingsMenuHandler) OnActivate(item MenuItem, index int) (shouldClose bool, helpText string) {
+	// Check if it's the Back menu item
+	if _, ok := item.(*BackMenuItem); ok {
+		// Close menu to return to previous menu
+		return true, ""
+	}
+
 	bindingItem, ok := item.(*BindingMenuItem)
 	if !ok {
 		return false, ""
@@ -152,6 +189,12 @@ func (h *BindingsMenuHandler) GetMenuItems() []MenuItem {
 			NonRebindable: h.nonRebindable[action],
 		}
 	}
+
+	// Add "Back" option at the end if opened from main menu
+	if h.fromMainMenu {
+		items = append(items, &BackMenuItem{})
+	}
+
 	return items
 }
 

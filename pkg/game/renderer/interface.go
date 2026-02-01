@@ -30,7 +30,7 @@ const (
 )
 
 // Renderer defines the interface for game rendering backends
-// Implementations can include TUI (terminal), SDL, Ebiten, etc.
+// Currently only Ebiten is supported.
 type Renderer interface {
 	// Init initializes the renderer (colors, fonts, window, etc.)
 	Init()
@@ -42,12 +42,12 @@ type Renderer interface {
 	// This includes the map, status bar, messages, and input prompt
 	RenderFrame(g *state.Game)
 
-	// GetInput gets user input (blocking for TUI, event-based for GUI)
+	// GetInput gets user input (event-based)
 	// It returns a high-level Intent from the tiered input system.
 	GetInput() input.Intent
 
 	// StyleText applies a style to text and returns the styled string
-	// For TUI this applies ANSI colors, for GUI it may return markup
+	// For Ebiten this returns markup that will be parsed during rendering
 	StyleText(text string, style TextStyle) string
 
 	// FormatText formats a message with the renderer's markup system
@@ -174,20 +174,6 @@ type CalloutRenderer interface {
 	// ShowRoomEntryIfNew shows a room entry callout if the player entered a new room
 	// Returns true if a callout was shown
 	ShowRoomEntryIfNew(row, col int, roomName string) bool
-}
-
-// BindingsMenuRenderer is an optional interface for renderers that can draw
-// a full-screen bindings menu overlay on top of the map.
-// DEPRECATED: Use MenuRenderer from pkg/game/menu instead.
-type BindingsMenuRenderer interface {
-	// RenderBindingsMenu draws the bindings menu overlay for the given action list
-	// and currently selected index. helpText is optional instruction text to display
-	// on the menu (e.g., "Type new binding code..." when editing).
-	// nonRebindable is a set of actions that cannot be rebound (should be displayed differently).
-	RenderBindingsMenu(g *state.Game, actions []input.Action, selected int, helpText string, nonRebindable map[input.Action]bool)
-
-	// ClearBindingsMenu hides any active bindings menu overlay.
-	ClearBindingsMenu()
 }
 
 // Callout colors for different message types (matching cell colors)

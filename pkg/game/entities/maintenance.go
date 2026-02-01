@@ -5,6 +5,7 @@ type MaintenanceTerminal struct {
 	Name     string
 	RoomName string // Name of the room this terminal controls
 	Used     bool   // Whether the terminal has been accessed
+	Powered  bool   // Whether this terminal has power (only the first, e.g. start room, starts true; others can be restored from nearby)
 }
 
 // NewMaintenanceTerminal creates a new maintenance terminal
@@ -13,6 +14,7 @@ func NewMaintenanceTerminal(name string, roomName string) *MaintenanceTerminal {
 		Name:     name,
 		RoomName: roomName,
 		Used:     false,
+		Powered:  false,
 	}
 }
 
