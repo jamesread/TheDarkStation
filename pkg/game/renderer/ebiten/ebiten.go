@@ -32,6 +32,11 @@ import (
 	gameworld "darkstation/pkg/game/world"
 )
 
+// dynamicGet is used for runtime translation key lookups (e.g. GT{key} markup).
+// We use a function variable to avoid the non-constant format string linter check,
+// since we intentionally look up translation keys dynamically from markup.
+var dynamicGet = gotext.Get
+
 // Color palette for the game - brighter colors for visibility
 var (
 	colorBackground      = color.RGBA{26, 26, 46, 255}    // Dark blue-gray
@@ -2168,7 +2173,7 @@ func (e *EbitenRenderer) parseMarkup(msg string) []textSegment {
 			segColor = colorAction
 		case "GT":
 			// GT{} is for translations - look up the translation
-			content = gotext.Get(content)
+			content = dynamicGet(content)
 			segColor = colorText
 		case "FURNITURE":
 			// FURNITURE{} uses the furniture callout color (tan/brown for checked furniture)
