@@ -2,7 +2,8 @@ project_name: TheDarkStation
 version: 2
 
 builds:
-  - binary: darkstation
+  - id: linux
+    binary: darkstation
     main: main.go
     goos:
       - linux
@@ -18,7 +19,8 @@ builds:
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{ .CommitDate }}
 
-  - binary: darkstation
+  - id: windows
+    binary: darkstation
     main: main.go
     goos:
       - windows
