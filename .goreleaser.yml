@@ -2,32 +2,31 @@ project_name: TheDarkStation
 version: 2
 
 builds:
-  - env:
-      - CGO_ENABLED=0
-    binary: darkstation
+  - binary: darkstation
     main: main.go
     goos:
       - linux
-      - windows
-
     goarch:
       - amd64
       - arm64
-
     goarm:
       - 6
       - 7
-
     ignore:
       - goos: darwin
         goarch: arm # Mac does not work on [32bit] arm
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{ .CommitDate }}
 
-      - goos: windows
-        goarch: arm
-
-      - goos: windows
-        goarch: arm64
-
+  - binary: darkstation
+    main: main.go
+    goos:
+      - windows
+    goarch:
+      - amd64
+    env:
+      - CGO_ENABLED=1
+      - CC=x86_64-w64-mingw32-gcc
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{ .CommitDate }}
 

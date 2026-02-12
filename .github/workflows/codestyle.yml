@@ -27,6 +27,13 @@ jobs:
           cache: true
           cache-dependency-path: 'go.mod'
 
+      - name: Install X11/GLFW build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libx11-dev libxcursor-dev libxi-dev libxinerama-dev \
+            libxrandr-dev libxxf86vm-dev libgl1-mesa-dev
+
       - name: Print go version
         run: go version
 
