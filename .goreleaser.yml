@@ -11,13 +11,7 @@ builds:
       - CGO_ENABLED=1
     goarch:
       - amd64
-      - arm64
-    goarm:
-      - 6
-      - 7
-    ignore:
-      - goos: darwin
-        goarch: arm # Mac does not work on [32bit] arm
+    # arm64 omitted: CGO cross-compile from x86_64 runner needs arm64 toolchain/sysroot
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{ .CommitDate }}
 
