@@ -28,7 +28,6 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 		roomName := rData.Door.RoomName
 		if !g.RoomDoorsPowered[roomName] {
 			if logReason {
-				logMessage(g, "Door has no power. Restore power via the maintenance terminal.")
 				renderer.AddCallout(r.Row, r.Col, fmt.Sprintf("UNPOWERED{Unpowered door}\n%s", rData.Door.DoorName()), renderer.CalloutColorDoor, 0)
 			}
 			return false, &missingItems

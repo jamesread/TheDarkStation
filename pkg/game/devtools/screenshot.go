@@ -253,7 +253,7 @@ func getCellHTMLInfo(g *state.Game, r *world.Cell) (string, string) {
 	// Items on floor (show if has map or discovered)
 	if r.ItemsOnFloor.Size() > 0 && (g.HasMap || r.Discovered) {
 		if cellHasKeycard(r) {
-			return "⚷", "keycard"
+			return "K", "keycard"
 		}
 		if cellHasBattery(r) {
 			return "■", "battery"
