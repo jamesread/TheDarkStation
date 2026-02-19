@@ -1,8 +1,8 @@
 # Project Structure
 
-**Generated:** 2026-02-01  
-**Scan level:** Deep  
-**Repository type:** Monolith  
+**Generated:** 2026-02-01
+**Scan level:** Deep
+**Repository type:** Monolith
 
 ## Classification
 

@@ -223,13 +223,13 @@ public class {Feature}E2ETests : GameE2ETestFixture
             .{SetupMethod1}()
             .{SetupMethod2}()
             .Build();
-        
+
         // WHEN
         yield return Input.{Action1}();
         yield return AsyncAssert.WaitUntil(
             () => {Condition1}, "{Description1}");
         yield return Input.{Action2}();
-        
+
         // THEN
         yield return AsyncAssert.WaitUntil(
             () => {FinalCondition}, "{FinalDescription}");
@@ -274,7 +274,7 @@ public abstract class GameE2ETestFixture
     protected {GameStateClass} GameState;
     protected {InputSimulatorClass} Input;
     protected {ScenarioBuilderClass} Scenario;
-    
+
     [UnitySetUp]
     public IEnumerator BaseSetUp()
     {
@@ -284,7 +284,7 @@ public abstract class GameE2ETestFixture
         Scenario = new {ScenarioBuilderClass}(GameState);
         yield return WaitForReady();
     }
-    
+
     // ... (fill from e2e-testing.md patterns)
 }
 ```

@@ -12,9 +12,9 @@ so that I can reach all doorways and controls in a room without leaving it.
 
 ## Acceptance Criteria
 
-1. **Given** placement of blocking entities (furniture, terminals, hazards, etc.)  
-   **When** a level is generated  
-   **Then** no room is disconnected (all doorways in that room are mutually reachable via walkable cells within the room)  
+1. **Given** placement of blocking entities (furniture, terminals, hazards, etc.)
+   **When** a level is generated
+   **Then** no room is disconnected (all doorways in that room are mutually reachable via walkable cells within the room)
    **And** placement follows rule R8 (prevent room disconnection)
 
 ## Tasks / Subtasks

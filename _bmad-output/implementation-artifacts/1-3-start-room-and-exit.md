@@ -12,10 +12,10 @@ so that I can begin and complete the deck.
 
 ## Acceptance Criteria
 
-1. **Given** level setup  
-   **When** the level is ready  
-   **Then** I start at the start cell in the start room  
-   **And** the start room's doors are powered at init so I can leave (FR23)  
+1. **Given** level setup
+   **When** the level is ready
+   **Then** I start at the start cell in the start room
+   **And** the start room's doors are powered at init so I can leave (FR23)
    **And** an exit cell exists and is reachable when win conditions are met
 
 ## Tasks / Subtasks

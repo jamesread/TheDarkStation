@@ -12,9 +12,9 @@ so that I can explore the deck.
 
 ## Acceptance Criteria
 
-1. **Given** a generated level with walkable and blocking cells  
-   **When** I press movement keys (N/S/E/W or arrows or vim-style)  
-   **Then** my unit moves to an adjacent walkable cell  
+1. **Given** a generated level with walkable and blocking cells
+   **When** I press movement keys (N/S/E/W or arrows or vim-style)
+   **Then** my unit moves to an adjacent walkable cell
    **And** walls and blocking entities (furniture, terminals, hazards, generators) prevent movement
 
 ## Tasks / Subtasks

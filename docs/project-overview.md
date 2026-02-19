@@ -1,7 +1,7 @@
 # The Dark Castle — Project Overview
 
-**Date:** 2026-02-01  
-**Type:** Go (Ebiten game application)  
+**Date:** 2026-02-01
+**Type:** Go (Ebiten game application)
 **Architecture:** Monolith, single executable
 
 ## Executive Summary

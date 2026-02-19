@@ -22,12 +22,12 @@ const (
 
 // DeckState holds generated state for one deck (GDD §4.2). Used for generation on first entry and revisit.
 type DeckState struct {
-	Grid               *world.Grid
-	LevelSeed          int64
-	RoomDoorsPowered   map[string]bool
-	RoomCCTVPowered    map[string]bool
-	RoomLightsPowered  map[string]bool
-	Generators         []*entities.Generator
+	Grid              *world.Grid
+	LevelSeed         int64
+	RoomDoorsPowered  map[string]bool
+	RoomCCTVPowered   map[string]bool
+	RoomLightsPowered map[string]bool
+	Generators        []*entities.Generator
 }
 
 // Game represents the game state for Abandoned Station
@@ -48,7 +48,7 @@ type Game struct {
 
 	Level int // Current deck level (1-based display): Level = CurrentDeckID + 1
 
-	CurrentDeckID int             // 0-based deck index (source of truth for which deck we're in)
+	CurrentDeckID int                // 0-based deck index (source of truth for which deck we're in)
 	DeckStates    map[int]*DeckState // Per-deck generated state; key = deck ID (0-based)
 
 	Batteries            int                   // Number of batteries in inventory
@@ -89,25 +89,25 @@ type MessageEntry struct {
 // NewGame creates a new game instance
 func NewGame() *Game {
 	return &Game{
-		OwnedItems:            mapset.New[*world.Item](),
-		HasMap:                false,
-		Messages:              make([]MessageEntry, 0),
-		Level:                 1,
-		CurrentDeckID:         0,
-		DeckStates:            make(map[int]*DeckState),
-		Batteries:             0,
-		Generators:             make([]*entities.Generator, 0),
-		FoundCodes:            make(map[string]bool),
-		LastInteractedRow:     -1,
-		LastInteractedCol:     -1,
-		InteractionPlayerRow:  -1,
-		InteractionPlayerCol:  -1,
-		PowerSupply:           0,
-		PowerConsumption:      0,
-		PowerOverloadWarned:    false,
-		RoomDoorsPowered:      make(map[string]bool),
-		RoomCCTVPowered:       make(map[string]bool),
-		RoomLightsPowered:     make(map[string]bool),
+		OwnedItems:           mapset.New[*world.Item](),
+		HasMap:               false,
+		Messages:             make([]MessageEntry, 0),
+		Level:                1,
+		CurrentDeckID:        0,
+		DeckStates:           make(map[int]*DeckState),
+		Batteries:            0,
+		Generators:           make([]*entities.Generator, 0),
+		FoundCodes:           make(map[string]bool),
+		LastInteractedRow:    -1,
+		LastInteractedCol:    -1,
+		InteractionPlayerRow: -1,
+		InteractionPlayerCol: -1,
+		PowerSupply:          0,
+		PowerConsumption:     0,
+		PowerOverloadWarned:  false,
+		RoomDoorsPowered:     make(map[string]bool),
+		RoomCCTVPowered:      make(map[string]bool),
+		RoomLightsPowered:    make(map[string]bool),
 	}
 }
 
@@ -278,9 +278,9 @@ func (g *Game) SaveCurrentDeckState() {
 	g.DeckStates[g.CurrentDeckID] = &DeckState{
 		Grid:              g.Grid,
 		LevelSeed:         g.LevelSeed,
-		RoomDoorsPowered:   doorsCopy,
-		RoomCCTVPowered:    cctvCopy,
-		RoomLightsPowered:  lightsCopy,
+		RoomDoorsPowered:  doorsCopy,
+		RoomCCTVPowered:   cctvCopy,
+		RoomLightsPowered: lightsCopy,
 		Generators:        genCopy,
 	}
 }

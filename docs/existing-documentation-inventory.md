@@ -1,6 +1,6 @@
 # Existing Documentation Inventory
 
-**Generated:** 2026-02-01  
+**Generated:** 2026-02-01
 **Part:** main (project root)
 
 ## Inventory

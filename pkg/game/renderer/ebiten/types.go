@@ -199,8 +199,8 @@ type EbitenRenderer struct {
 
 	// Offscreen map buffer - render tiles here at integer coords, then blit with fractional
 	// offset. Eliminates per-tile sub-pixel jitter during camera transitions.
-	mapBuffer        *ebiten.Image
-	mapBufferWidth   int
+	mapBuffer       *ebiten.Image
+	mapBufferWidth  int
 	mapBufferHeight int
 
 	// Background animation for main menu (floating tiles)

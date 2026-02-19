@@ -1,6 +1,6 @@
 # Contribution Guide
 
-**Generated:** 2026-02-01  
+**Generated:** 2026-02-01
 **Part:** main
 
 Summary of contribution guidelines from [CONTRIBUTING.md](../CONTRIBUTING.md).

@@ -11,12 +11,12 @@ import (
 type Type int
 
 const (
-	Habitation       Type = iota // Crew rest, atmosphere, habitation
-	Research                    // Labs, medical, experiments
-	Logistics                   // Cargo, storage, distribution
-	PowerDistribution           // Substations, relays, grid
-	EmergencySystems            // Shelters, lifeboats, crisis
-	CoreInfrastructure          // Central monitoring, primary conduits
+	Habitation         Type = iota // Crew rest, atmosphere, habitation
+	Research                       // Labs, medical, experiments
+	Logistics                      // Cargo, storage, distribution
+	PowerDistribution              // Substations, relays, grid
+	EmergencySystems               // Shelters, lifeboats, crisis
+	CoreInfrastructure             // Central monitoring, primary conduits
 )
 
 // typeCount is the number of functional layer types (for cycling).

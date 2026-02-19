@@ -215,10 +215,10 @@ func (h *PingResultsMenuHandler) GetMenuItems() []MenuItem {
 
 // RoomPowerToggleMenuItem is a selectable menu item that toggles room doors, CCTV, or lights.
 type RoomPowerToggleMenuItem struct {
-	G          *state.Game
-	RoomName   string
-	PowerType  string // "doors", "cctv", or "lights"
-	Count      int    // optional count for label, e.g. "Doors (5)", "Lights (12 cells)"
+	G           *state.Game
+	RoomName    string
+	PowerType   string // "doors", "cctv", or "lights"
+	Count       int    // optional count for label, e.g. "Doors (5)", "Lights (12 cells)"
 	CountSuffix string // e.g. " cells" for lights, "" for doors
 }
 
@@ -478,14 +478,13 @@ func (i *InfoMenuItem) GetHelpText() string {
 
 // MaintenanceMenuHandler handles the maintenance terminal menu.
 type MaintenanceMenuHandler struct {
-	g                  *state.Game
-	cell               *world.Cell
-	maintenanceTerm    *entities.MaintenanceTerminal
-	terminalRoomName   string   // room where the terminal is
-	selectedRoomName   string   // room currently being viewed (mutable)
-	selectableRooms    []string // current + adjacent rooms
+	g                *state.Game
+	cell             *world.Cell
+	maintenanceTerm  *entities.MaintenanceTerminal
+	terminalRoomName string   // room where the terminal is
+	selectedRoomName string   // room currently being viewed (mutable)
+	selectableRooms  []string // current + adjacent rooms
 }
-
 
 // buildRoomDevices builds device list (CCTV, puzzles only), room consumption, and counts for doors/lights.
 // Doors and lights are shown as toggles below; they are not in the device list.

@@ -41,8 +41,8 @@ Produce a technical specification that (1) defines what "adjacent room" means fo
 
 ### First Principles: Adjacency Definition
 
-**Invariant (source of truth):**  
-Room B is *adjacent* to room A iff there exists at least one cell C such that `C.Name == A` and C has a N/S/E/W neighbour N with `N.Name == B` and `B != A`.  
+**Invariant (source of truth):**
+Room B is *adjacent* to room A iff there exists at least one cell C such that `C.Name == A` and C has a N/S/E/W neighbour N with `N.Name == B` and `B != A`.
 "Adjacent rooms to A" = the set of all such B (plus A itself if the API is "this room + adjacent").
 
 **Implications:**
@@ -94,24 +94,24 @@ Room B is *adjacent* to room A iff there exists at least one cell C such that `C
 
 ### Tasks
 
-- [x] **Task 1: Harden GetAdjacentRoomNames API (defensive)**  
-  - **File:** `pkg/game/setup/helpers.go`  
-  - **Action:** At the start of `GetAdjacentRoomNames`, if `grid` is nil, return an empty slice. If `roomName` is empty, return an empty slice. Do not panic. Return `nil` for these defensive cases (not `[]string{}`); document in a comment that callers must treat nil as empty (e.g. `len(result) == 0`). Preserve existing behaviour for all valid inputs.  
+- [x] **Task 1: Harden GetAdjacentRoomNames API (defensive)**
+  - **File:** `pkg/game/setup/helpers.go`
+  - **Action:** At the start of `GetAdjacentRoomNames`, if `grid` is nil, return an empty slice. If `roomName` is empty, return an empty slice. Do not panic. Return `nil` for these defensive cases (not `[]string{}`); document in a comment that callers must treat nil as empty (e.g. `len(result) == 0`). Preserve existing behaviour for all valid inputs.
   - **Notes:** Callers (maintenance menu, solvability) assume non-nil grid and non-empty room name in normal flow; defensive checks protect against misuse and future refactors.
 
-- [x] **Task 2: Refactor GetAdjacentRoomNames to satisfy first-principles invariant**  
-  - **File:** `pkg/game/setup/helpers.go`  
-  - **Action:** Implement adjacency using the invariant: room B is adjacent to room A iff some cell C with `C.Name == A` has a N/S/E/W neighbour N with `N.Name == B` and `B != A`. Single pass: `grid.ForEachCell`; for each cell where `cell.Room && cell.Name == roomName`, iterate N/S/E/W neighbours; for each neighbour `n` with `n != nil && n.Room && n.Name != "" && n.Name != roomName`, add `n.Name` to the result set. Exclude the name `"Corridor"` from the result set (per Technical Decisions: adjacent-rooms UI shows named rooms only). Document this in a comment in `GetAdjacentRoomNames`. If no cell has `Name == roomName`, return empty slice (do not add roomName to the set). Otherwise add `roomName` to the set, sort, return. Remove or consolidate the existing two-pass (corridor-centric + direct) logic so the single pass suffices. Add a short comment referencing the first-principles invariant.  
+- [x] **Task 2: Refactor GetAdjacentRoomNames to satisfy first-principles invariant**
+  - **File:** `pkg/game/setup/helpers.go`
+  - **Action:** Implement adjacency using the invariant: room B is adjacent to room A iff some cell C with `C.Name == A` has a N/S/E/W neighbour N with `N.Name == B` and `B != A`. Single pass: `grid.ForEachCell`; for each cell where `cell.Room && cell.Name == roomName`, iterate N/S/E/W neighbours; for each neighbour `n` with `n != nil && n.Room && n.Name != "" && n.Name != roomName`, add `n.Name` to the result set. Exclude the name `"Corridor"` from the result set (per Technical Decisions: adjacent-rooms UI shows named rooms only). Document this in a comment in `GetAdjacentRoomNames`. If no cell has `Name == roomName`, return empty slice (do not add roomName to the set). Otherwise add `roomName` to the set, sort, return. Remove or consolidate the existing two-pass (corridor-centric + direct) logic so the single pass suffices. Add a short comment referencing the first-principles invariant.
   - **Notes:** One pass is sufficient; corridor-mediated and direct boundaries are both "room A cell next to room B cell". If Corridor is excluded, document in a comment.
 
-- [x] **Task 3: Add unit tests for GetAdjacentRoomNames**  
-  - **File:** `pkg/game/setup/helpers_test.go` (new)  
-  - **Action:** Add tests: (1) `GetAdjacentRoomNames(nil, "Any")` returns empty slice, no panic. (2) `GetAdjacentRoomNames(grid, "")` returns empty slice, no panic — use any grid (e.g. from `world.NewGrid(2,2)`); the empty string is the roomName under test. (3) Minimal grid: build a small grid, mark two rooms A and B sharing a wall (one cell of A has neighbour in B); call `GetAdjacentRoomNames(grid, "A")`; assert result contains A and B, sorted and unique. (4) Optional: grid with room A, corridor C, room B in a line; assert adjacency of A includes B and optionally C per product choice. Use `world.NewGrid`, `MarkAsRoomWithName`, and `BuildAllCellConnections()` to construct test grids.  
+- [x] **Task 3: Add unit tests for GetAdjacentRoomNames**
+  - **File:** `pkg/game/setup/helpers_test.go` (new)
+  - **Action:** Add tests: (1) `GetAdjacentRoomNames(nil, "Any")` returns empty slice, no panic. (2) `GetAdjacentRoomNames(grid, "")` returns empty slice, no panic — use any grid (e.g. from `world.NewGrid(2,2)`); the empty string is the roomName under test. (3) Minimal grid: build a small grid, mark two rooms A and B sharing a wall (one cell of A has neighbour in B); call `GetAdjacentRoomNames(grid, "A")`; assert result contains A and B, sorted and unique. (4) Optional: grid with room A, corridor C, room B in a line; assert adjacency of A includes B and optionally C per product choice. Use `world.NewGrid`, `MarkAsRoomWithName`, and `BuildAllCellConnections()` to construct test grids.
   - **Notes:** No existing `*_test.go` in repo; create `helpers_test.go` in same package. Tests import the setup package and the same world package used by production (e.g. `darkstation/pkg/engine/world`) for `NewGrid`, `MarkAsRoomWithName`, `BuildAllCellConnections`. Tests lock API contract and defensive behaviour. AC5 and AC6 are verified by manual or integration test only; they are not covered by unit tests in helpers_test.go.
 
-- [ ] **Task 4 (optional / follow-up): Ensure BSP room names unique**  
-  - **File:** `pkg/game/generator/bsp.go`  
-  - **Action:** If duplicate BSP room names are identified as a cause of wrong adjacency, ensure `createRooms` assigns unique names (e.g. append room index or node id). Document in BSP or in this spec.  
+- [ ] **Task 4 (optional / follow-up): Ensure BSP room names unique**
+  - **File:** `pkg/game/generator/bsp.go`
+  - **Action:** If duplicate BSP room names are identified as a cause of wrong adjacency, ensure `createRooms` assigns unique names (e.g. append room index or node id). Document in BSP or in this spec.
   - **Notes:** Defer to a separate change if scope is limited to fixing `GetAdjacentRoomNames` and tests. Include in this implementation if product requires unambiguous "adjacent to room A" when multiple rooms could share a name.
 
 ### Acceptance Criteria

@@ -12,10 +12,10 @@ so that the deck has clear spatial structure.
 
 ## Acceptance Criteria
 
-1. **Given** level generation  
-   **When** the level is created  
-   **Then** each room has a name and a set of walkable cells  
-   **And** corridors connect rooms  
+1. **Given** level generation
+   **When** the level is created
+   **Then** each room has a name and a set of walkable cells
+   **And** corridors connect rooms
    **And** each deck represents a functional layer (e.g. Habitation, Research, Power Distribution)
 
 ## Tasks / Subtasks

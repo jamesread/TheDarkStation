@@ -124,9 +124,9 @@ So that I can explore the deck.
 
 **Acceptance Criteria:**
 
-**Given** a generated level with walkable and blocking cells  
-**When** I press movement keys (N/S/E/W or arrows or vim-style)  
-**Then** my unit moves to an adjacent walkable cell  
+**Given** a generated level with walkable and blocking cells
+**When** I press movement keys (N/S/E/W or arrows or vim-style)
+**Then** my unit moves to an adjacent walkable cell
 **And** walls and blocking entities (furniture, terminals, hazards, generators) prevent movement
 
 ### Story 1.2: Rooms and Corridors
@@ -137,10 +137,10 @@ So that the deck has clear spatial structure.
 
 **Acceptance Criteria:**
 
-**Given** level generation  
-**When** the level is created  
-**Then** each room has a name and a set of walkable cells  
-**And** corridors connect rooms  
+**Given** level generation
+**When** the level is created
+**Then** each room has a name and a set of walkable cells
+**And** corridors connect rooms
 **And** each deck represents a functional layer (e.g. Habitation, Research, Power Distribution)
 
 ### Story 1.3: Start Room and Exit
@@ -151,10 +151,10 @@ So that I can begin and complete the deck.
 
 **Acceptance Criteria:**
 
-**Given** level setup  
-**When** the level is ready  
-**Then** I start at the start cell in the start room  
-**And** the start room's doors are powered at init so I can leave (FR23)  
+**Given** level setup
+**When** the level is ready
+**Then** I start at the start cell in the start room
+**And** the start room's doors are powered at init so I can leave (FR23)
 **And** an exit cell exists and is reachable when win conditions are met
 
 ### Story 1.4: Room Connectivity
@@ -165,9 +165,9 @@ So that I can reach all doorways and controls in a room without leaving it.
 
 **Acceptance Criteria:**
 
-**Given** placement of blocking entities (furniture, terminals, hazards, etc.)  
-**When** a level is generated  
-**Then** no room is disconnected (all doorways in that room are mutually reachable via walkable cells within the room)  
+**Given** placement of blocking entities (furniture, terminals, hazards, etc.)
+**When** a level is generated
+**Then** no room is disconnected (all doorways in that room are mutually reachable via walkable cells within the room)
 **And** placement follows rule R8 (prevent room disconnection)
 
 ### Story 1.5: Procedural Deck Generation
@@ -178,10 +178,10 @@ So that the station feels finite and the end is real.
 
 **Acceptance Criteria:**
 
-**Given** I advance to a new deck  
-**When** I enter it for the first time  
-**Then** that deck is generated (e.g. BSP + placement)  
-**And** the station has a fixed number of decks (no infinite descent)  
+**Given** I advance to a new deck
+**When** I enter it for the first time
+**Then** that deck is generated (e.g. BSP + placement)
+**And** the station has a fixed number of decks (no infinite descent)
 **And** the final deck exists and is reachable
 
 ---
@@ -198,10 +198,10 @@ So that I can supply power to the level.
 
 **Acceptance Criteria:**
 
-**Given** generators on the level with BatteriesRequired  
-**When** I interact with a generator and have enough batteries in inventory  
-**Then** I can insert batteries (insertion is permanent for that level)  
-**And** when BatteriesInserted >= BatteriesRequired the generator is powered and supplies 100 W  
+**Given** generators on the level with BatteriesRequired
+**When** I interact with a generator and have enough batteries in inventory
+**Then** I can insert batteries (insertion is permanent for that level)
+**And** when BatteriesInserted >= BatteriesRequired the generator is powered and supplies 100 W
 **And** PowerSupply is the sum of all powered generators (UpdatePowerSupply)
 
 ### Story 2.2: Room Power (Doors and CCTV)
@@ -212,11 +212,11 @@ So that I can open doors and use CCTV/hazard controls in that room.
 
 **Acceptance Criteria:**
 
-**Given** RoomDoorsPowered and RoomCCTVPowered per room  
-**When** I use a maintenance terminal (own room or adjacent room)  
-**Then** I can toggle doors and CCTV for those rooms  
-**And** start room doors are powered at init (InitRoomPower)  
-**And** gatekeeper rooms that would otherwise deadlock get doors powered (EnsureSolvabilityDoorPower)  
+**Given** RoomDoorsPowered and RoomCCTVPowered per room
+**When** I use a maintenance terminal (own room or adjacent room)
+**Then** I can toggle doors and CCTV for those rooms
+**And** start room doors are powered at init (InitRoomPower)
+**And** gatekeeper rooms that would otherwise deadlock get doors powered (EnsureSolvabilityDoorPower)
 **And** level setup order is: InitRoomPower → placement → EnsureSolvabilityDoorPower → InitMaintenanceTerminalPower (FR25)
 
 ### Story 2.3: Maintenance Terminal Power
@@ -227,11 +227,11 @@ So that I must route power through the station.
 
 **Acceptance Criteria:**
 
-**Given** each maintenance terminal has a Powered flag  
-**When** the level starts  
-**Then** only start room terminal(s) are powered (InitMaintenanceTerminalPower)  
-**And** I can open the maintenance menu only at a powered terminal  
-**And** at an unpowered terminal I see a message to restore power from another maintenance terminal  
+**Given** each maintenance terminal has a Powered flag
+**When** the level starts
+**Then** only start room terminal(s) are powered (InitMaintenanceTerminalPower)
+**And** I can open the maintenance menu only at a powered terminal
+**And** at an unpowered terminal I see a message to restore power from another maintenance terminal
 **And** "Restore power to nearby terminals" at a powered terminal powers all terminals in adjacent rooms (including own room)
 
 ### Story 2.4: Power Consumption and Overload
@@ -242,11 +242,11 @@ So that I must balance supply and demand.
 
 **Acceptance Criteria:**
 
-**Given** PowerSupply (powered generators × 100 W) and PowerConsumption (doors 10 W per room when powered, CCTV 10 W per terminal when room CCTV on, solved puzzles 3 W each)  
-**When** I toggle a room's doors or CCTV ON and the new consumption would exceed PowerSupply  
-**Then** ShortOutIfOverload(protectedRoomName) runs: other rooms' doors and CCTV are auto-unpowered in a deterministic order until PowerConsumption ≤ PowerSupply  
-**And** the room I just turned on stays on (protected)  
-**And** the player is told that other systems shorted out  
+**Given** PowerSupply (powered generators × 100 W) and PowerConsumption (doors 10 W per room when powered, CCTV 10 W per terminal when room CCTV on, solved puzzles 3 W each)
+**When** I toggle a room's doors or CCTV ON and the new consumption would exceed PowerSupply
+**Then** ShortOutIfOverload(protectedRoomName) runs: other rooms' doors and CCTV are auto-unpowered in a deterministic order until PowerConsumption ≤ PowerSupply
+**And** the room I just turned on stays on (protected)
+**And** the player is told that other systems shorted out
 **And** when consumption already exceeds supply (passive), a one-time warning per cycle is shown (PowerOverloadWarned)
 
 ### Story 2.5: Lighting and Exploration
@@ -257,10 +257,10 @@ So that darkness reflects power state.
 
 **Acceptance Criteria:**
 
-**Given** GetAvailablePower() = PowerSupply - PowerConsumption and visit state per cell  
-**When** GetAvailablePower() > 0 and I have visited a cell  
-**Then** lights are on for that cell (LightsOn, Lighted; cell stays discovered)  
-**And** when GetAvailablePower() <= 0, cells beyond a small radius of the player can darken (discovered/visited cleared)  
+**Given** GetAvailablePower() = PowerSupply - PowerConsumption and visit state per cell
+**When** GetAvailablePower() > 0 and I have visited a cell
+**Then** lights are on for that cell (LightsOn, Lighted; cell stays discovered)
+**And** when GetAvailablePower() <= 0, cells beyond a small radius of the player can darken (discovered/visited cleared)
 **And** lighting does not consume power
 
 ### Story 2.6: Unpowered Visual Feedback
@@ -271,10 +271,10 @@ So that I know what needs power.
 
 **Acceptance Criteria:**
 
-**Given** doors, maintenance terminals, CCTV terminals, hazard controls  
-**When** a door is unpowered (RoomDoorsPowered[room] false), or a maintenance terminal is unpowered (Powered false), or room CCTV is off (RoomCCTVPowered[room] false)  
-**Then** that cell uses the same red background (e.g. dark red / hazard style)  
-**And** powered generators may use a distinct background (e.g. green)  
+**Given** doors, maintenance terminals, CCTV terminals, hazard controls
+**When** a door is unpowered (RoomDoorsPowered[room] false), or a maintenance terminal is unpowered (Powered false), or room CCTV is off (RoomCCTVPowered[room] false)
+**Then** that cell uses the same red background (e.g. dark red / hazard style)
+**And** powered generators may use a distinct background (e.g. green)
 **And** walls and corridor cells do not change background based on power
 
 ---
@@ -291,9 +291,9 @@ So that I must use maintenance terminals to open them.
 
 **Acceptance Criteria:**
 
-**Given** a door cell belonging to a room  
-**When** RoomDoorsPowered[roomName] is false  
-**Then** I cannot pass through and see a message to restore power via the maintenance terminal  
+**Given** a door cell belonging to a room
+**When** RoomDoorsPowered[roomName] is false
+**Then** I cannot pass through and see a message to restore power via the maintenance terminal
 **And** when true I can pass (subject to lock/keycard if door is locked)
 
 ### Story 3.2: Locked Doors and Keycards
@@ -304,9 +304,9 @@ So that I can progress through the deck.
 
 **Acceptance Criteria:**
 
-**Given** locked doors for a room requiring a keycard  
-**When** I have the keycard for that room  
-**Then** I can pass through the door when room doors are powered  
+**Given** locked doors for a room requiring a keycard
+**When** I have the keycard for that room
+**Then** I can pass through the door when room doors are powered
 **And** keycards are placed only in the reachable set before placing the doors that lock that room (no keycard cycles) (FR20)
 
 ### Story 3.3: Blocking Hazards and Controls
@@ -317,9 +317,9 @@ So that I can progress.
 
 **Acceptance Criteria:**
 
-**Given** blocking hazards that block movement or win condition  
-**When** I use the hazard control (in a room with RoomCCTVPowered) or use the required item  
-**Then** the hazard is fixed and I can pass  
+**Given** blocking hazards that block movement or win condition
+**When** I use the hazard control (in a room with RoomCCTVPowered) or use the required item
+**Then** the hazard is fixed and I can pass
 **And** no hazard blocks the only path to its control or required item (FR21)
 
 ### Story 3.4: Generators and Exit Win Condition
@@ -330,10 +330,10 @@ So that I must restore power and clear hazards to win.
 
 **Acceptance Criteria:**
 
-**Given** win conditions (reach exit, all generators powered, all blocking hazards cleared)  
-**When** I reach the exit cell  
-**Then** I can complete the deck only if all generators are powered and all blocking hazards are cleared  
-**And** every generator is reachable (FR22)  
+**Given** win conditions (reach exit, all generators powered, all blocking hazards cleared)
+**When** I reach the exit cell
+**Then** I can complete the deck only if all generators are powered and all blocking hazards are cleared
+**And** every generator is reachable (FR22)
 **And** enough batteries are placed in reachable locations to power all generators
 
 ### Story 3.5: Gatekeeper and Door-Power Solvability
@@ -344,10 +344,10 @@ So that every level is solvable.
 
 **Acceptance Criteria:**
 
-**Given** level setup after maintenance terminal placement  
-**When** EnsureSolvabilityDoorPower runs  
-**Then** for every gatekeeper room R (every path from start to exit goes through R) either R's doors are initially powered or a maintenance terminal that can power R exists in a room Q adjacent to R and reachable from start without entering R  
-**And** when computing reachability without entering R, locked door cells are treated as impassable  
+**Given** level setup after maintenance terminal placement
+**When** EnsureSolvabilityDoorPower runs
+**Then** for every gatekeeper room R (every path from start to exit goes through R) either R's doors are initially powered or a maintenance terminal that can power R exists in a room Q adjacent to R and reachable from start without entering R
+**And** when computing reachability without entering R, locked door cells are treated as impassable
 **And** placement and invariants I1–I7, rules R1–R8 are followed
 
 ---
@@ -364,10 +364,10 @@ So that the tone is consistent and narrative is implicit.
 
 **Acceptance Criteria:**
 
-**Given** maintenance terminals  
-**When** I interact with them  
-**Then** they report (do not "speak"); language is technical, dry, occasionally obsolete  
-**And** options and reports can change as decks progress  
+**Given** maintenance terminals
+**When** I interact with them
+**Then** they report (do not "speak"); language is technical, dry, occasionally obsolete
+**And** options and reports can change as decks progress
 **And** narrative is never explained directly; only what systems no longer allow is shown (NFR1)
 
 ### Story 4.2: Room and Item Naming
@@ -378,10 +378,10 @@ So that the world feels consistent.
 
 **Acceptance Criteria:**
 
-**Given** rooms and items in the world  
-**When** I encounter them  
-**Then** room names are functional, cold, slightly outdated (e.g. Cryogenic Habitation Block, Central Power Exchange)  
-**And** items are "tools left behind" with descriptive, impersonal, system-centric names (e.g. Priority Override Module)  
+**Given** rooms and items in the world
+**When** I encounter them
+**Then** room names are functional, cold, slightly outdated (e.g. Cryogenic Habitation Block, Central Power Exchange)
+**And** items are "tools left behind" with descriptive, impersonal, system-centric names (e.g. Priority Override Module)
 **And** life support systems are always OFFLINE/FAILED/PERMANENTLY DISABLED (no restoration)
 
 ### Story 4.3: Progressive Decay Across Decks
@@ -392,11 +392,11 @@ So that the narrative of decay is conveyed.
 
 **Acceptance Criteria:**
 
-**Given** deck progression (decks become older, systems more rigid)  
-**When** I advance to later decks  
-**Then** generator output can decrease and power costs increase  
-**And** automation can override or "fight back" (doors relock, systems shut down, power reroutes)  
-**And** the station obeys "dead rules" (not malicious)  
+**Given** deck progression (decks become older, systems more rigid)
+**When** I advance to later decks
+**Then** generator output can decrease and power costs increase
+**And** automation can override or "fight back" (doors relock, systems shut down, power reroutes)
+**And** the station obeys "dead rules" (not malicious)
 **And** tone supports quiet dread, loneliness, ritual without purpose (NFR3)
 
 ### Story 4.4: Final Deck and Completion Ending
@@ -407,9 +407,9 @@ So that the ending matches the design philosophy.
 
 **Acceptance Criteria:**
 
-**Given** the final deck (fixed number of decks; end is real)  
-**When** I reach the final deck  
-**Then** it has minimal rooms and systems and barely functional power  
-**And** the lift has no destination (no advance option; forward-only, no revisit)  
-**And** the game ends with completion (job done, job no longer matters), not victory, failure, or escape (NFR4)  
+**Given** the final deck (fixed number of decks; end is real)
+**When** I reach the final deck
+**Then** it has minimal rooms and systems and barely functional power
+**And** the lift has no destination (no advance option; forward-only, no revisit)
+**And** the game ends with completion (job done, job no longer matters), not victory, failure, or escape (NFR4)
 **And** optional final system line (e.g. "NO FURTHER WORK REQUESTS DETECTED" or "ENERGY GRADIENT EQUALIZED")
