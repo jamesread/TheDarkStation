@@ -37,6 +37,21 @@ type MenuHandler interface {
 	ShouldCloseOnAnyAction() bool
 }
 
+// DynamicMenuHandler extends MenuHandler with dynamic menu items.
+// RunMenuDynamic calls GetMenuItems each loop iteration so the menu can refresh.
+type DynamicMenuHandler interface {
+	MenuHandler
+	GetMenuItems() []MenuItem
+}
+
+// MaintenanceRoomProvider is an optional interface for handlers that display a maintenance view
+// for a specific room. When implemented, the room name is set on game state so the renderer can
+// highlight that room's wall cells on the map. selectedIndex and items are the current menu
+// selection (for sub-menus like room selector that highlight the focused room).
+type MaintenanceRoomProvider interface {
+	GetMaintenanceRoom(selectedIndex int, items []MenuItem) string
+}
+
 // MenuRenderer is an optional interface for renderers that can draw
 // a full-screen menu overlay on top of the map.
 type MenuRenderer interface {
@@ -60,6 +75,11 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 	}
 
 	for {
+		// Set maintenance room for renderer to highlight walls (when handler provides it)
+		if provider, ok := handler.(MaintenanceRoomProvider); ok {
+			g.MaintenanceMenuRoom = provider.GetMaintenanceRoom(selected, items)
+		}
+
 		// Use renderer-native, full-screen overlay (Ebiten).
 		if mr, ok := renderer.Current.(MenuRenderer); ok {
 			mr.RenderMenu(g, items, selected, helpText, handler.GetTitle())
@@ -145,6 +165,128 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 			}
 		case engineinput.ActionOpenMenu, engineinput.ActionQuit:
 			// Exit menu
+			g.ClearMessages()
+			if mr, ok := renderer.Current.(MenuRenderer); ok {
+				mr.ClearMenu()
+			}
+			handler.OnExit()
+			return
+		case engineinput.ActionNone:
+			// Ignore
+		default:
+			// Ignore other actions while in menu
+		}
+	}
+}
+
+// RunMenuDynamic runs a menu whose items can change. The handler's GetMenuItems
+// is called each loop iteration so the menu content can refresh (e.g. after room selection).
+func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
+	selected := 0
+	helpText := ""
+
+	// Clear maintenance room highlight when menu exits (all return paths)
+	defer func() { g.MaintenanceMenuRoom = "" }()
+
+	for {
+		items := handler.GetMenuItems()
+
+		// Find first selectable item, or keep current if still valid
+		if selected >= len(items) || !items[selected].IsSelectable() {
+			selected = 0
+			for i, item := range items {
+				if item.IsSelectable() {
+					selected = i
+					break
+				}
+			}
+		}
+
+		// Set maintenance room for renderer to highlight walls (when handler provides it)
+		if provider, ok := handler.(MaintenanceRoomProvider); ok {
+			g.MaintenanceMenuRoom = provider.GetMaintenanceRoom(selected, items)
+		} else {
+			g.MaintenanceMenuRoom = ""
+		}
+
+		// Use renderer-native, full-screen overlay (Ebiten).
+		if mr, ok := renderer.Current.(MenuRenderer); ok {
+			mr.RenderMenu(g, items, selected, helpText, handler.GetTitle())
+		} else {
+			renderMenuFallback(g, items, selected, helpText, handler)
+		}
+
+		// Get next intent
+		intent := renderer.Current.GetInput()
+
+		// Check if handler wants to close on any action (except navigation)
+		if handler.ShouldCloseOnAnyAction() && intent.Action != engineinput.ActionNone &&
+			intent.Action != engineinput.ActionMoveNorth && intent.Action != engineinput.ActionMoveSouth {
+			g.ClearMessages()
+			if mr, ok := renderer.Current.(MenuRenderer); ok {
+				mr.ClearMenu()
+			}
+			handler.OnExit()
+			return
+		}
+
+		switch intent.Action {
+		case engineinput.ActionMoveNorth:
+			found := false
+			for i := selected - 1; i >= 0; i-- {
+				if items[i].IsSelectable() {
+					selected = i
+					helpText = ""
+					handler.OnSelect(items[selected], selected)
+					found = true
+					break
+				}
+			}
+			if !found {
+				for i := len(items) - 1; i > selected; i-- {
+					if items[i].IsSelectable() {
+						selected = i
+						helpText = ""
+						handler.OnSelect(items[selected], selected)
+						break
+					}
+				}
+			}
+		case engineinput.ActionMoveSouth:
+			found := false
+			for i := selected + 1; i < len(items); i++ {
+				if items[i].IsSelectable() {
+					selected = i
+					helpText = ""
+					handler.OnSelect(items[selected], selected)
+					found = true
+					break
+				}
+			}
+			if !found {
+				for i := 0; i < selected; i++ {
+					if items[i].IsSelectable() {
+						selected = i
+						helpText = ""
+						handler.OnSelect(items[selected], selected)
+						break
+					}
+				}
+			}
+		case engineinput.ActionAction, engineinput.ActionInteract:
+			if selected >= 0 && selected < len(items) && items[selected].IsSelectable() {
+				shouldClose, newHelpText := handler.OnActivate(items[selected], selected)
+				helpText = newHelpText
+				if shouldClose {
+					g.ClearMessages()
+					if mr, ok := renderer.Current.(MenuRenderer); ok {
+						mr.ClearMenu()
+					}
+					handler.OnExit()
+					return
+				}
+			}
+		case engineinput.ActionOpenMenu, engineinput.ActionQuit:
 			g.ClearMessages()
 			if mr, ok := renderer.Current.(MenuRenderer); ok {
 				mr.ClearMenu()

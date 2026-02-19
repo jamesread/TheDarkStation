@@ -18,6 +18,14 @@ import (
 
 // ProcessIntent handles a high-level input intent from the tiered input system.
 func ProcessIntent(g *state.Game, intent engineinput.Intent) {
+	// Completion screen: any key returns to title
+	if g.GameComplete {
+		if intent.Action != engineinput.ActionNone {
+			g.QuitToTitle = true
+		}
+		return
+	}
+
 	switch intent.Action {
 	case engineinput.ActionNone:
 		return
@@ -59,21 +67,33 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 
 	case engineinput.ActionMoveEast:
 		g.NavStyle = state.NavStyleNSEW
+		if g.CurrentCell == nil {
+			return
+		}
 		MoveCell(g, g.CurrentCell.East)
 		return
 
 	case engineinput.ActionMoveWest:
 		g.NavStyle = state.NavStyleNSEW
+		if g.CurrentCell == nil {
+			return
+		}
 		MoveCell(g, g.CurrentCell.West)
 		return
 
 	case engineinput.ActionMoveNorth:
 		g.NavStyle = state.NavStyleNSEW
+		if g.CurrentCell == nil {
+			return
+		}
 		MoveCell(g, g.CurrentCell.North)
 		return
 
 	case engineinput.ActionMoveSouth:
 		g.NavStyle = state.NavStyleNSEW
+		if g.CurrentCell == nil {
+			return
+		}
 		MoveCell(g, g.CurrentCell.South)
 		return
 
@@ -120,6 +140,5 @@ func RunBindingsMenu(g *state.Game, fromMainMenu bool) {
 // RunMaintenanceMenu shows the maintenance terminal menu with room devices and power consumption using the generic menu system.
 func RunMaintenanceMenu(g *state.Game, cell *world.Cell, maintenanceTerm *entities.MaintenanceTerminal) {
 	handler := gamemenu.NewMaintenanceMenuHandler(g, cell, maintenanceTerm)
-	items := handler.GetMenuItems()
-	gamemenu.RunMenu(g, items, handler)
+	gamemenu.RunMenuDynamic(g, handler)
 }

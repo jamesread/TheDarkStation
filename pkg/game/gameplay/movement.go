@@ -29,7 +29,7 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 		if !g.RoomDoorsPowered[roomName] {
 			if logReason {
 				logMessage(g, "Door has no power. Restore power via the maintenance terminal.")
-				renderer.AddCallout(r.Row, r.Col, "Door has no power", renderer.CalloutColorDoor, 0)
+				renderer.AddCallout(r.Row, r.Col, fmt.Sprintf("UNPOWERED{Unpowered door}\n%s", rData.Door.DoorName()), renderer.CalloutColorDoor, 0)
 			}
 			return false, &missingItems
 		}
@@ -72,7 +72,7 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 			if logReason {
 				logMessage(g, "This door requires a %s", renderer.StyledKeycard(keycardName))
 				// Contextual tooltip next to the locked door
-				renderer.AddCallout(r.Row, r.Col, fmt.Sprintf("Door Locked\nNeeds: ITEM{%s}", keycardName), renderer.CalloutColorDoor, 0)
+				renderer.AddCallout(r.Row, r.Col, fmt.Sprintf("TITLE{Door Locked}\nNeeds: ITEM{%s}", keycardName), renderer.CalloutColorDoor, 0)
 			}
 			return false, &missingItems
 		}

@@ -8,12 +8,12 @@ import (
 	"github.com/zyedidia/generic/mapset"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/levelgen"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
-	gameworld "darkstation/pkg/game/world"
 )
 
 // GenerateGrid creates a new grid using the default generator
@@ -21,54 +21,56 @@ func GenerateGrid(level int) *world.Grid {
 	return generator.DefaultGenerator.Generate(level)
 }
 
-// BuildGame creates a new game instance with optional starting level
+// BuildGame creates a new game instance with optional starting level (Phase 3.2, 3.4).
+// Current deck is set from startLevel; deck is generated on first entry (no load).
 func BuildGame(startLevel int) *state.Game {
 	g := state.NewGame()
 
-	// Set starting level if specified (for developer testing)
-	if startLevel > 1 {
-		g.Level = startLevel
+	// Current deck by ID; Level = 1-based display (Phase 3.2)
+	if startLevel < 1 {
+		startLevel = 1
 	}
+	if startLevel > deck.TotalDecks {
+		startLevel = deck.TotalDecks
+	}
+	g.CurrentDeckID = startLevel - 1
+	g.Level = g.CurrentDeckID + 1
 
-	// Store seed before generation for reset functionality
-	// Use level number as deterministic seed, or time-based for variety
+	// Generate current deck on first entry (no stored state yet)
 	seed := time.Now().UnixNano()
 	g.LevelSeed = seed
 	rand.Seed(seed)
-
 	g.Grid = GenerateGrid(g.Level)
 	SetupLevel(g)
 
-	// Clear the initial "entered room" message
 	g.ClearMessages()
-	logMessage(g, "Welcome to the Abandoned Station!")
-	logMessage(g, "You are on deck %d.", g.Level)
-	ShowLevelObjectives(g)
 
 	return g
 }
 
 // SetupLevel configures the current level with items and keys
 func SetupLevel(g *state.Game) {
-	// Use the setup package to configure the level
 	config := setup.SetupLevel(g)
 	avoid := &config.Avoid
 	lockedDoorCells := &config.LockedDoorCells
+	minimalSystems := deck.IsFinalDeck(g.Level) // Final deck: minimal rooms/systems (GDD §10.2)
 
-	// Place environmental hazards (level 2+)
-	if g.Level >= 2 {
+	// Place environmental hazards (level 2+), skip on final deck
+	if g.Level >= 2 && !minimalSystems {
 		levelgen.PlaceHazards(g, avoid, lockedDoorCells)
 	}
 
-	// Place furniture in rooms (1-2 pieces per unique room type)
-	levelgen.PlaceFurniture(g, avoid)
+	// Place furniture in rooms (1-2 per room); none on final deck
+	if !minimalSystems {
+		levelgen.PlaceFurniture(g, avoid)
+	}
 
-	// Place puzzle terminals (level 2+)
-	if g.Level >= 2 {
+	// Place puzzle terminals (level 2+), skip on final deck
+	if g.Level >= 2 && !minimalSystems {
 		levelgen.PlacePuzzles(g, avoid)
 	}
 
-	// Place maintenance terminals in every room (one per room, against walls)
+	// Maintenance terminals (one per room); keep on final deck for barely functional power
 	levelgen.PlaceMaintenanceTerminals(g, avoid)
 
 	// Ensure no control-dependency deadlock: gatekeeper rooms with unpowered doors
@@ -82,7 +84,7 @@ func SetupLevel(g *state.Game) {
 	MoveCell(g, g.Grid.StartCell())
 }
 
-// ResetLevel resets the current level using the same seed/map
+// ResetLevel resets the current deck using the same seed; updates per-deck store (Phase 3.4).
 func ResetLevel(g *state.Game) {
 	currentLevel := g.Level
 
@@ -98,8 +100,8 @@ func ResetLevel(g *state.Game) {
 	g.PowerOverloadWarned = false
 	g.RoomDoorsPowered = make(map[string]bool)
 	g.RoomCCTVPowered = make(map[string]bool)
+	g.RoomLightsPowered = make(map[string]bool)
 
-	// Reset interaction/movement counters
 	g.MovementCount = 0
 	g.InteractionsCount = 0
 	g.LastInteractedRow = -1
@@ -107,93 +109,65 @@ func ResetLevel(g *state.Game) {
 	g.InteractionPlayerRow = -1
 	g.InteractionPlayerCol = -1
 
-	// Reset exit animation state
 	g.ExitAnimating = false
 	g.ExitAnimStartTime = 0
+	g.GameComplete = false
 
-	// Regenerate grid with the same seed (or use level as seed if not set)
 	var seed int64
 	if g.LevelSeed != 0 {
 		seed = g.LevelSeed
 	} else {
-		// Fallback: use level number as seed (deterministic)
 		seed = int64(currentLevel)
 	}
 
-	// Set seed before generating to ensure same map layout
 	rand.Seed(seed)
 	g.Grid = GenerateGrid(currentLevel)
-
-	// Setup level again (will place entities in same positions due to same seed)
 	SetupLevel(g)
-
-	// Store the seed for future resets
 	g.LevelSeed = seed
 
-	// Update power and lighting after setup
+	// Update store so revisit uses reset layout (Phase 3.4)
+	g.SaveCurrentDeckState()
+
 	UpdateLightingExploration(g)
 
-	// Clear messages and show reset message
 	g.ClearMessages()
 	logMessage(g, "Level reset!")
-	logMessage(g, "You are on deck %d.", g.Level)
-	ShowLevelObjectives(g)
 }
 
-// AdvanceLevel generates a new map and advances to the next level
+// TriggerGameComplete is called when the player reaches the exit on the final deck.
+// The lift has no destination; the game is complete (ending per GDD §11).
+func TriggerGameComplete(g *state.Game) {
+	g.GameComplete = true
+	logMessage(g, "No further work requests detected.")
+}
+
+// AdvanceLevel moves to the next deck via the graph: saves current deck state,
+// loads or generates the next deck, sets CurrentDeckID/Level (Phase 3.3, 3.4).
+// Does nothing if already at or past the final deck.
 func AdvanceLevel(g *state.Game) {
-	g.AdvanceLevel()
+	nextID, ok := deck.NextDeckID(g.CurrentDeckID)
+	if !ok {
+		return
+	}
 
-	// Store seed for new level (for reset functionality)
-	seed := time.Now().UnixNano()
-	g.LevelSeed = seed
-	rand.Seed(seed)
+	// Save current deck so we can revisit (Phase 3.4)
+	g.SaveCurrentDeckState()
 
-	g.Grid = GenerateGrid(g.Level)
-	SetupLevel(g)
+	// Load stored state or generate on first entry (Phase 3.4)
+	if ds := g.DeckStates[nextID]; ds != nil && ds.Grid != nil {
+		g.LoadDeckState(nextID)
+		UpdateLightingExploration(g)
+	} else {
+		g.CurrentDeckID = nextID
+		g.Level = g.CurrentDeckID + 1
+		seed := time.Now().UnixNano()
+		g.LevelSeed = seed
+		rand.Seed(seed)
+		g.Grid = GenerateGrid(g.Level)
+		SetupLevel(g)
+		g.SaveCurrentDeckState() // Store for potential revisit
+	}
 
-	// Clear movement messages and show level info
 	g.ClearMessages()
 	logMessage(g, "You moved to deck %d!", g.Level)
-	ShowLevelObjectives(g)
-}
-
-// ShowLevelObjectives displays the objectives for the current level
-func ShowLevelObjectives(g *state.Game) {
-	// Count doors
-	numDoors := countDoors(g)
-	// Note: Keycard message removed - players can discover locked doors naturally
-	if len(g.Generators) > 0 {
-		logMessage(g, "Power up ACTION{%d} generator(s) with batteries.", len(g.Generators))
-	}
-	// Count hazards
-	numHazards := countHazards(g)
-	if numHazards > 0 {
-		logMessage(g, "Clear ACTION{%d} environmental hazard(s).", numHazards)
-	}
-	if numDoors == 0 && len(g.Generators) == 0 && numHazards == 0 {
-		logMessage(g, "Find the EXIT{lift} to the next deck.")
-	}
-}
-
-// countDoors counts the number of locked doors on the map
-func countDoors(g *state.Game) int {
-	count := 0
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if gameworld.HasLockedDoor(cell) {
-			count++
-		}
-	})
-	return count
-}
-
-// countHazards counts the number of active hazards on the map
-func countHazards(g *state.Game) int {
-	count := 0
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if gameworld.HasBlockingHazard(cell) {
-			count++
-		}
-	})
-	return count
 }

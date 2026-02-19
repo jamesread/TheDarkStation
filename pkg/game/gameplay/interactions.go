@@ -113,7 +113,7 @@ func CheckAdjacentGeneratorAtCell(g *state.Game, cell *world.Cell) bool {
 
 	// Build tooltip message with generator status and power information
 	var calloutText strings.Builder
-	calloutText.WriteString(fmt.Sprintf("%s\n", gen.Name))
+	calloutText.WriteString(fmt.Sprintf("TITLE{%s}\n", gen.Name))
 
 	if gen.IsPowered() {
 		calloutText.WriteString("Status: POWERED{POWERED}\n")
@@ -124,9 +124,9 @@ func CheckAdjacentGeneratorAtCell(g *state.Game, cell *world.Cell) bool {
 		calloutText.WriteString(fmt.Sprintf("Needs: ACTION{%d} more batteries\n", gen.BatteriesNeeded()))
 	}
 	calloutText.WriteString("\n")
-	calloutText.WriteString(fmt.Sprintf("Power Supply: ACTION{%d} watts\n", g.PowerSupply))
-	calloutText.WriteString(fmt.Sprintf("Power Consumption: ACTION{%d} watts\n", g.PowerConsumption))
-	calloutText.WriteString(fmt.Sprintf("Available Power: ACTION{%d} watts", g.GetAvailablePower()))
+	calloutText.WriteString(fmt.Sprintf("Power Supply: %s\n", renderer.FormatPowerWatts(g.PowerSupply, false)))
+	calloutText.WriteString(fmt.Sprintf("Power Consumption: %s\n", renderer.FormatPowerWatts(g.PowerConsumption, false)))
+	calloutText.WriteString(fmt.Sprintf("Available Power: %s", renderer.FormatPowerWatts(g.GetAvailablePower(), false)))
 
 	// Use appropriate color based on power status
 	calloutColor := renderer.CalloutColorGenerator
@@ -194,12 +194,12 @@ func CheckAdjacentGenerators(g *state.Game) {
 
 			if gen.IsPowered() {
 				logMessage(g, "ITEM{%s} is now powered!", gen.Name)
-				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("%s POWERED!", gen.Name), renderer.CalloutColorGeneratorOn, 0)
+				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("TITLE{%s} POWERED{ONLINE}", gen.Name), renderer.CalloutColorGeneratorOn, 0)
 				// Update power supply when generator is powered
 				g.UpdatePowerSupply()
 				// Update lighting based on new power availability
 				UpdateLightingExploration(g)
-				logMessage(g, "Power supply: ACTION{%d} watts available", g.GetAvailablePower())
+				logMessage(g, "Power supply: %dw available", g.GetAvailablePower())
 			} else {
 				logMessage(g, "%s needs ACTION{%d} more batteries", gen.Name, gen.BatteriesNeeded())
 				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("+%d batteries (%d more needed)", inserted, gen.BatteriesNeeded()), renderer.CalloutColorGenerator, 0)
@@ -218,7 +218,7 @@ func CheckAdjacentTerminalsAtCell(g *state.Game, cell *world.Cell) bool {
 	// CCTV terminal requires room power to operate
 	if !g.RoomCCTVPowered[cell.Name] {
 		logMessage(g, "CCTV terminal has no power. Restore power via the maintenance terminal.")
-		renderer.AddCallout(cell.Row, cell.Col, "Terminal has no power", renderer.CalloutColorTerminal, 0)
+		renderer.AddCallout(cell.Row, cell.Col, "TITLE{Terminal has no power}", renderer.CalloutColorTerminal, 0)
 		return true // consumed interaction, but no effect
 	}
 
@@ -231,13 +231,13 @@ func CheckAdjacentTerminalsAtCell(g *state.Game, cell *world.Cell) bool {
 	if alreadyRevealed {
 		logMessage(g, "Accessed %s - ROOM{%s} already explored.", terminal.Name, targetRoom)
 		terminal.Activate()
-		renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("%s already explored", targetRoom), renderer.CalloutColorTerminal, 0)
+		renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("TITLE{%s already explored}", targetRoom), renderer.CalloutColorTerminal, 0)
 	} else {
 		// Reveal the target room
 		if revealRoomByName(g.Grid, targetRoom) {
 			terminal.Activate()
 			logMessage(g, "Accessed %s - revealed ROOM{%s} on security feed!", terminal.Name, targetRoom)
-			renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("Revealed: %s", targetRoom), renderer.CalloutColorTerminal, 0)
+			renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("TITLE{Revealed: %s}", targetRoom), renderer.CalloutColorTerminal, 0)
 		}
 	}
 	return true
@@ -265,7 +265,7 @@ func CheckAdjacentPuzzlesAtCell(g *state.Game, cell *world.Cell) bool {
 			puzzle.Solve()
 			logMessage(g, "Puzzle solved! Solution: %s", puzzle.Solution)
 			applyPuzzleReward(g, puzzle, cell)
-			renderer.AddCallout(cell.Row, cell.Col, "Puzzle solved!", renderer.CalloutColorTerminal, 0)
+			renderer.AddCallout(cell.Row, cell.Col, "TITLE{Puzzle solved!}", renderer.CalloutColorTerminal, 0)
 		} else {
 			logMessage(g, "This puzzle has already been solved.")
 		}
@@ -308,19 +308,15 @@ func CheckAdjacentFurnitureAtCell(g *state.Game, cell *world.Cell) bool {
 	if item != nil {
 		if item.Name == "Battery" {
 			g.AddBatteries(1)
-			// Show furniture name in furniture color, then "Found: Battery!" in item color
-			calloutText := fmt.Sprintf("FURNITURE{%s}\nFound: ACTION{Battery}!", furniture.Name)
+			calloutText := fmt.Sprintf("TITLE{%s}\nFound: ACTION{Battery}!", furniture.Name)
 			renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
 		} else {
 			g.OwnedItems.Put(item)
-			// Show furniture name in furniture color, then "Found: [Item]!" in item color
-			calloutText := fmt.Sprintf("FURNITURE{%s}\nFound: ITEM{%s}!", furniture.Name, item.Name)
+			calloutText := fmt.Sprintf("TITLE{%s}\nFound: ITEM{%s}!", furniture.Name, item.Name)
 			renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
 		}
 	} else {
-		// Furniture already checked or decorative-only: show description
-		// Show furniture name on first line, description on second line
-		calloutText := fmt.Sprintf("FURNITURE{%s}\n%s", furniture.Name, furniture.Description)
+		calloutText := fmt.Sprintf("TITLE{%s}\n%s", furniture.Name, furniture.Description)
 		renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
 	}
 	return true
@@ -336,7 +332,7 @@ func CheckAdjacentHazardControlsAtCell(g *state.Game, cell *world.Cell) bool {
 	// Hazard control (circuit breaker) requires room power to operate
 	if !g.RoomCCTVPowered[cell.Name] {
 		logMessage(g, "Circuit breaker has no power. Restore power via the maintenance terminal.")
-		renderer.AddCallout(cell.Row, cell.Col, "No power", renderer.CalloutColorHazardCtrl, 0)
+		renderer.AddCallout(cell.Row, cell.Col, "TITLE{No power}", renderer.CalloutColorHazardCtrl, 0)
 		return true
 	}
 
@@ -345,7 +341,7 @@ func CheckAdjacentHazardControlsAtCell(g *state.Game, cell *world.Cell) bool {
 
 	info := entities.HazardTypes[control.Type]
 	logMessage(g, "Activated %s: %s", renderer.StyledHazardCtrl(control.Name), info.FixedMessage)
-	renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("%s activated!", control.Name), renderer.CalloutColorHazardCtrl, 0)
+	renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("TITLE{%s activated!}", control.Name), renderer.CalloutColorHazardCtrl, 0)
 	return true
 }
 
@@ -404,7 +400,7 @@ func applyPuzzleReward(g *state.Game, puzzle *entities.PuzzleTerminal, cell *wor
 	case entities.RewardBattery:
 		g.AddBatteries(1)
 		logMessage(g, "Received: ACTION{Battery}")
-		renderer.AddCallout(cell.Row, cell.Col, "Battery received!", renderer.CalloutColorItem, 0)
+		renderer.AddCallout(cell.Row, cell.Col, "TITLE{Battery received!}", renderer.CalloutColorItem, 0)
 	case entities.RewardRevealRoom:
 		// Reveal a random room
 		logMessage(g, "Security feed activated - a new area is revealed.")
@@ -414,7 +410,7 @@ func applyPuzzleReward(g *state.Game, puzzle *entities.PuzzleTerminal, cell *wor
 	case entities.RewardMap:
 		// Give the player the map - powerful reward!
 		g.HasMap = true
-		renderer.AddCallout(cell.Row, cell.Col, "Map acquired!", renderer.CalloutColorItem, 0)
+		renderer.AddCallout(cell.Row, cell.Col, "TITLE{Map acquired!}", renderer.CalloutColorItem, 0)
 		logMessage(g, "Received: ITEM{Map}")
 	}
 }

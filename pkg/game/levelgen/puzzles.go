@@ -11,6 +11,7 @@ import (
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/renderer"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -35,6 +36,7 @@ func PlacePuzzles(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 	}
 
 	lockedDoors := mapset.New[*world.Cell]() // no doors yet when placing puzzles
+	roomEntries := setup.FindRoomEntryPoints(g.Grid)
 
 	for i := 0; i < numPuzzles && i < len(puzzleSolutions); i++ {
 		// Find a room for the puzzle
@@ -43,9 +45,16 @@ func PlacePuzzles(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 			continue
 		}
 
-		// Place on a cell that is not an articulation point, so the puzzle doesn't block the only path to a room
+		// Place on a cell that is not an articulation point (global) and does not disconnect the room (R8)
 		placeCell := FindNonArticulationCellInRoom(g.Grid, g.Grid.StartCell(), puzzleRoom, avoid, &lockedDoors)
 		if placeCell == nil {
+			placeCell = puzzleRoom
+		}
+		var entryCells []*world.Cell
+		if ep := roomEntries[puzzleRoom.Name]; ep != nil {
+			entryCells = ep.EntryCells
+		}
+		if placeCell != nil && !setup.RoomStillConnectedIfBlock(g, puzzleRoom.Name, entryCells, placeCell) {
 			placeCell = puzzleRoom
 		}
 

@@ -119,6 +119,9 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 	fmt.Fprintf(f, "player_col: %d\n", playerCol)
 	fmt.Fprintf(f, "player_cell: %d,%d\n", playerRow, playerCol)
 	fmt.Fprintf(f, "start_cell: %d,%d\n", startRow, startCol)
+	if startCell != nil && startCell.Name != "" {
+		fmt.Fprintf(f, "start_room: %q\n", startCell.Name)
+	}
 	fmt.Fprintf(f, "has_map: %v\n", g.HasMap)
 	fmt.Fprintf(f, "power_supply: %d\n", g.PowerSupply)
 	fmt.Fprintf(f, "power_consumption: %d\n", g.PowerConsumption)
@@ -217,8 +220,13 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 	})
 	fmt.Fprintln(f, "")
 
-	// Maintenance Terminals
+	// Maintenance Terminals (powered = only start room initially; accessible = reachable from start without locked doors)
 	fmt.Fprintln(f, "Maintenance Terminals:")
+	startRoomName := ""
+	if startCell != nil && startCell.Name != "" {
+		startRoomName = startCell.Name
+	}
+	poweredCount := 0
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil {
 			return
@@ -228,8 +236,13 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 			return
 		}
 		m := data.MaintenanceTerm
-		fmt.Fprintf(f, "  row: %d col: %d name: %q room_name: %q used: %v\n", row, col, m.Name, m.RoomName, m.Used)
+		if m.Powered {
+			poweredCount++
+		}
+		inStartRoom := m.RoomName == startRoomName
+		fmt.Fprintf(f, "  row: %d col: %d name: %q room_name: %q used: %v powered: %v (in_start_room: %v)\n", row, col, m.Name, m.RoomName, m.Used, m.Powered, inStartRoom)
 	})
+	fmt.Fprintf(f, "  (accessible powered terminals: %d - only start room terminals are powered at init)\n", poweredCount)
 	fmt.Fprintln(f, "")
 
 	// Furniture
@@ -314,7 +327,7 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 	}
 	fmt.Fprintln(f, "")
 
-	// Room power (doors and CCTV per room)
+	// Room power (doors, CCTV, lights per room)
 	fmt.Fprintln(f, "Room power state:")
 	var roomNames []string
 	for rn := range g.RoomDoorsPowered {
@@ -324,7 +337,11 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 	for _, rn := range roomNames {
 		doorsOn := g.RoomDoorsPowered[rn]
 		cctvOn := g.RoomCCTVPowered[rn]
-		fmt.Fprintf(f, "  room: %q doors_powered: %v cctv_powered: %v\n", rn, doorsOn, cctvOn)
+		lightsOn := g.RoomLightsPowered[rn]
+		if _, ok := g.RoomLightsPowered[rn]; !ok {
+			lightsOn = true // default when not set
+		}
+		fmt.Fprintf(f, "  room: %q doors_powered: %v cctv_powered: %v lights_powered: %v\n", rn, doorsOn, cctvOn, lightsOn)
 	}
 	fmt.Fprintln(f, "")
 

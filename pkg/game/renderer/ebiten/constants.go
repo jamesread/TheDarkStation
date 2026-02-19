@@ -10,9 +10,12 @@ var (
 	colorPlayer            = color.RGBA{0, 255, 0, 255}     // Bright green
 	colorWall              = color.RGBA{180, 180, 200, 255} // Light gray-blue for wall text
 	colorWallBg            = color.RGBA{60, 60, 80, 255}    // Darker background for walls
+	colorWallHighlight     = color.RGBA{90, 58, 18, 255}   // Dark orange tint matching maintenance terminal for selected room walls
 	colorWallBgPowered     = color.RGBA{40, 80, 40, 255}    // Dark green background for walls in powered rooms
 	colorFloor             = color.RGBA{100, 100, 120, 255} // Medium gray for undiscovered
 	colorFloorVisited      = color.RGBA{160, 160, 180, 255} // Lighter gray for visited
+	colorFloorBg           = color.RGBA{38, 38, 58, 255}   // Dark blue-gray background for floor cells
+	colorFloorVisitedBg    = color.RGBA{44, 44, 64, 255}    // Slightly lighter floor background for visited
 	colorDoorLocked        = color.RGBA{255, 255, 0, 255}   // Bright yellow
 	colorDoorUnlocked      = color.RGBA{0, 220, 0, 255}     // Bright green
 	colorKeycard           = color.RGBA{100, 150, 255, 255} // Bright blue
@@ -30,6 +33,8 @@ var (
 	colorExitLocked        = color.RGBA{255, 100, 100, 255} // Bright red
 	colorExitUnlocked      = color.RGBA{100, 255, 100, 255} // Bright green
 	colorSubtle            = color.RGBA{120, 130, 180, 255} // Soft blue-purple-gray
+	colorUnpoweredSubtle   = color.RGBA{90, 95, 120, 255}  // Muted gray for unpowered due to dependency (room terminal off)
+	colorLocation          = color.RGBA{160, 170, 210, 255} // Softer blue-gray for location/room labels
 	colorText              = color.RGBA{200, 210, 245, 255} // Soft off-white with blue-purple tint
 	colorAction            = color.RGBA{180, 150, 250, 255} // Blue-purple (less pink, more blue)
 	colorDenied            = color.RGBA{255, 100, 100, 255} // Bright red

@@ -74,9 +74,10 @@ type generatorState struct {
 
 // CellRenderOptions describes how a cell should be drawn on the map.
 type CellRenderOptions struct {
-	Icon          string
-	Color         color.Color
-	HasBackground bool
+	Icon            string
+	Color           color.Color
+	HasBackground   bool
+	BackgroundColor color.Color // optional; used when HasBackground is true (overrides default wall bg)
 }
 
 // keyRepeatInfo tracks the repeat state for a key or button
@@ -186,6 +187,21 @@ type EbitenRenderer struct {
 	debounceDirection string // "north", "south", "east", "west"
 	debounceStartTime int64  // Timestamp when debounce started (milliseconds)
 	debounceMutex     sync.RWMutex
+
+	// Camera transition state (smooth pan when focusing on room in select room dialog)
+	cameraCenterRow       float64
+	cameraCenterCol       float64
+	cameraTargetRow       float64
+	cameraTargetCol       float64
+	cameraFromRow         float64
+	cameraFromCol         float64
+	cameraTransitionStart int64 // Timestamp when transition started (nanoseconds, for sub-ms precision)
+
+	// Offscreen map buffer - render tiles here at integer coords, then blit with fractional
+	// offset. Eliminates per-tile sub-pixel jitter during camera transitions.
+	mapBuffer        *ebiten.Image
+	mapBufferWidth   int
+	mapBufferHeight int
 
 	// Background animation for main menu (floating tiles)
 	floatingTiles      []floatingTile

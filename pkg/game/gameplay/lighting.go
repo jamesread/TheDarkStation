@@ -24,7 +24,7 @@ func UpdateLightingExploration(g *state.Game) {
 
 	// Check if power consumption exceeds supply and warn the player
 	if g.PowerConsumption > g.PowerSupply && !g.PowerOverloadWarned {
-		logMessage(g, "WARNING: Power consumption (ACTION{%d} watts) exceeds supply (ACTION{%d} watts)!", g.PowerConsumption, g.PowerSupply)
+		logMessage(g, "WARNING: Power consumption (%dw) exceeds supply (%dw)!", g.PowerConsumption, g.PowerSupply)
 		g.PowerOverloadWarned = true
 	} else if g.PowerConsumption <= g.PowerSupply {
 		// Reset warning flag when power is sufficient
@@ -55,8 +55,12 @@ func UpdateLightingExploration(g *state.Game) {
 		// 5x5 radius means max distance of 2 in each direction
 		isNearPlayer := rowDist <= 2 && colDist <= 2
 
-		// If cell was visited and we have power, lights should be on
-		if cell.Visited && availablePower > 0 {
+		// If cell was visited, we have power, and room lights are enabled, lights should be on
+		lightsEnabled := true
+		if v, ok := g.RoomLightsPowered[cell.Name]; ok {
+			lightsEnabled = v
+		}
+		if cell.Visited && availablePower > 0 && lightsEnabled {
 			if !data.LightsOn {
 				data.LightsOn = true
 				data.Lighted = true
@@ -64,8 +68,8 @@ func UpdateLightingExploration(g *state.Game) {
 				cell.Discovered = true
 				cell.Visited = true
 			}
-		} else if availablePower <= 0 {
-			// No power - lights off
+		} else if availablePower <= 0 || !lightsEnabled {
+			// No power or lights toggled off - lights off
 			data.LightsOn = false
 
 			// Cells near player always stay visible (3x3 radius)

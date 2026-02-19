@@ -1,0 +1,15 @@
+{
+  "repository_type": "monolith",
+  "parts_count": 1,
+  "parts": [
+    {
+      "part_id": "main",
+      "root_path": "/home/jread/sandbox/Development/TheDarkCastle",
+      "project_type_id": "backend",
+      "display_name": "Go (Ebiten game application)"
+    }
+  ],
+  "project_types_cached": [
+    {"part_id": "main", "project_type_id": "backend", "display_name": "Go (Ebiten game application)"}
+  ]
+}

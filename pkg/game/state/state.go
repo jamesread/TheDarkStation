@@ -6,6 +6,7 @@ import (
 	"github.com/zyedidia/generic/mapset"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/entities"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -18,6 +19,16 @@ const (
 	NavStyleNSEW NavStyle = iota
 	NavStyleVim
 )
+
+// DeckState holds generated state for one deck (GDD §4.2). Used for generation on first entry and revisit.
+type DeckState struct {
+	Grid               *world.Grid
+	LevelSeed          int64
+	RoomDoorsPowered   map[string]bool
+	RoomCCTVPowered    map[string]bool
+	RoomLightsPowered  map[string]bool
+	Generators         []*entities.Generator
+}
 
 // Game represents the game state for Abandoned Station
 type Game struct {
@@ -35,7 +46,10 @@ type Game struct {
 
 	NavStyle NavStyle
 
-	Level int // Current level/floor number
+	Level int // Current deck level (1-based display): Level = CurrentDeckID + 1
+
+	CurrentDeckID int             // 0-based deck index (source of truth for which deck we're in)
+	DeckStates    map[int]*DeckState // Per-deck generated state; key = deck ID (0-based)
 
 	Batteries            int                   // Number of batteries in inventory
 	Generators           []*entities.Generator // All generators on this level
@@ -53,11 +67,17 @@ type Game struct {
 	PowerConsumption     int                   // Total power being consumed by active devices
 	PowerOverloadWarned  bool                  // Whether we've warned about power overload this cycle
 	QuitToTitle          bool                  // Set to true to quit to main menu
+	GameComplete         bool                  // True when player reached final deck and lift has no destination (completion)
 
 	// Room power: doors and CCTV/hazard controls are unpowered by default.
 	// Start room's doors are powered so the player can leave.
-	RoomDoorsPowered map[string]bool // room name -> doors powered
-	RoomCCTVPowered  map[string]bool // room name -> CCTV terminals and hazard controls powered
+	RoomDoorsPowered  map[string]bool // room name -> doors powered
+	RoomCCTVPowered   map[string]bool // room name -> CCTV terminals and hazard controls powered
+	RoomLightsPowered map[string]bool // room name -> lights enabled (0w; toggled at maintenance terminal)
+
+	// MaintenanceMenuRoom is set while the maintenance menu is open; the room whose
+	// maintenance view is displayed. Used to highlight that room's wall cells on the map.
+	MaintenanceMenuRoom string
 }
 
 // MessageEntry represents a message with a timestamp
@@ -69,18 +89,25 @@ type MessageEntry struct {
 // NewGame creates a new game instance
 func NewGame() *Game {
 	return &Game{
-		OwnedItems:          mapset.New[*world.Item](),
-		HasMap:              false,
-		Messages:            make([]MessageEntry, 0),
-		Level:               1,
-		Batteries:           0,
-		Generators:          make([]*entities.Generator, 0),
-		FoundCodes:          make(map[string]bool),
-		PowerSupply:         0,
-		PowerConsumption:    0,
-		PowerOverloadWarned: false,
-		RoomDoorsPowered:    make(map[string]bool),
-		RoomCCTVPowered:     make(map[string]bool),
+		OwnedItems:            mapset.New[*world.Item](),
+		HasMap:                false,
+		Messages:              make([]MessageEntry, 0),
+		Level:                 1,
+		CurrentDeckID:         0,
+		DeckStates:            make(map[int]*DeckState),
+		Batteries:             0,
+		Generators:             make([]*entities.Generator, 0),
+		FoundCodes:            make(map[string]bool),
+		LastInteractedRow:     -1,
+		LastInteractedCol:     -1,
+		InteractionPlayerRow:  -1,
+		InteractionPlayerCol:  -1,
+		PowerSupply:           0,
+		PowerConsumption:      0,
+		PowerOverloadWarned:    false,
+		RoomDoorsPowered:      make(map[string]bool),
+		RoomCCTVPowered:       make(map[string]bool),
+		RoomLightsPowered:     make(map[string]bool),
 	}
 }
 
@@ -195,9 +222,16 @@ func (g *Game) HasItem(item *world.Item) bool {
 	return g.OwnedItems.Has(item)
 }
 
-// AdvanceLevel increments the level counter and resets level-specific state
+// AdvanceLevel increments the level counter and resets level-specific state.
+// Does not increment past the final deck (deck.TotalDecks).
+// Used when advancing without per-deck store (e.g. legacy path). Prefer gameplay.AdvanceLevel for graph-based advance.
 func (g *Game) AdvanceLevel() {
-	g.Level++
+	if g.Level < deck.TotalDecks {
+		g.Level++
+	}
+	if g.CurrentDeckID < deck.FinalDeckIndex {
+		g.CurrentDeckID++
+	}
 	g.OwnedItems = mapset.New[*world.Item]()
 	g.HasMap = false
 	g.Hints = nil
@@ -209,6 +243,69 @@ func (g *Game) AdvanceLevel() {
 	g.PowerOverloadWarned = false
 	g.RoomDoorsPowered = make(map[string]bool)
 	g.RoomCCTVPowered = make(map[string]bool)
+	g.RoomLightsPowered = make(map[string]bool)
+}
+
+// copyPowerMaps returns copies of the given power maps (for per-deck state).
+func copyPowerMaps(doors, cctv, lights map[string]bool) (doorsCopy, cctvCopy, lightsCopy map[string]bool) {
+	doorsCopy = make(map[string]bool, len(doors))
+	for k, v := range doors {
+		doorsCopy[k] = v
+	}
+	cctvCopy = make(map[string]bool, len(cctv))
+	for k, v := range cctv {
+		cctvCopy[k] = v
+	}
+	if lights == nil {
+		lights = make(map[string]bool)
+	}
+	lightsCopy = make(map[string]bool, len(lights))
+	for k, v := range lights {
+		lightsCopy[k] = v
+	}
+	return doorsCopy, cctvCopy, lightsCopy
+}
+
+// SaveCurrentDeckState stores the current deck's grid and power state into DeckStates (Phase 3.4).
+// Call before switching to another deck so the current deck can be restored on revisit.
+func (g *Game) SaveCurrentDeckState() {
+	if g.Grid == nil {
+		return
+	}
+	doorsCopy, cctvCopy, lightsCopy := copyPowerMaps(g.RoomDoorsPowered, g.RoomCCTVPowered, g.RoomLightsPowered)
+	genCopy := make([]*entities.Generator, len(g.Generators))
+	copy(genCopy, g.Generators)
+	g.DeckStates[g.CurrentDeckID] = &DeckState{
+		Grid:              g.Grid,
+		LevelSeed:         g.LevelSeed,
+		RoomDoorsPowered:   doorsCopy,
+		RoomCCTVPowered:    cctvCopy,
+		RoomLightsPowered:  lightsCopy,
+		Generators:        genCopy,
+	}
+}
+
+// LoadDeckState restores deck state for the given deck ID into g and sets CurrentDeckID/Level (Phase 3.4).
+// Clears per-deck UI state (HasMap, Hints, FoundCodes, power recalc). Caller must set CurrentCell and update lighting.
+func (g *Game) LoadDeckState(deckID int) {
+	ds, ok := g.DeckStates[deckID]
+	if !ok || ds == nil || ds.Grid == nil {
+		return
+	}
+	g.CurrentDeckID = deckID
+	g.Level = deckID + 1
+	g.Grid = ds.Grid
+	g.LevelSeed = ds.LevelSeed
+	g.RoomDoorsPowered, g.RoomCCTVPowered, g.RoomLightsPowered = copyPowerMaps(ds.RoomDoorsPowered, ds.RoomCCTVPowered, ds.RoomLightsPowered)
+	g.Generators = make([]*entities.Generator, len(ds.Generators))
+	copy(g.Generators, ds.Generators)
+	g.HasMap = false
+	g.Hints = nil
+	g.FoundCodes = make(map[string]bool)
+	g.PowerSupply = 0
+	g.PowerConsumption = 0
+	g.PowerOverloadWarned = false
+	g.CurrentCell = g.Grid.StartCell()
 }
 
 // GetAvailablePower returns the available power (supply - consumption)
@@ -216,41 +313,44 @@ func (g *Game) GetAvailablePower() int {
 	return g.PowerSupply - g.PowerConsumption
 }
 
-// UpdatePowerSupply recalculates power supply from powered generators
+// UpdatePowerSupply recalculates power supply from powered generators.
+// Uses per-deck decay: generator output is 100 W × deck's output multiplier (Phase 4.3).
 func (g *Game) UpdatePowerSupply() {
+	params := deck.DecayParamsForDeck(g.CurrentDeckID)
+	wattsPerGenerator := 100
 	totalPower := 0
 	for _, gen := range g.Generators {
 		if gen.IsPowered() {
-			// Each generator provides 100 watts
-			totalPower += 100
+			totalPower += int(float64(wattsPerGenerator) * params.GeneratorOutputMultiplier)
 		}
 	}
 	g.PowerSupply = totalPower
 }
 
 // CalculatePowerConsumption returns total power consumption from all active devices
-// (doors, CCTV, solved puzzles). Used for display and for overload/short-out logic.
+// (doors, CCTV, solved puzzles), scaled by per-deck cost multiplier (Phase 4.3).
 func (g *Game) CalculatePowerConsumption() int {
 	if g.Grid == nil {
 		return 0
 	}
-	totalConsumption := 0
+	rawConsumption := 0
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil || !cell.Room {
 			return
 		}
 		data := gameworld.GetGameData(cell)
 		if data.Terminal != nil && g.RoomCCTVPowered[cell.Name] {
-			totalConsumption += 10
+			rawConsumption += 10
 		}
 		if data.Door != nil && g.RoomDoorsPowered[data.Door.RoomName] {
-			totalConsumption += 10
+			rawConsumption += 10
 		}
 		if data.Puzzle != nil && data.Puzzle.IsSolved() {
-			totalConsumption += 3
+			rawConsumption += 3
 		}
 	})
-	return totalConsumption
+	params := deck.DecayParamsForDeck(g.CurrentDeckID)
+	return int(float64(rawConsumption) * params.PowerCostMultiplier)
 }
 
 // ShortOutIfOverload runs after a room power toggle to ON: if consumption exceeds supply,

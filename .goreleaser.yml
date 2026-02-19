@@ -2,32 +2,29 @@ project_name: TheDarkStation
 version: 2
 
 builds:
-  - env:
-      - CGO_ENABLED=0
+  - id: linux
     binary: darkstation
     main: main.go
     goos:
       - linux
-      - windows
-
+    env:
+      - CGO_ENABLED=1
     goarch:
       - amd64
-      - arm64
+    # arm64 omitted: CGO cross-compile from x86_64 runner needs arm64 toolchain/sysroot
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{ .CommitDate }}
 
-    goarm:
-      - 6
-      - 7
-
-    ignore:
-      - goos: darwin
-        goarch: arm # Mac does not work on [32bit] arm
-
-      - goos: windows
-        goarch: arm
-
-      - goos: windows
-        goarch: arm64
-
+  - id: windows
+    binary: darkstation
+    main: main.go
+    goos:
+      - windows
+    goarch:
+      - amd64
+    env:
+      - CGO_ENABLED=1
+      - CC=x86_64-w64-mingw32-gcc
     ldflags:
       - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{ .CommitDate }}
 

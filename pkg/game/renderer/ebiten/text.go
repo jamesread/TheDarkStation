@@ -4,6 +4,7 @@ package ebiten
 import (
 	"image/color"
 	"regexp"
+	"strings"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
@@ -25,6 +26,11 @@ type textSegment struct {
 
 // drawColoredChar draws a character with color at the given tile position (uses mono font)
 func (e *EbitenRenderer) drawColoredChar(screen *ebiten.Image, char string, x, y int, col color.Color) {
+	e.drawColoredCharF(screen, char, float64(x), float64(y), col)
+}
+
+// drawColoredCharF is the float64 variant for sub-pixel positioning (smooth camera).
+func (e *EbitenRenderer) drawColoredCharF(screen *ebiten.Image, char string, x, y float64, col color.Color) {
 	face := e.getMonoFontFace()
 
 	// Calculate position to center the character in the tile
@@ -37,7 +43,7 @@ func (e *EbitenRenderer) drawColoredChar(screen *ebiten.Image, char string, x, y
 	offsetY := (float64(e.tileSize) - h) / 2
 
 	op := &text.DrawOptions{}
-	op.GeoM.Translate(float64(x)+offsetX, float64(y)+offsetY)
+	op.GeoM.Translate(x+offsetX, y+offsetY)
 	op.ColorScale.ScaleWithColor(col)
 
 	text.Draw(screen, char, face, op)
@@ -63,11 +69,29 @@ func (e *EbitenRenderer) drawColoredTextWithFace(screen *ebiten.Image, str strin
 	text.Draw(screen, translated, face, op)
 }
 
+// hasTitleMarkup returns true if the string contains title-style markup (TITLE{}, UNPOWERED{}, UNPOWERED_SUBTLE{}).
+// Used to apply title face (bold, larger) to the first line of callouts.
+func hasTitleMarkup(s string) bool {
+	return strings.Contains(s, "TITLE{") || strings.Contains(s, "UNPOWERED{") || strings.Contains(s, "UNPOWERED_SUBTLE{")
+}
+
+// getTitleColorFromLine returns the accent color from the first marked-up segment in the line, or colorAction as fallback.
+// Used to derive tooltip border color from the title's markup (e.g. UNPOWERED{} -> red, TITLE{} -> colorAction).
+func (e *EbitenRenderer) getTitleColorFromLine(line string) color.Color {
+	segments := e.parseMarkup(line)
+	for _, seg := range segments {
+		if seg.color != colorText {
+			return seg.color
+		}
+	}
+	return colorAction
+}
+
 // parseMarkup parses a message string with markup (ITEM{}, ROOM{}, ACTION{}, GT{}) and returns colored segments
 func (e *EbitenRenderer) parseMarkup(msg string) []textSegment {
 	var segments []textSegment
-	// Regex to match markup: FUNCTION{content}
-	markupRegex := regexp.MustCompile(`([A-Z]+)\{([^}]*)\}`)
+	// Regex to match markup: FUNCTION{content} (FUNCTION can include underscores, e.g. UNPOWERED_SUBTLE)
+	markupRegex := regexp.MustCompile(`([A-Z][A-Z0-9_]*)\{([^}]*)\}`)
 
 	lastIndex := 0
 	matches := markupRegex.FindAllStringSubmatchIndex(msg, -1)
@@ -95,6 +119,10 @@ func (e *EbitenRenderer) parseMarkup(msg string) []textSegment {
 			segColor = colorAction
 		case "POWERED":
 			segColor = colorExitUnlocked // Bright green for exit/lift
+		case "UNPOWERED_SUBTLE":
+			segColor = colorUnpoweredSubtle // Muted gray when unpowered due to room terminal dependency (before UNPOWERED)
+		case "UNPOWERED":
+			segColor = colorHazard // Red for unpowered state
 		case "GT":
 			// GT{} is for translations - look up the translation
 			content = dynamicGet(content)
@@ -105,6 +133,18 @@ func (e *EbitenRenderer) parseMarkup(msg string) []textSegment {
 		case "HAZARD":
 			// HAZARD{} uses the hazard color (red)
 			segColor = colorHazard
+		case "SUBTLE":
+			// SUBTLE{} uses the same color as labels (e.g. "Power supply:")
+			segColor = colorSubtle
+		case "LOCATION":
+			// LOCATION{} uses a soft blue-gray for room names and location labels
+			segColor = colorLocation
+		case "DOOR":
+			// DOOR{} uses the door/locked color (yellow for locked doors)
+			segColor = renderer.CalloutColorDoor
+		case "TITLE":
+			// TITLE{} uses the standard title color (blue-purple, matches menu titles)
+			segColor = colorAction
 		default:
 			segColor = colorText
 		}

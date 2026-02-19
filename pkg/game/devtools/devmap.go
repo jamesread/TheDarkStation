@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/state"
@@ -230,8 +231,9 @@ func SwitchToDevMap(g *state.Game) {
 		grid.SetExitCell(exitCell)
 	}
 
-	// Update game state
+	// Update game state (CurrentDeckID out of range so graph/lift logic does not apply)
 	g.Grid = grid
+	g.CurrentDeckID = deck.TotalDecks
 	g.Level = 999 // Mark as dev map
 	g.ClearMessages()
 	logMessage(g, "Switched to developer testing map!")

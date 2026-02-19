@@ -116,16 +116,24 @@ func PlaceMaintenanceTerminals(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 				connectedCandidates = append(connectedCandidates, cell)
 			}
 		}
-		if len(connectedCandidates) == 0 {
-			connectedCandidates = validCells
+		// For start room: must have a terminal (InitMaintenanceTerminalPower only powers start room terminals).
+		// Without one, the level would have 0 accessible powered terminals and be unsolvable.
+		// Fall back to validCells if no R8-compliant candidate exists.
+		candidates := connectedCandidates
+		if len(candidates) == 0 && len(validCells) > 0 {
+			startCell := g.Grid.StartCell()
+			if startCell != nil && startCell.Name == roomName {
+				candidates = validCells
+			} else {
+				continue
+			}
+		} else if len(candidates) == 0 {
+			continue
 		}
 
-		// Place maintenance terminal
-		if len(connectedCandidates) > 0 {
-			selectedCell := connectedCandidates[rand.Intn(len(connectedCandidates))]
-			maintenanceTerm := entities.NewMaintenanceTerminal(fmt.Sprintf("Maintenance Terminal - %s", roomName), roomName)
-			gameworld.GetGameData(selectedCell).MaintenanceTerm = maintenanceTerm
-			avoid.Put(selectedCell)
-		}
+		selectedCell := candidates[rand.Intn(len(candidates))]
+		maintenanceTerm := entities.NewMaintenanceTerminal(fmt.Sprintf("Maintenance Terminal - %s", roomName), roomName)
+		gameworld.GetGameData(selectedCell).MaintenanceTerm = maintenanceTerm
+		avoid.Put(selectedCell)
 	}
 }

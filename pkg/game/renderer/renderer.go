@@ -4,9 +4,24 @@
 package renderer
 
 import (
+	"fmt"
+
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/state"
 )
+
+// FormatPowerWatts returns markup for power display: POWERED{Xw} when w>0,
+// UNPOWERED{Xw} or UNPOWERED_SUBTLE{Xw} when w<=0. useSubtle for dependency-blocked (e.g. room terminal off).
+func FormatPowerWatts(w int, useSubtle bool) string {
+	s := fmt.Sprintf("%dw", w)
+	if w > 0 {
+		return fmt.Sprintf("POWERED{%s}", s)
+	}
+	if useSubtle {
+		return fmt.Sprintf("UNPOWERED_SUBTLE{%s}", s)
+	}
+	return fmt.Sprintf("UNPOWERED{%s}", s)
+}
 
 // ApplyMarkup formats a string with special markup using the current renderer.
 // This is a convenience function for backwards compatibility.

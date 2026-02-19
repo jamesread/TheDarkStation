@@ -55,8 +55,12 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 			e.drawGenericMenuOverlay(screen)
 		}
 
-		// Draw console overlay (always on top)
+		// Draw console overlay
 		e.drawConsole(screen)
+
+		// FPS counter (top right)
+		sw, sh := screen.Bounds().Dx(), screen.Bounds().Dy()
+		e.drawFPSCounter(screen, sw, sh)
 		return
 	}
 
@@ -114,7 +118,6 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 
 	// Calculate map dimensions to fill available space
 	mapAreaWidth := viewportCols * e.tileSize
-	mapAreaHeight := viewportRows * e.tileSize
 
 	// Center the map horizontally and vertically with consistent 20px margins
 	mapX := (screenWidth - mapAreaWidth) / 2
@@ -123,10 +126,7 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	// Draw header (empty now - deck number moved to objectives panel)
 	e.drawHeaderFromSnapshot(screen, &snap, screenWidth, headerHeight)
 
-	// Draw map background with consistent 20px margins
-	vector.DrawFilledRect(screen, float32(mapX-mapMargin), float32(mapY-mapMargin),
-		float32(mapAreaWidth+mapMargin*2), float32(mapAreaHeight+mapMargin*2),
-		colorMapBackground, false)
+	// Map uses full-window background (colorBackground #1a1a2e from initial Fill); no separate darker border.
 
 	// Draw the map using snapshot for player position
 	e.drawMap(screen, g, mapX, mapY, &snap)
@@ -143,13 +143,32 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 		e.drawGenericMenuOverlay(screen)
 	}
 
-	// Draw console overlay (always on top)
+	// Draw console overlay
 	e.drawConsole(screen)
+
+	// FPS counter (top right)
+	e.drawFPSCounter(screen, screenWidth, screenHeight)
+
+	// Completion screen (GDD §10.2, §11): lift has no destination; game complete
+	if g.GameComplete {
+		e.drawCompletionOverlay(screen, screenWidth, screenHeight)
+	}
 }
 
 // drawHeaderFromSnapshot draws the header (currently empty - deck number moved to objectives panel)
 func (e *EbitenRenderer) drawHeaderFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, screenWidth int, headerHeight int) {
-	// Header is now empty - deck number has been moved to the objectives panel
+	// Header is now empty - deck number has been moved to objectives panel
+}
+
+// drawFPSCounter draws the current FPS in the top right corner.
+func (e *EbitenRenderer) drawFPSCounter(screen *ebiten.Image, screenWidth, screenHeight int) {
+	fps := ebiten.ActualFPS()
+	fpsText := fmt.Sprintf("%.0f FPS", fps)
+	fontSize := e.getUIFontSize()
+	margin := 12
+	x := screenWidth - int(e.getTextWidth(fpsText)) - margin
+	y := margin + int(fontSize)
+	e.drawColoredText(screen, fpsText, x, y, colorSubtle)
 }
 
 // drawMap renders the game map
@@ -162,40 +181,118 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, mapX, mapY
 	playerRow := snap.playerRow
 	playerCol := snap.playerCol
 
-	// Calculate viewport bounds centered on player
-	startRow := playerRow - e.viewportRows/2
-	startCol := playerCol - e.viewportCols/2
-
-	// Render each tile in the viewport
-	for vRow := 0; vRow < e.viewportRows; vRow++ {
-		for vCol := 0; vCol < e.viewportCols; vCol++ {
-			e.predrawTile(startRow, startCol, mapX, mapY, vRow, vCol, g, snap, screen)
+	// Compute target center: room center when in select room dialog, else player
+	targetRow := float64(playerRow)
+	targetCol := float64(playerCol)
+	if g.MaintenanceMenuRoom != "" {
+		if r, c, ok := roomCenter(g.Grid, g.MaintenanceMenuRoom); ok {
+			targetRow, targetCol = float64(r), float64(c)
 		}
 	}
 
-	e.drawRoomLabels(screen, snap, mapX, mapY, startRow, startCol)
-	e.drawCallouts(screen, snap, mapX, mapY, startRow, startCol)
-	e.drawPlayerWithDebounce(screen, g, snap, mapX, mapY, startRow, startCol)
-	e.drawExitAnimation(screen, snap, mapX, mapY, startRow, startCol)
+	// Smooth camera transition over 1 second when focusing on room
+	const transitionDurationNs = 1_000_000_000 // 1 second in nanoseconds
+	now := time.Now().UnixNano()
+
+	if g.MaintenanceMenuRoom != "" {
+		// In room select: animate toward target
+		targetChanged := e.cameraTargetRow != targetRow || e.cameraTargetCol != targetCol
+		if targetChanged {
+			e.cameraFromRow = e.cameraCenterRow
+			e.cameraFromCol = e.cameraCenterCol
+			e.cameraTargetRow = targetRow
+			e.cameraTargetCol = targetCol
+			e.cameraTransitionStart = now
+		}
+		progress := float64(now-e.cameraTransitionStart) / float64(transitionDurationNs)
+		if progress > 1 {
+			progress = 1
+		}
+		// Quintic ease-in-out for very smooth transition (small steps at start/end)
+		t := progress * progress * progress * (progress*(progress*6-15) + 10)
+		e.cameraCenterRow = e.cameraFromRow + (e.cameraTargetRow-e.cameraFromRow)*t
+		e.cameraCenterCol = e.cameraFromCol + (e.cameraTargetCol-e.cameraFromCol)*t
+	} else {
+		// Not in room select: snap to player immediately
+		e.cameraCenterRow = targetRow
+		e.cameraCenterCol = targetCol
+		e.cameraTargetRow = targetRow
+		e.cameraTargetCol = targetCol
+	}
+
+	// Viewport top-left in world space (may be fractional for smooth scrolling)
+	topLeftRow := e.cameraCenterRow - float64(e.viewportRows)/2
+	topLeftCol := e.cameraCenterCol - float64(e.viewportCols)/2
+
+	startRow := int(math.Floor(topLeftRow))
+	startCol := int(math.Floor(topLeftCol))
+
+	// Sub-tile pixel offset for smooth scrolling (float64 for sub-pixel precision)
+	offsetX := (topLeftCol - math.Floor(topLeftCol)) * float64(e.tileSize)
+	offsetY := (topLeftRow - math.Floor(topLeftRow)) * float64(e.tileSize)
+
+	// Ensure map buffer exists and is correctly sized
+	bufW := e.viewportCols * e.tileSize
+	bufH := e.viewportRows * e.tileSize
+	if e.mapBuffer == nil || e.mapBufferWidth != bufW || e.mapBufferHeight != bufH {
+		if e.mapBuffer != nil {
+			e.mapBuffer.Dispose()
+		}
+		e.mapBuffer = ebiten.NewImage(bufW, bufH)
+		e.mapBufferWidth = bufW
+		e.mapBufferHeight = bufH
+	}
+
+	// Draw tiles to offscreen buffer at integer coordinates - eliminates per-tile
+	// sub-pixel jitter. The single blit with fractional offset is smooth.
+	e.mapBuffer.Fill(colorBackground)
+	for vRow := 0; vRow < e.viewportRows; vRow++ {
+		for vCol := 0; vCol < e.viewportCols; vCol++ {
+			e.drawTileToBuffer(e.mapBuffer, startRow, startCol, vRow, vCol, g, snap)
+		}
+	}
+
+	// Blit map buffer to screen with fractional offset (one draw = smooth, no jitter)
+	op := &ebiten.DrawImageOptions{}
+	op.GeoM.Translate(float64(mapX)+offsetX, float64(mapY)+offsetY)
+	screen.DrawImage(e.mapBuffer, op)
+
+	// Draw overlays on top (labels, callouts, player) - they use screen-space positions
+	mapXF := float64(mapX) + offsetX
+	mapYF := float64(mapY) + offsetY
+	e.drawRoomLabels(screen, snap, mapXF, mapYF, startRow, startCol)
+	e.drawCallouts(screen, snap, mapXF, mapYF, startRow, startCol)
+	e.drawPlayerWithDebounce(screen, g, snap, mapXF, mapYF, startRow, startCol)
+	e.drawExitAnimation(screen, snap, mapXF, mapYF, startRow, startCol)
 }
 
-func (e *EbitenRenderer) predrawTile(startRow int, startCol int, mapX int, mapY int, vRow int, vCol int, g *state.Game, snap *renderSnapshot, screen *ebiten.Image) {
+// drawTileToBuffer draws a single tile to the map buffer at integer coordinates.
+// Used for jitter-free camera transitions - all tiles at exact pixel positions.
+func (e *EbitenRenderer) drawTileToBuffer(buf *ebiten.Image, startRow, startCol, vRow, vCol int, g *state.Game, snap *renderSnapshot) {
 	mapRow := startRow + vRow
 	mapCol := startCol + vCol
 
-	x := mapX + vCol*e.tileSize
-	y := mapY + vRow*e.tileSize
+	x := vCol * e.tileSize
+	y := vRow * e.tileSize
 
 	cell := g.Grid.GetCell(mapRow, mapCol)
 
-	cellRenderOptions := e.getCellRenderOptions(g, cell, snap)
+	cellRenderOptions := e.getCellRenderOptions(g, cell, snap, false)
 
 	if cell != nil && cell.Row == snap.playerRow && cell.Col == snap.playerCol {
-		// Skip drawing player here - it will be drawn separately with debounce animation
+		// Draw floor under the player (player drawn separately as overlay)
+		underfootOptions := e.getCellRenderOptions(g, cell, snap, true)
+		customBg := e.getTileCustomBg(g, cell, snap, &underfootOptions)
+		e.drawTileWithBg(buf, " ", x, y, colorBackground, underfootOptions.HasBackground, customBg)
 		return
 	}
 
-	// Check if this is the focused cell (has active callout) or an interactable cell - use focus background
+	customBg := e.getTileCustomBg(g, cell, snap, &cellRenderOptions)
+	e.drawTileWithBg(buf, cellRenderOptions.Icon, x, y, cellRenderOptions.Color, cellRenderOptions.HasBackground, customBg)
+}
+
+// getTileCustomBg returns the background color for a cell (focus, hazard, floor, exit, etc.).
+func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *renderSnapshot, opts *CellRenderOptions) color.Color {
 	var customBg color.Color
 	isFocused := cell != nil && cell.Row == snap.focusedCellRow && cell.Col == snap.focusedCellCol
 	isInteractable := false
@@ -207,24 +304,18 @@ func (e *EbitenRenderer) predrawTile(startRow int, startCol int, mapX int, mapY 
 			}
 		}
 	}
-
-	// Check for blocking hazards or locked doors that need to be cleared - use brighter background
 	needsClearing := false
 	if cell != nil && (g.HasMap || cell.Discovered) {
 		if gameworld.HasBlockingHazard(cell) || gameworld.HasLockedDoor(cell) {
 			needsClearing = true
 		}
 	}
-
-	// Set background color with priority order
 	if cell != nil {
 		if (g.HasMap || cell.Discovered) && gameworld.HasBlockingHazard(cell) {
-			// Dark red background for impassable hazards (e.g. sparks)
 			customBg = colorHazardBackground
 		} else if (g.HasMap || cell.Discovered) && gameworld.HasDoor(cell) {
 			roomName := gameworld.GetGameData(cell).Door.RoomName
 			if !g.RoomDoorsPowered[roomName] {
-				// Unpowered doors use same red background as unsolved hazards
 				customBg = colorHazardBackground
 			}
 		} else if (g.HasMap || cell.Discovered) && gameworld.HasMaintenanceTerminal(cell) {
@@ -241,28 +332,48 @@ func (e *EbitenRenderer) predrawTile(startRow int, startCol int, mapX int, mapY 
 				customBg = colorHazardBackground
 			}
 		}
+		if customBg == nil && opts != nil && opts.Icon == IconWall && g.MaintenanceMenuRoom != "" &&
+			hasAdjacentRoomNamed(cell, g.MaintenanceMenuRoom) {
+			customBg = colorWallHighlight
+		}
+		if customBg == nil && opts != nil && opts.BackgroundColor != nil {
+			customBg = opts.BackgroundColor
+		}
 		if customBg == nil && needsClearing {
-			// Brighter background for locked doors that need to be cleared (powered rooms)
 			customBg = colorBlockedBackground
-		} else if gameworld.HasPoweredGenerator(cell) {
-			// Powered generators show green background
+		} else if customBg == nil && gameworld.HasPoweredGenerator(cell) {
 			customBg = colorWallBgPowered
 		} else if isFocused || isInteractable {
-			// Focus/interactable color for non-powered walls
 			customBg = colorFocusBackground
 		} else if cell != nil && cell.ExitCell && (g.HasMap || cell.Discovered) && !cell.Locked && g.AllGeneratorsPowered() && g.AllHazardsCleared() {
-			// Unlocked exit cell - use pulsing background (requires generators powered and hazards cleared)
 			customBg = e.getPulsingExitBackgroundColor()
 		}
 	}
-
-	// Draw the tile character with optional background
-	e.drawTileWithBg(screen, cellRenderOptions.Icon, x, y, cellRenderOptions.Color, cellRenderOptions.HasBackground, customBg)
+	return customBg
 }
 
-// drawTileWithBg draws a single tile with optional custom background color
+// drawTileWithBg draws a single tile with optional custom background color.
+// When icon is " " or "", only the background is drawn (e.g. under the player).
 func (e *EbitenRenderer) drawTileWithBg(screen *ebiten.Image, icon string, x, y int, col color.Color, hasBackground bool, bgColor color.Color) {
-	// Skip completely empty/void tiles
+	e.drawTileWithBgF(screen, icon, float64(x), float64(y), col, hasBackground, bgColor)
+}
+
+// drawTileWithBgF is the float64 variant for sub-pixel positioning (smooth camera).
+func (e *EbitenRenderer) drawTileWithBgF(screen *ebiten.Image, icon string, x, y float64, col color.Color, hasBackground bool, bgColor color.Color) {
+	// Draw block background first if requested (so we can draw background-only under the player)
+	if hasBackground {
+		margin := float32(2)
+		bgCol := colorWallBg
+		if bgColor != nil {
+			r, g, b, a := bgColor.RGBA()
+			bgCol = color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), uint8(a >> 8)}
+		}
+		vector.DrawFilledRect(screen, float32(x)+margin, float32(y)+margin,
+			float32(e.tileSize)-margin*2, float32(e.tileSize)-margin*2,
+			bgCol, false)
+	}
+
+	// Skip drawing character for empty tiles (background-only draw)
 	if icon == " " || icon == "" {
 		return
 	}
@@ -276,27 +387,12 @@ func (e *EbitenRenderer) drawTileWithBg(screen *ebiten.Image, icon string, x, y 
 		return
 	}
 
-	// Draw block background if requested (for walls, doors, etc.)
-	if hasBackground {
-		// Draw background with small margin inside the tile
-		margin := float32(2)
-		bgCol := colorWallBg
-		if bgColor != nil {
-			// Convert color.Color to color.RGBA
-			r, g, b, a := bgColor.RGBA()
-			bgCol = color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), uint8(a >> 8)}
-		}
-		vector.DrawFilledRect(screen, float32(x)+margin, float32(y)+margin,
-			float32(e.tileSize)-margin*2, float32(e.tileSize)-margin*2,
-			bgCol, false)
-	}
-
 	// Draw the colored character
-	e.drawColoredChar(screen, icon, x, y, tileColor)
+	e.drawColoredCharF(screen, icon, x, y, tileColor)
 }
 
 // drawPlayerWithDebounce draws the player icon with debounce animation if active
-func (e *EbitenRenderer) drawPlayerWithDebounce(screen *ebiten.Image, g *state.Game, snap *renderSnapshot, mapX, mapY, startRow, startCol int) {
+func (e *EbitenRenderer) drawPlayerWithDebounce(screen *ebiten.Image, g *state.Game, snap *renderSnapshot, mapX, mapY float64, startRow, startCol int) {
 	e.debounceMutex.RLock()
 	direction := e.debounceDirection
 	startTime := e.debounceStartTime
@@ -312,8 +408,8 @@ func (e *EbitenRenderer) drawPlayerWithDebounce(screen *ebiten.Image, g *state.G
 	}
 
 	// Calculate base position
-	baseX := mapX + playerVCol*e.tileSize
-	baseY := mapY + playerVRow*e.tileSize
+	baseX := mapX + float64(playerVCol*e.tileSize)
+	baseY := mapY + float64(playerVRow*e.tileSize)
 
 	// Calculate debounce offset
 	offsetX := 0
@@ -347,13 +443,13 @@ func (e *EbitenRenderer) drawPlayerWithDebounce(screen *ebiten.Image, g *state.G
 	}
 
 	// Draw player icon at offset position
-	playerX := baseX + offsetX
-	playerY := baseY + offsetY
-	e.drawTileWithBg(screen, PlayerIcon, playerX, playerY, colorPlayer, false, nil)
+	playerX := baseX + float64(offsetX)
+	playerY := baseY + float64(offsetY)
+	e.drawTileWithBgF(screen, PlayerIcon, playerX, playerY, colorPlayer, false, nil)
 }
 
 // drawExitAnimation draws the exit transition animation with a meaningful message
-func (e *EbitenRenderer) drawExitAnimation(screen *ebiten.Image, snap *renderSnapshot, mapX, mapY, startRow, startCol int) {
+func (e *EbitenRenderer) drawExitAnimation(screen *ebiten.Image, snap *renderSnapshot, mapX, mapY float64, startRow, startCol int) {
 	if !snap.exitAnimating {
 		return
 	}
@@ -455,8 +551,46 @@ func (e *EbitenRenderer) drawExitAnimation(screen *ebiten.Image, snap *renderSna
 	}
 }
 
+// drawCompletionOverlay draws the completion screen (GDD §10.2, §11): lift has no destination.
+func (e *EbitenRenderer) drawCompletionOverlay(screen *ebiten.Image, w, h int) {
+	overlayColor := color.RGBA{15, 15, 26, 255}
+	vector.DrawFilledRect(screen, 0, 0, float32(w), float32(h), overlayColor, false)
+
+	fontSize := e.getUIFontSize() * 1.5
+	face := e.getSansFontFace()
+
+	line1 := gotext.Get("ENERGY_GRADIENT_EQUALIZED")
+	line2 := gotext.Get("NO_FURTHER_WORK_REQUESTS_DETECTED")
+	line3 := gotext.Get("PRESS_ANY_KEY_RETURN_TITLE")
+
+	m1, _ := text.Measure(line1, face, 0)
+	m2, _ := text.Measure(line2, face, 0)
+	m3, _ := text.Measure(line3, face, 0)
+
+	cx := float64(w) / 2
+	cy := float64(h) / 2
+
+	mainColor := color.RGBA{220, 170, 255, 255}
+	subColor := color.RGBA{200, 200, 220, 255}
+
+	op := &text.DrawOptions{}
+	op.GeoM.Translate(cx-float64(m1)/2, cy-fontSize*2+fontSize)
+	op.ColorScale.ScaleWithColor(mainColor)
+	text.Draw(screen, line1, face, op)
+
+	op2 := &text.DrawOptions{}
+	op2.GeoM.Translate(cx-float64(m2)/2, cy+fontSize)
+	op2.ColorScale.ScaleWithColor(mainColor)
+	text.Draw(screen, line2, face, op2)
+
+	op3 := &text.DrawOptions{}
+	op3.GeoM.Translate(cx-float64(m3)/2, cy+fontSize*2+fontSize)
+	op3.ColorScale.ScaleWithColor(subColor)
+	text.Draw(screen, line3, face, op3)
+}
+
 // drawRoomLabels renders persistent room name labels at the leftmost point of each room
-func (e *EbitenRenderer) drawRoomLabels(screen *ebiten.Image, snap *renderSnapshot, mapX, mapY, startRow, startCol int) {
+func (e *EbitenRenderer) drawRoomLabels(screen *ebiten.Image, snap *renderSnapshot, mapX, mapY float64, startRow, startCol int) {
 	if len(snap.roomLabels) == 0 {
 		return
 	}
@@ -484,8 +618,8 @@ func (e *EbitenRenderer) drawRoomLabels(screen *ebiten.Image, snap *renderSnapsh
 		}
 
 		// Compute pixel position (left edge of the cell where label should be)
-		cellX := mapX + vCol*e.tileSize
-		cellY := mapY + vRow*e.tileSize
+		cellX := mapX + float64(vCol*e.tileSize)
+		cellY := mapY + float64(vRow*e.tileSize)
 
 		// Measure text
 		textWidth := e.getTextWidth(rl.RoomName)
@@ -499,39 +633,26 @@ func (e *EbitenRenderer) drawRoomLabels(screen *ebiten.Image, snap *renderSnapsh
 		// Position box starting at the leftmost point of the room cell
 		// Raise it by half its height so it sits just above the wall
 		boxX := cellX + 2 // Small offset from left edge of cell
-		boxY := cellY - boxH - 4 - boxH/2
+		boxY := cellY - float64(boxH) - 4 - float64(boxH)/2
 
-		// Higher contrast colors for room labels
+		// Higher contrast colors for room labels (border matches title color)
 		bgColor := color.RGBA{15, 20, 40, 235}
-		borderColor := color.RGBA{140, 140, 200, 255}
+		borderColor := colorAction
 
-		// Border
-		vector.DrawFilledRect(
-			screen,
-			float32(boxX-1), float32(boxY-1),
-			float32(boxW+2), float32(boxH+2),
-			borderColor,
-			false,
-		)
-
-		// Background
-		vector.DrawFilledRect(
-			screen,
-			float32(boxX), float32(boxY),
-			float32(boxW), float32(boxH),
-			bgColor,
-			false,
-		)
+		const labelCornerRadius = 4
+		const labelBorderWidth = 1
+		drawRoundedRectWithShadow(screen, float32(boxX), float32(boxY), float32(boxW), float32(boxH), labelCornerRadius, labelBorderWidth, bgColor, borderColor, 1.0)
 
 		// Position text: drawColoredText uses baseline positioning (adds fontSize to y)
 		// Similar to callouts: subtract fontSize so baseline ends up inside the box
-		textX := boxX + paddingX
-		textY := boxY + paddingY - int(fontSize)
+		textX := int(boxX) + paddingX
+		textY := int(boxY) + paddingY - int(fontSize)
 
-		// Draw bold-ish text by rendering twice with a slight offset
-		labelColor := color.RGBA{230, 230, 255, 255} // High-contrast light color
-		e.drawColoredText(screen, rl.RoomName, textX, textY, labelColor)
-		e.drawColoredText(screen, rl.RoomName, textX+1, textY, labelColor)
+		// Use LOCATION{} markup for room labels (soft blue-gray, distinct from SUBTLE)
+		segments := e.parseMarkup(fmt.Sprintf("LOCATION{%s}", rl.RoomName))
+		// Draw bold-ish by rendering twice with slight offset
+		e.drawColoredTextSegments(screen, segments, textX, textY)
+		e.drawColoredTextSegments(screen, segments, textX+1, textY)
 	}
 }
 
@@ -605,7 +726,10 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 	}
 
 	fontSize := e.getUIFontSize()
-	lineHeight := int(fontSize) + 4
+	regularFace := e.getSansFontFace()
+	titleFace := e.getSansBoldTitleFontFace()
+	_, bodyLineHeight := text.Measure("Ag", regularFace, 0)
+	lineHeight := int(bodyLineHeight) + 4 // measured height + spacing
 
 	// Calculate how many lines we need (always include deck number)
 	linesNeeded := 0
@@ -622,15 +746,27 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 		linesNeeded++
 	}
 
+	// Gaps between sections are added to currentY when drawing but must be included in height
+	const sectionGap = 2
+	gaps := 0
+	if hasDeckNumber && hasObjectives {
+		gaps += sectionGap
+	}
+	if hasObjectives && (hasInventory || hasGenerators) {
+		gaps += sectionGap
+	}
+
 	// Calculate the maximum width needed for all text lines
 	maxTextWidth := 0.0
-	// Deck number text - translate format string first, then format
+	// Deck number text - uses title face (larger), measure with that
 	deckTextFormat := gotext.Get("DECK_NUMBER")
 	deckText := fmt.Sprintf(deckTextFormat, snap.level)
-	deckWidth := e.getTextWidth(deckText)
+	deckWidth := e.getTextWidthWithFace(deckText, titleFace)
 	if deckWidth > maxTextWidth {
 		maxTextWidth = deckWidth
 	}
+	_, firstLineMeasured := text.Measure(deckText, titleFace, 0)
+	firstLineHeight := int(firstLineMeasured) + 4 // measured height + spacing
 	if hasObjectives {
 		for _, objective := range snap.objectives {
 			// Translate objective if it's a translation key for width calculation
@@ -691,10 +827,16 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 		}
 	}
 
-	// Adjust panel height based on actual content
-	panelHeight := lineHeight*linesNeeded + 10
-	if panelHeight < int(fontSize)+10 {
-		panelHeight = int(fontSize) + 10
+	// Adjust panel height based on actual content (measured heights + gaps)
+	contentHeight := gaps
+	if hasDeckNumber {
+		contentHeight += firstLineHeight + (linesNeeded-1)*lineHeight
+	} else {
+		contentHeight += lineHeight * linesNeeded
+	}
+	panelHeight := contentHeight + 10
+	if panelHeight < int(bodyLineHeight)+10 {
+		panelHeight = int(bodyLineHeight) + 10
 	}
 
 	// Calculate panel width based on widest text, with padding
@@ -703,32 +845,32 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 		panelWidth = 100 // Minimum width
 	}
 
-	// Draw panel background with border (more opaque for overlay on map)
+	// Draw panel background with rounded rect and drop shadow (more opaque for overlay on map)
+	// Border matches title color (Deck X uses colorAction)
 	bgX := float32(x - 10)
 	bgY := float32(y - 5)
 	bgW := float32(panelWidth)
 	bgH := float32(panelHeight)
-	borderColor := color.RGBA{80, 80, 100, 255}
+	borderColor := colorAction
 	// More opaque background for overlay readability
 	overlayBackground := color.RGBA{20, 20, 35, 250} // More opaque than colorPanelBackground
 
-	// Border
-	vector.DrawFilledRect(screen, bgX-1, bgY-1, bgW+2, bgH+2, borderColor, false)
-	// Background
-	vector.DrawFilledRect(screen, bgX, bgY, bgW, bgH, overlayBackground, false)
+	const objectivesCornerRadius = 8
+	const objectivesBorderWidth = 2
+	drawRoundedRectWithShadow(screen, bgX, bgY, bgW, bgH, objectivesCornerRadius, objectivesBorderWidth, overlayBackground, borderColor, 1.0)
 
-	// Calculate vertical center for first line
-	// Since drawColoredText adds fontSize for baseline, we need to adjust
-	firstLineY := y + (panelHeight / 2) - (lineHeight * linesNeeded / 2) - int(fontSize)
+	// Calculate vertical center (contentHeight already includes gaps)
+	deckFontSize := fontSize + 2
+	firstLineY := y + (panelHeight-contentHeight)/2 - int(deckFontSize)
 
 	currentY := firstLineY
 
-	// Deck number (always first line)
+	// Deck number (always first line, uses title font)
 	if hasDeckNumber {
 		deckTextFormat := gotext.Get("DECK_NUMBER")
 		deckText := fmt.Sprintf(deckTextFormat, snap.level)
-		e.drawColoredText(screen, deckText, x, currentY, colorAction)
-		currentY += lineHeight
+		e.drawColoredTextWithFace(screen, deckText, x, currentY, colorAction, e.getSansBoldTitleFontFace())
+		currentY += firstLineHeight
 		// Add a small gap between deck number and objectives
 		if hasObjectives {
 			currentY += 2
@@ -904,7 +1046,8 @@ func (e *EbitenRenderer) drawMessagesFromSnapshot(screen *ebiten.Image, snap *re
 	bgW := float32(panelWidth)
 	bgH := float32(panelHeight)
 
-	borderColor := color.RGBA{80, 80, 100, 255}
+	// Border matches title color (header uses colorSubtle, but panel has title area)
+	borderColor := colorAction
 
 	// Border
 	vector.DrawFilledRect(screen, bgX-1, bgY-1, bgW+2, bgH+2, borderColor, false)

@@ -1,0 +1,14 @@
+{
+  "workflow_version": "1.2.0",
+  "timestamps": {"started": "2026-02-01T00:00:00Z", "last_updated": "2026-02-01T00:00:00Z", "completed": "2026-02-01T00:00:00Z"},
+  "mode": "initial_scan",
+  "scan_level": "deep",
+  "project_root": "/home/jread/sandbox/Development/TheDarkCastle",
+  "output_folder": "/home/jread/sandbox/Development/TheDarkCastle/docs",
+  "completed_steps": [{"step": "step_1", "status": "completed", "timestamp": "2026-02-01", "summary": "Classified as monolith with 1 part"}, {"step": "step_2", "status": "completed", "timestamp": "2026-02-01", "summary": "Found 15 existing docs"}, {"step": "step_3", "status": "completed", "timestamp": "2026-02-01", "summary": "Tech stack: Go 1.24, Ebiten"}, {"step": "step_4", "status": "completed", "timestamp": "2026-02-01", "summary": "Conditional analysis complete, 4 files written"}, {"step": "step_5", "status": "completed", "timestamp": "2026-02-01", "summary": "Source tree documented"}, {"step": "step_6", "status": "completed", "timestamp": "2026-02-01", "summary": "Dev/deployment guides written"}, {"step": "step_7", "status": "skipped", "timestamp": "2026-02-01", "summary": "Single part; no integration doc"}, {"step": "step_8", "status": "completed", "timestamp": "2026-02-01", "summary": "Architecture docs written for 1 part"}, {"step": "step_9", "status": "completed", "timestamp": "2026-02-01", "summary": "All supporting docs written"}, {"step": "step_10", "status": "completed", "timestamp": "2026-02-01", "summary": "Master index generated"}, {"step": "step_11", "status": "completed", "timestamp": "2026-02-01", "summary": "Validation and review complete"}, {"step": "step_12", "status": "completed", "timestamp": "2026-02-01", "summary": "Workflow complete"}],
+  "current_step": "completed",
+  "findings": {"project_classification": "monolith, 1 part, Go Ebiten game application", "technology_stack": "Go 1.24, Ebiten v2.9.7, gotext, Make/golangci-lint"},
+  "project_types": [{"part_id": "main", "project_type_id": "backend", "display_name": "Go (Ebiten game application)"}],
+  "outputs_generated": ["project-scan-report.json", "project-structure.md", "project-parts-metadata.json", "existing-documentation-inventory.md", "user-provided-context.md", "technology-stack.md", "architecture-patterns.md", "api-contracts-main.md", "data-models-main.md", "deployment-configuration.md", "source-tree-analysis.md", "development-guide.md", "contribution-guide.md", "architecture.md", "project-overview.md", "index.md"],
+  "resume_instructions": "Workflow complete"
+}

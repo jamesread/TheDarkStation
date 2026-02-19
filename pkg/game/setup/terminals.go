@@ -71,7 +71,8 @@ func calculateNumTerminals(level int) int {
 	return 0 // No terminals on level 1
 }
 
-// placeTerminalInRoom places a terminal in a specific room
+// placeTerminalInRoom places a terminal in a specific room.
+// R8: only places on a cell where the room stays connected (all doorways mutually reachable).
 func placeTerminalInRoom(g *state.Game, terminal *entities.CCTVTerminal, terminalRoom *world.Cell, roomEntries map[string]*RoomEntryPoints, avoid *mapset.Set[*world.Cell]) {
 	roomName := terminalRoom.Name
 	entryPoints := getRoomEntryPoints(terminalRoom, roomEntries)
@@ -82,13 +83,28 @@ func placeTerminalInRoom(g *state.Game, terminal *entities.CCTVTerminal, termina
 	// Find valid cells (not entry points, not already used, not exit cells)
 	validCells := filterValidTerminalCells(roomCells, entryPoints, avoid)
 
-	// If no valid cells found, fall back to the original room
+	// If no valid cells found, skip placement (cannot satisfy R8)
 	if len(validCells) == 0 {
-		validCells = []*world.Cell{terminalRoom}
+		return
 	}
 
-	// Pick a random valid cell
-	selectedCell := validCells[rand.Intn(len(validCells))]
+	// R8: filter to cells where room stays connected after placing terminal
+	var entryCells []*world.Cell
+	if ep := roomEntries[roomName]; ep != nil {
+		entryCells = ep.EntryCells
+	}
+	var connectedCandidates []*world.Cell
+	for _, cell := range validCells {
+		if RoomStillConnectedIfBlock(g, roomName, entryCells, cell) {
+			connectedCandidates = append(connectedCandidates, cell)
+		}
+	}
+	if len(connectedCandidates) == 0 {
+		// No cell keeps room connected; skip placement to satisfy R8
+		return
+	}
+
+	selectedCell := connectedCandidates[rand.Intn(len(connectedCandidates))]
 	gameworld.GetGameData(selectedCell).Terminal = terminal
 	avoid.Put(selectedCell)
 }

@@ -11,13 +11,14 @@ import (
 )
 
 // getCellRenderOptions returns rendering options for a cell.
-func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, snap *renderSnapshot) CellRenderOptions {
+// When forUnderfoot is true, the cell is treated as if the player were not on it (used to draw floor under the player).
+func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, snap *renderSnapshot, forUnderfoot bool) CellRenderOptions {
 	if cell == nil {
 		return CellRenderOptions{Icon: IconVoid, Color: colorBackground, HasBackground: false}
 	}
 
-	// Player position - use snapshot coordinates for consistency
-	if cell.Row == snap.playerRow && cell.Col == snap.playerCol {
+	// Player position - use snapshot coordinates for consistency (unless we want underfoot options)
+	if !forUnderfoot && cell.Row == snap.playerRow && cell.Col == snap.playerCol {
 		return CellRenderOptions{Icon: PlayerIcon, Color: colorPlayer, HasBackground: false}
 	}
 
@@ -41,6 +42,11 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 
 	// Door (show if has map or discovered)
 	if gameworld.HasDoor(cell) && (g.HasMap || cell.Discovered) {
+		roomName := data.Door.RoomName
+		if !g.RoomDoorsPowered[roomName] {
+			// Unpowered: use hazard color (matches UNPOWERED{} markup)
+			return CellRenderOptions{Icon: IconDoorUnlocked, Color: colorHazard, HasBackground: true}
+		}
 		if data.Door.Locked {
 			return CellRenderOptions{Icon: IconDoorLocked, Color: colorDoorLocked, HasBackground: true}
 		}
@@ -108,20 +114,20 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 
 	// Visited rooms
 	if cell.Visited {
-		return CellRenderOptions{Icon: getFloorIcon(cell.Name, true), Color: colorFloorVisited, HasBackground: false}
+		return CellRenderOptions{Icon: getFloorIcon(cell.Name, true), Color: colorFloorVisited, HasBackground: true, BackgroundColor: colorFloorVisitedBg}
 	}
 
 	// Discovered but not visited
 	if cell.Discovered {
 		if cell.Room {
-			return CellRenderOptions{Icon: getFloorIcon(cell.Name, false), Color: colorFloor, HasBackground: false}
+			return CellRenderOptions{Icon: getFloorIcon(cell.Name, false), Color: colorFloor, HasBackground: true, BackgroundColor: colorFloorBg}
 		}
 		return CellRenderOptions{Icon: IconWall, Color: colorWall, HasBackground: true} // Walls get background
 	}
 
 	// Has map - show rooms faintly
 	if g.HasMap && cell.Room {
-		return CellRenderOptions{Icon: getFloorIcon(cell.Name, false), Color: colorSubtle, HasBackground: false}
+		return CellRenderOptions{Icon: getFloorIcon(cell.Name, false), Color: colorSubtle, HasBackground: true, BackgroundColor: colorFloorBg}
 	}
 
 	// Non-room cells adjacent to discovered/visited rooms render as walls
@@ -176,6 +182,41 @@ func hasAdjacentDiscoveredRoom(c *world.Cell) bool {
 	neighbors := []*world.Cell{c.North, c.East, c.South, c.West}
 	for _, n := range neighbors {
 		if n != nil && n.Room && (n.Discovered || n.Visited) {
+			return true
+		}
+	}
+	return false
+}
+
+// roomCenter returns the approximate center (row, col) of a room by averaging all
+// room cells with the given name. Returns false if the room is not found or empty.
+func roomCenter(grid *world.Grid, roomName string) (row, col int, ok bool) {
+	if grid == nil || roomName == "" {
+		return 0, 0, false
+	}
+	var sumRow, sumCol int
+	var count int
+	grid.ForEachCell(func(r, c int, cell *world.Cell) {
+		if cell != nil && cell.Room && cell.Name == roomName {
+			sumRow += r
+			sumCol += c
+			count++
+		}
+	})
+	if count == 0 {
+		return 0, 0, false
+	}
+	return sumRow / count, sumCol / count, true
+}
+
+// hasAdjacentRoomNamed checks if any adjacent cell belongs to the given room
+func hasAdjacentRoomNamed(c *world.Cell, roomName string) bool {
+	if c == nil || roomName == "" {
+		return false
+	}
+	neighbors := []*world.Cell{c.North, c.East, c.South, c.West}
+	for _, n := range neighbors {
+		if n != nil && n.Room && n.Name == roomName {
 			return true
 		}
 	}

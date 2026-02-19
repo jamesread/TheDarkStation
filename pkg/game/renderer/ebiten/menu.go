@@ -18,6 +18,98 @@ import (
 	"darkstation/pkg/game/state"
 )
 
+// appendRoundedRect adds a rounded rectangle to the path. (x, y) is top-left; w, h are size; r is corner radius.
+// Uses clockwise arcs so the path winds correctly for fill.
+func appendRoundedRect(p *vector.Path, x, y, w, h, r float32) {
+	appendRoundedRectDir(p, x, y, w, h, r, vector.Clockwise)
+}
+
+// appendRoundedRectDir adds a rounded rectangle with the given winding direction.
+// CounterClockwise creates a hole when combined with an outer clockwise rect.
+func appendRoundedRectDir(p *vector.Path, x, y, w, h, r float32, dir vector.Direction) {
+	if r <= 0 {
+		p.MoveTo(x, y)
+		p.LineTo(x, y+h)
+		p.LineTo(x+w, y+h)
+		p.LineTo(x+w, y)
+		p.Close()
+		return
+	}
+	if r > w/2 {
+		r = w / 2
+	}
+	if r > h/2 {
+		r = h / 2
+	}
+	halfPi := float32(math.Pi / 2)
+	pi := float32(math.Pi)
+	p.MoveTo(x+r, y)
+	p.LineTo(x+w-r, y)
+	p.Arc(x+w-r, y+r, r, 3*halfPi, 0, dir)
+	p.LineTo(x+w, y+h-r)
+	p.Arc(x+w-r, y+h-r, r, 0, halfPi, dir)
+	p.LineTo(x+r, y+h)
+	p.Arc(x+r, y+h-r, r, halfPi, pi, dir)
+	p.LineTo(x, y+r)
+	p.Arc(x+r, y+r, r, pi, 3*halfPi, dir)
+	p.Close()
+}
+
+// drawRoundedRectWithShadow draws a rounded rectangle with drop shadow, fill, and border.
+// Used by menus and tooltips. alpha scales shadow opacity (1.0 = full, used for callout fade).
+// Shadow color is derived from borderColor (darkened to ~15% brightness).
+func drawRoundedRectWithShadow(screen *ebiten.Image, x, y, w, h, cornerRadius, borderWidth float32, bgColor, borderColor color.Color, alpha float32) {
+	const shadowSpread = 8
+	// Derive shadow from border color (darkened)
+	bor, bog, bob, _ := borderColor.RGBA()
+	shadowR := uint8((bor >> 8) * 15 / 255)
+	shadowG := uint8((bog >> 8) * 15 / 255)
+	shadowB := uint8((bob >> 8) * 15 / 255)
+	if shadowR < 8 {
+		shadowR = 8
+	}
+	if shadowG < 8 {
+		shadowG = 8
+	}
+	if shadowB < 8 {
+		shadowB = 8
+	}
+
+	var path vector.Path
+	for i := shadowSpread; i >= 1; i-- {
+		ringAlpha := uint8(12 + i*8)
+		if ringAlpha > 55 {
+			ringAlpha = 55
+		}
+		ringAlpha = uint8(float32(ringAlpha) * alpha)
+		path.Reset()
+		appendRoundedRect(&path,
+			x-float32(i), y-float32(i),
+			w+float32(i*2), h+float32(i*2),
+			cornerRadius+float32(i))
+		appendRoundedRectDir(&path,
+			x-float32(i-1), y-float32(i-1),
+			w+float32((i-1)*2), h+float32((i-1)*2),
+			cornerRadius+float32(i-1), vector.CounterClockwise)
+		drawOpts := &vector.DrawPathOptions{AntiAlias: true}
+		drawOpts.ColorScale.ScaleWithColor(color.RGBA{shadowR, shadowG, shadowB, ringAlpha})
+		vector.FillPath(screen, &path, nil, drawOpts)
+	}
+
+	path.Reset()
+	appendRoundedRect(&path, x, y, w, h, cornerRadius)
+	drawOpts := &vector.DrawPathOptions{AntiAlias: true}
+	drawOpts.ColorScale.ScaleWithColor(bgColor)
+	vector.FillPath(screen, &path, nil, drawOpts)
+
+	path.Reset()
+	appendRoundedRect(&path, x, y, w, h, cornerRadius)
+	strokeOpts := &vector.StrokeOptions{Width: borderWidth, MiterLimit: 10}
+	drawOpts = &vector.DrawPathOptions{AntiAlias: true}
+	drawOpts.ColorScale.ScaleWithColor(borderColor)
+	vector.StrokePath(screen, &path, strokeOpts, drawOpts)
+}
+
 // RenderMenu implements gamemenu.MenuRenderer for Ebiten.
 // It captures the current frame and marks the menu overlay as active.
 func (e *EbitenRenderer) RenderMenu(g *state.Game, items []gamemenu.MenuItem, selected int, helpText string, title string) {
@@ -213,9 +305,9 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	var borderAlpha uint8 = 200 // Default: more opaque border for in-game menus
 
 	if title == "The Dark Station" {
-		// Main menu: more transparent
-		bgAlpha = 180
-		borderAlpha = 180
+		// Main menu: same dark background as in-game menus
+		bgAlpha = 220
+		borderAlpha = 200
 	} else if title == "Bindings Menu" {
 		// Check if we're in main menu context (game state invalid)
 		e.snapshotMutex.RLock()
@@ -234,30 +326,72 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		// Otherwise, use default (more opaque) for bindings menu from in-game
 	}
 
-	bg := color.RGBA{20, 12, 28, bgAlpha}            // Slightly more purple (increased red and blue, kept green low)
-	border := color.RGBA{140, 112, 200, borderAlpha} // More purple border (increased red and blue)
+	bg := color.RGBA{10, 6, 16, bgAlpha} // Dark purple panel background
 
-	// Border
-	/*
-		vector.DrawFilledRect(screen,
-			float32(panelX-2), float32(panelY-2),
-			float32(panelW+4), float32(panelH+4),
-			border, false)
-	*/
-
-	width := float32(1)
+	// Border derives from title color (maintenance/select room = orange, others = purple)
+	borderBase := colorAction
+	if strings.Contains(title, "Maintenance Terminal") || title == "Select room" {
+		borderBase = colorMaintenance
+	}
+	br, bgVal, bb, _ := borderBase.RGBA()
+	border := color.RGBA{uint8(br >> 8), uint8(bgVal >> 8), uint8(bb >> 8), borderAlpha}
 
 	panelHFloat := float32(panelH)
-	vector.StrokeLine(screen, float32(panelX-2), float32(panelY-2), float32(panelX-2+panelW+4), float32(panelY-2), width, border, true)
-	vector.StrokeLine(screen, float32(panelX-2), float32(panelY-2), float32(panelX-2), float32(panelY-2)+panelHFloat+4, width, border, true)
-	vector.StrokeLine(screen, float32(panelX-2+panelW+4), float32(panelY-2), float32(panelX-2+panelW+4), float32(panelY-2)+panelHFloat+4, width, border, true)
-	vector.StrokeLine(screen, float32(panelX-2), float32(panelY-2)+panelHFloat+4, float32(panelX-2+panelW+4), float32(panelY-2)+panelHFloat+4, width, border, true)
+	panelWFloat := float32(panelW)
+	const menuCornerRadius = 12
+	const borderWidth = 2
 
-	// Background
-	vector.FillRect(screen,
-		float32(panelX), float32(panelY),
-		float32(panelW), panelHFloat,
-		bg, false)
+	var path vector.Path
+
+	// Drop shadow: drawn FIRST (behind panel), like CSS box-shadow. Ring only (never overlaps panel).
+	// 0 offset, 8px spread, fade from outer (darker) to inner (lighter). Shadow derived from border color.
+	const shadowSpread = 8
+	bor, bog, bob, _ := border.RGBA()
+	shadowR := uint8((bor >> 8) * 15 / 255)
+	shadowG := uint8((bog >> 8) * 15 / 255)
+	shadowB := uint8((bob >> 8) * 15 / 255)
+	if shadowR < 8 {
+		shadowR = 8
+	}
+	if shadowG < 8 {
+		shadowG = 8
+	}
+	if shadowB < 8 {
+		shadowB = 8
+	}
+	for i := shadowSpread; i >= 1; i-- {
+		alpha := uint8(12 + i*8)
+		if alpha > 55 {
+			alpha = 55
+		}
+		path.Reset()
+		appendRoundedRect(&path,
+			float32(panelX-i), float32(panelY-i),
+			panelWFloat+float32(i*2), panelHFloat+float32(i*2),
+			menuCornerRadius+float32(i))
+		appendRoundedRectDir(&path,
+			float32(panelX-(i-1)), float32(panelY-(i-1)),
+			panelWFloat+float32((i-1)*2), panelHFloat+float32((i-1)*2),
+			menuCornerRadius+float32(i-1), vector.CounterClockwise)
+		drawOpts := &vector.DrawPathOptions{AntiAlias: true}
+		drawOpts.ColorScale.ScaleWithColor(color.RGBA{shadowR, shadowG, shadowB, alpha})
+		vector.FillPath(screen, &path, nil, drawOpts)
+	}
+
+	// Panel background and border (drawn on top of shadow, fully covering center)
+	path.Reset()
+	appendRoundedRect(&path, float32(panelX), float32(panelY), panelWFloat, panelHFloat, menuCornerRadius)
+
+	drawOpts := &vector.DrawPathOptions{AntiAlias: true}
+	drawOpts.ColorScale.ScaleWithColor(bg)
+	vector.FillPath(screen, &path, nil, drawOpts)
+
+	path.Reset()
+	appendRoundedRect(&path, float32(panelX), float32(panelY), panelWFloat, panelHFloat, menuCornerRadius)
+	strokeOpts := &vector.StrokeOptions{Width: borderWidth, MiterLimit: 10}
+	drawOpts = &vector.DrawPathOptions{AntiAlias: true}
+	drawOpts.ColorScale.ScaleWithColor(border)
+	vector.StrokePath(screen, &path, strokeOpts, drawOpts)
 
 	paddingX := 24
 	paddingY := 24
@@ -273,9 +407,19 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	face := e.getSansFontFace()
 	_, textHeight := text.Measure("Ag", face, 0)
 
+	// Title color and highlight derive from menu type (maintenance/select room = orange, others = purple)
+	titleColor := colorAction
+	if strings.Contains(title, "Maintenance Terminal") || title == "Select room" {
+		titleColor = colorMaintenance
+	}
+	highlightColor := color.RGBA{100, 60, 160, 255} // Dark purple for default menus
+	if titleColor == colorMaintenance {
+		highlightColor = color.RGBA{100, 65, 0, 255} // Dark orange for maintenance menus
+	}
+
 	// Title (bold font, 2pt larger than body text)
 	if title != "" {
-		e.drawColoredTextWithFace(screen, title, x, y-int(fontSize), colorAction, e.getSansBoldTitleFontFace())
+		e.drawColoredTextWithFace(screen, title, x, y-int(fontSize), titleColor, e.getSansBoldTitleFontFace())
 		y += titleToContentSpacing
 	}
 
@@ -334,31 +478,53 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	// First pass: draw highlight rectangles (so they are always below text)
 	if highlightIndex >= 0 && highlightIndex < len(items) && items[highlightIndex].IsSelectable() && highlightWidth > 0 {
 		rectTop := highlightY
-		rectHeight := float64(textHeight + 4)      // small padding below glyphs
-		highlight := color.RGBA{100, 60, 160, 255} // Purple highlight to match menu theme
+		rectHeight := float64(textHeight + 4) // small padding below glyphs
 		// Add padding on left and right sides of text
 		const paddingX = 8.0
 		vector.DrawFilledRect(screen,
 			float32(x-paddingX), float32(rectTop),
 			float32(highlightWidth+paddingX*2), float32(rectHeight),
-			highlight, false)
+			highlightColor, false)
 	}
 
-	// For maintenance terminal menus: align values in a column (tab-separated labels)
-	var valueColumnX int
-	if strings.Contains(title, "Maintenance Terminal") {
-		var maxLabelW float64
+	// For maintenance terminal menus: align values in columns (tab-separated: label, status, optional watts)
+	var valueColumnX, wattsColumnX int
+	rightAlignPowerColumn := title == "Select room"
+	if strings.Contains(title, "Maintenance Terminal") || title == "Select room" {
+		var maxLabelW, maxValueW float64
 		for _, item := range items {
 			label := item.GetLabel()
-			if before, _, ok := strings.Cut(label, "\t"); ok && before != "" {
-				w := e.getTextWidth(before)
-				if w > maxLabelW {
-					maxLabelW = w
+			before, after, ok := strings.Cut(label, "\t")
+			if !ok || before == "" {
+				continue
+			}
+			if w := e.getTextWidth(before); w > maxLabelW {
+				maxLabelW = w
+			}
+			valuePart := after
+			wattsPart := ""
+			if middle, w, hasWatts := strings.Cut(after, "\t"); hasWatts {
+				valuePart, wattsPart = middle, w
+			}
+			if valuePart != "" {
+				if w := e.getMarkupWidth(valuePart); w > maxValueW {
+					maxValueW = w
+				}
+			}
+			if rightAlignPowerColumn && wattsPart != "" {
+				if w := e.getMarkupWidth(wattsPart); w > maxValueW {
+					maxValueW = w
 				}
 			}
 		}
-		const valueColumnGap = 8 // pixels between label column and value column
+		const valueColumnGap = 8 // pixels between columns
 		valueColumnX = x + int(maxLabelW) + valueColumnGap
+		if rightAlignPowerColumn {
+			// Third column right-aligned: draw at (rightEdge - width)
+			wattsColumnX = panelX + panelW - paddingX
+		} else {
+			wattsColumnX = valueColumnX + int(maxValueW) + valueColumnGap
+		}
 	}
 
 	// Second pass: draw menu items on top of the highlights
@@ -368,18 +534,27 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		// Use a shared origin for text and rectangle calculations (see above).
 		rowParamY := y + i*lineHeight
 
-		// Maintenance terminal: draw label and value in columns if tab-separated
+		// Maintenance terminal: draw label, value, and optional watts in columns if tab-separated
 		if valueColumnX > x {
 			if before, after, ok := strings.Cut(label, "\t"); ok {
 				if before != "" {
-					labelColor := colorText
-					if !item.IsSelectable() {
-						labelColor = colorSubtle
+					if strings.Contains(before, "{") {
+						segments := e.parseMarkup(before)
+						e.drawColoredTextSegments(screen, segments, x, rowParamY)
+					} else {
+						labelColor := colorText
+						if !item.IsSelectable() {
+							labelColor = colorSubtle
+						}
+						e.drawColoredText(screen, before, x, rowParamY, labelColor)
 					}
-					e.drawColoredText(screen, before, x, rowParamY, labelColor)
 				}
-				if after != "" {
-					segments := e.parseMarkup(after)
+				valuePart, wattsPart := after, ""
+				if middle, w, hasWatts := strings.Cut(after, "\t"); hasWatts {
+					valuePart, wattsPart = middle, w
+				}
+				if valuePart != "" {
+					segments := e.parseMarkup(valuePart)
 					if len(segments) > 0 {
 						e.drawColoredTextSegments(screen, segments, valueColumnX, rowParamY)
 					} else {
@@ -387,7 +562,23 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 						if !item.IsSelectable() {
 							labelColor = colorSubtle
 						}
-						e.drawColoredText(screen, after, valueColumnX, rowParamY, labelColor)
+						e.drawColoredText(screen, valuePart, valueColumnX, rowParamY, labelColor)
+					}
+				}
+				if wattsPart != "" && wattsColumnX > valueColumnX {
+					wattsX := wattsColumnX
+					if rightAlignPowerColumn {
+						wattsX = wattsColumnX - int(e.getMarkupWidth(wattsPart))
+					}
+					segments := e.parseMarkup(wattsPart)
+					if len(segments) > 0 {
+						e.drawColoredTextSegments(screen, segments, wattsX, rowParamY)
+					} else {
+						labelColor := colorText
+						if !item.IsSelectable() {
+							labelColor = colorSubtle
+						}
+						e.drawColoredText(screen, wattsPart, wattsX, rowParamY, labelColor)
 					}
 				}
 				continue
@@ -425,6 +616,16 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		versionY := screenHeight - margin - int(textHeight*2)
 		e.drawColoredText(screen, versionText, versionX, versionY, colorSubtle)
 	}
+}
+
+// getMarkupWidth returns the total width in pixels of a string that may contain markup (e.g. ACTION{}, POWERED{}).
+func (e *EbitenRenderer) getMarkupWidth(s string) float64 {
+	segments := e.parseMarkup(s)
+	var w float64
+	for _, seg := range segments {
+		w += e.getTextWidth(seg.text)
+	}
+	return w
 }
 
 // getMenuItemWidth calculates the width of a menu item's label text (accounting for markup)

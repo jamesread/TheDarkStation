@@ -62,6 +62,15 @@ msgstr	"DECK %d CLEARED"
 msgid	"PROCEEDING_TO_NEXT_LEVEL"
 msgstr	"Proceeding to next level..."
 
+msgid	"ENERGY_GRADIENT_EQUALIZED"
+msgstr	"ENERGY GRADIENT EQUALIZED"
+
+msgid	"NO_FURTHER_WORK_REQUESTS_DETECTED"
+msgstr	"NO FURTHER WORK REQUESTS DETECTED"
+
+msgid	"PRESS_ANY_KEY_RETURN_TITLE"
+msgstr	"Press any key to return to title"
+
 msgid	"NORTH"
 msgstr	"North"
 
@@ -121,3 +130,15 @@ msgstr	"Clear ACTION{%d} environmental hazard(s)."
 
 msgid	"FIND_LIFT"
 msgstr	"Find the POWERED{lift} to the next deck!"
+
+msgid	"TERMINAL_STATUS_NOMINAL"
+msgstr	"SYSTEM NOMINAL"
+
+msgid	"TERMINAL_STATUS_LEGACY"
+msgstr	"LEGACY PROTOCOL — DIRECTIVES PENDING"
+
+msgid	"TERMINAL_STATUS_ANOMALY"
+msgstr	"ANOMALY DETECTED — CONTRADICTORY DIRECTIVES"
+
+msgid	"TERMINAL_STATUS_FINAL"
+msgstr	"NO FURTHER DIRECTIVES — STANDBY"

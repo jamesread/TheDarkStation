@@ -11,54 +11,74 @@ import (
 	"darkstation/pkg/game/state"
 )
 
-// GetAdjacentRoomNames returns room names that are directly adjacent to the given room:
-// (1) rooms that share a corridor boundary (corridor cell touches both rooms), and
-// (2) rooms that share a direct cell boundary (room cell next to room cell).
-// Includes the given room itself.
+// GetAdjacentRoomNames returns room names that are adjacent to the given room.
+// Adjacency includes (1) direct: a cell in roomName has a N/S/E/W neighbour in room B;
+// (2) corridor-mediated: a cell in roomName borders a corridor, and that corridor (or
+// corridors reachable from it) borders room B. So rooms connected only by corridors
+// (e.g. A-Corridor-B) are considered adjacent. The name "Corridor" is excluded from
+// the result so the UI shows only named rooms. Result is sorted and includes roomName.
+// Nil is returned for nil grid, empty roomName, or roomName not in grid.
 func GetAdjacentRoomNames(grid *world.Grid, roomName string) []string {
+	if grid == nil || roomName == "" {
+		return nil
+	}
 	adjacent := make(map[string]bool)
-	adjacent[roomName] = true
+	foundRoom := false
+	var corridorFrontier []*world.Cell
 
-	// Corridor-centric: find corridor cells that border this room, then collect
-	// all other rooms that border those same corridor cells (same as door entry logic).
-	grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if cell == nil || !cell.Room || cell.Name != "Corridor" {
-			return
-		}
-		// This corridor cell borders the current room if any neighbor is in roomName
-		bordersCurrentRoom := false
-		var otherRoomNames []string
-		neighbors := []*world.Cell{cell.North, cell.South, cell.East, cell.West}
-		for _, n := range neighbors {
-			if n == nil || !n.Room {
-				continue
-			}
-			if n.Name == roomName {
-				bordersCurrentRoom = true
-			} else if n.Name != "" && n.Name != "Corridor" {
-				otherRoomNames = append(otherRoomNames, n.Name)
-			}
-		}
-		if bordersCurrentRoom {
-			for _, name := range otherRoomNames {
-				adjacent[name] = true
-			}
-		}
-	})
-
-	// Direct room-to-room: rooms that share a wall (no corridor in between).
+	// Pass 1: direct neighbours and corridor cells next to this room.
 	grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil || !cell.Room || cell.Name != roomName {
 			return
 		}
-		neighbors := []*world.Cell{cell.North, cell.South, cell.East, cell.West}
-		for _, n := range neighbors {
-			if n != nil && n.Room && n.Name != "" && n.Name != "Corridor" && n.Name != roomName {
+		foundRoom = true
+		for _, n := range []*world.Cell{cell.North, cell.South, cell.East, cell.West} {
+			if n == nil || !n.Room {
+				continue
+			}
+			if n.Name == "Corridor" {
+				corridorFrontier = append(corridorFrontier, n)
+				continue
+			}
+			if n.Name != "" && n.Name != roomName {
 				adjacent[n.Name] = true
 			}
 		}
 	})
 
+	if !foundRoom {
+		return nil
+	}
+
+	// Pass 2: from corridors adjacent to this room, BFS through corridors and add any room on the other side.
+	if len(corridorFrontier) > 0 {
+		visited := make(map[*world.Cell]bool)
+		queue := append([]*world.Cell(nil), corridorFrontier...)
+		for _, c := range corridorFrontier {
+			visited[c] = true
+		}
+		for len(queue) > 0 {
+			cur := queue[0]
+			queue = queue[1:]
+			for _, n := range []*world.Cell{cur.North, cur.South, cur.East, cur.West} {
+				if n == nil || !n.Room {
+					continue
+				}
+				if n.Name == "Corridor" {
+					if !visited[n] {
+						visited[n] = true
+						queue = append(queue, n)
+					}
+					continue
+				}
+				if n.Name != "" && n.Name != roomName {
+					adjacent[n.Name] = true
+				}
+			}
+		}
+	}
+
+	adjacent[roomName] = true
 	var names []string
 	for n := range adjacent {
 		names = append(names, n)

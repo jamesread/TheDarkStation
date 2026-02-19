@@ -166,16 +166,20 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 	e.snapshot.exitAnimating = g.ExitAnimating
 	e.snapshot.exitAnimStartTime = g.ExitAnimStartTime
 
-	// Find the cell with the most recent active callout (for focus background)
+	// Find the cell with the most recent active callout (for focus background).
+	// Movement hint ("Press WASD...") does not change cell background.
 	e.snapshot.focusedCellRow = -1
 	e.snapshot.focusedCellCol = -1
+	const movementHintMessage = "Press WASD or arrow keys to move"
 	e.calloutsMutex.RLock()
 	nowUnixMilli := time.Now().UnixMilli()
 	var mostRecentCallout *Callout
 	for i := range e.callouts {
 		callout := &e.callouts[i]
-		// Check if callout is active (not expired)
 		if callout.ExpiresAt == 0 || callout.ExpiresAt > nowUnixMilli {
+			if callout.Message == movementHintMessage {
+				continue // Don't use movement hint for focus background
+			}
 			if mostRecentCallout == nil || callout.CreatedAt > mostRecentCallout.CreatedAt {
 				mostRecentCallout = callout
 			}
@@ -203,8 +207,9 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 			if cell == nil {
 				continue
 			}
-			// Check if cell has interactable objects
-			if gameworld.HasFurniture(cell) ||
+			// Check if cell has interactable objects (include generators so they get focus highlight)
+			if gameworld.HasGenerator(cell) ||
+				gameworld.HasFurniture(cell) ||
 				gameworld.HasMaintenanceTerminal(cell) ||
 				gameworld.HasUnusedTerminal(cell) ||
 				gameworld.HasUnsolvedPuzzle(cell) ||

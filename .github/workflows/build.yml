@@ -31,6 +31,23 @@ jobs:
           go-version-file: 'go.mod'
           cache: true
 
+      - name: Install X11 and display libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev \
+            libxcursor-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxi-dev \
+            libxxf86vm-dev \
+            libgl1-mesa-dev \
+            libxkbcommon-dev \
+            libxext-dev
+
+      - name: Install MinGW for Windows cross-compilation
+        run: sudo apt-get install -y gcc-mingw-w64
+
       - name: Test build
         run: go build -o darkstation main.go
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/leonelquinteros/gotext"
 
+	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/devtools"
 	"darkstation/pkg/game/gameplay"
 	gamemenu "darkstation/pkg/game/menu"
@@ -76,8 +77,8 @@ func main() {
 			var g *state.Game
 			switch menuAction {
 			case gamemenu.MainMenuActionGenerate:
-				// Start normal game mode in Deck 1
-				g = gameplay.BuildGame(1)
+				// Start normal game mode (level from -level flag or LEVEL env)
+				g = gameplay.BuildGame(*startLevel)
 			case gamemenu.MainMenuActionDebug:
 				// Open Developer map (normally opened on F9)
 				g = state.NewGame()
@@ -86,8 +87,8 @@ func main() {
 				// Quit (should have been handled in RunMainMenu, but just in case)
 				os.Exit(0)
 			default:
-				// Fallback: start normal game
-				g = gameplay.BuildGame(1)
+				// Fallback: start normal game (level from -level flag or LEVEL env)
+				g = gameplay.BuildGame(*startLevel)
 			}
 
 			// Reset QuitToTitle flag
@@ -142,6 +143,13 @@ func runMainMenuInLoop() gamemenu.MainMenuAction {
 }
 
 func mainLoop(g *state.Game) {
+	// Completion screen: only render and process input (any key returns to title)
+	if g.GameComplete {
+		renderer.RenderFrame(g)
+		gameplay.ProcessIntent(g, renderer.Current.GetInput())
+		return
+	}
+
 	renderer.Clear()
 
 	renderer.ClearCalloutsIfMoved(g.CurrentCell.Row, g.CurrentCell.Col)
@@ -155,8 +163,10 @@ func mainLoop(g *state.Game) {
 			gameplay.AdvanceLevel(g)
 		}
 	} else if g.CurrentCell.ExitCell {
-		// Start exit animation when player enters exit
-		if !g.ExitAnimating {
+		// Final deck: lift has no destination; game complete (GDD §10.2, §11)
+		if deck.IsFinalDeck(g.Level) {
+			gameplay.TriggerGameComplete(g)
+		} else if !g.ExitAnimating {
 			g.ExitAnimating = true
 			g.ExitAnimStartTime = time.Now().UnixMilli()
 		}

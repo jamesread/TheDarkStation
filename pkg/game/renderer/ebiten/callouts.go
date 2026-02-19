@@ -111,7 +111,7 @@ func (e *EbitenRenderer) SetDebounceAnimation(direction string) {
 }
 
 // drawCallouts renders floating message callouts near cells
-func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot, mapX, mapY, startRow, startCol int) {
+func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot, mapX, mapY float64, startRow, startCol int) {
 	if len(snap.callouts) == 0 {
 		return
 	}
@@ -163,17 +163,19 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 		}
 
 		// Calculate pixel position (center of the cell)
-		cellX := mapX + vCol*e.tileSize
-		cellY := mapY + vRow*e.tileSize
+		cellX := mapX + float64(vCol*e.tileSize)
+		cellY := mapY + float64(vRow*e.tileSize)
 
 		// Split message by newlines to handle multi-line callouts
 		lines := strings.Split(callout.Message, "\n")
+		// Optional title: first line uses title styling (bold, larger, colorAction) only when TITLE{} markup is present
+		hasTitle := len(lines) > 0 && hasTitleMarkup(lines[0])
 		maxTextWidth := 0.0
 		for lineIdx, line := range lines {
 			lineSegments := e.parseMarkup(line)
 			lineWidth := 0.0
 			face := e.getSansFontFace()
-			if lineIdx == 0 {
+			if lineIdx == 0 && hasTitle {
 				face = titleFace
 			}
 			for _, seg := range lineSegments {
@@ -186,40 +188,45 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 		textWidth := maxTextWidth
 		firstLineHeight := int(titleFontSize) + 4
 		otherLineHeight := int(fontSize) + 4
-		boxHeight := firstLineHeight
-		if len(lines) > 1 {
-			boxHeight += (len(lines) - 1) * otherLineHeight
+		var boxHeight int
+		if hasTitle {
+			boxHeight = firstLineHeight
+			if len(lines) > 1 {
+				boxHeight += (len(lines) - 1) * otherLineHeight
+			}
+		} else {
+			boxHeight = len(lines) * otherLineHeight
 		}
 		boxHeight += padding * 2
 
 		// Determine base position (to the right or left of cell)
 		boxWidth := int(textWidth) + padding*2
-		baseCalloutX := cellX + e.tileSize + 8
+		baseCalloutX := cellX + float64(e.tileSize) + 8
 
 		// If callout would go off right edge, position to the left instead
-		if baseCalloutX+boxWidth > mapX+e.viewportCols*e.tileSize {
-			baseCalloutX = cellX - boxWidth - 8
+		if baseCalloutX+float64(boxWidth) > mapX+float64(e.viewportCols*e.tileSize) {
+			baseCalloutX = cellX - float64(boxWidth) - 8
 		}
 
 		// Check if callout would overlap with player icon
 		// Player position in viewport coordinates
 		playerVRow := snap.playerRow - startRow
 		playerVCol := snap.playerCol - startCol
-		playerX := mapX + playerVCol*e.tileSize
-		playerY := mapY + playerVRow*e.tileSize
+		playerX := mapX + float64(playerVCol*e.tileSize)
+		playerY := mapY + float64(playerVRow*e.tileSize)
 
 		// Calculate callout box bounds
-		baseCalloutY := cellY + (e.tileSize-boxHeight)/2
+		baseCalloutY := cellY + float64((e.tileSize-boxHeight)/2)
 		calloutBoxLeft := float32(baseCalloutX)
-		calloutBoxRight := float32(baseCalloutX + boxWidth)
+		calloutBoxRight := float32(baseCalloutX + float64(boxWidth))
 		calloutBoxTop := float32(baseCalloutY)
-		calloutBoxBottom := float32(baseCalloutY + boxHeight)
+		calloutBoxBottom := float32(baseCalloutY + float64(boxHeight))
 
 		// Check if callout overlaps with player icon (player icon is roughly centered in its tile)
-		playerIconLeft := float32(playerX + e.tileSize/4)
-		playerIconRight := float32(playerX + e.tileSize*3/4)
-		playerIconTop := float32(playerY + e.tileSize/4)
-		playerIconBottom := float32(playerY + e.tileSize*3/4)
+		playerIconLeft := float32(playerX + float64(e.tileSize/4))
+		playerIconRight := float32(playerX + float64(e.tileSize*3/4))
+		playerIconTop := float32(playerY + float64(e.tileSize/4))
+		playerIconBottom := float32(playerY + float64(e.tileSize*3/4))
 
 		overlapsPlayer := calloutBoxLeft < playerIconRight && calloutBoxRight > playerIconLeft &&
 			calloutBoxTop < playerIconBottom && calloutBoxBottom > playerIconTop
@@ -227,17 +234,14 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 		// If overlapping, move callout back a column and down a row
 		if overlapsPlayer {
 			// Move back a column (left if on right side, right if on left side)
-			if baseCalloutX > cellX+e.tileSize {
+			if baseCalloutX > cellX+float64(e.tileSize) {
 				// Callout is on the right, move it further right (back a column)
-				//baseCalloutX = cellX + e.tileSize*2 + 8
-				baseCalloutX = cellX // - e.tileSize*2 + 8
+				baseCalloutX = cellX
 			} else {
 				// Callout is on the left, move it further left (back a column)
-				//baseCalloutX = cellX - boxWidth - e.tileSize - 8
-				//baseCalloutX = cellX + e.tileSize*2 + 8
 			}
 			// Move down a row
-			baseCalloutY = cellY + e.tileSize + (e.tileSize-boxHeight)/2
+			baseCalloutY = cellY + float64(e.tileSize) + float64((e.tileSize-boxHeight)/2)
 		}
 
 		// Apply slide animation offset (vertical only)
@@ -248,8 +252,8 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 		if calloutY < float32(mapY) {
 			calloutY = float32(mapY)
 		}
-		if calloutY+float32(boxHeight) > float32(mapY+e.viewportRows*e.tileSize) {
-			calloutY = float32(mapY + e.viewportRows*e.tileSize - boxHeight)
+		if calloutY+float32(boxHeight) > float32(mapY+float64(e.viewportRows*e.tileSize)) {
+			calloutY = float32(mapY + float64(e.viewportRows*e.tileSize) - float64(boxHeight))
 		}
 
 		// Skip drawing if alpha is too low (avoid rendering artifacts)
@@ -261,23 +265,21 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 		// The applyAlpha function multiplies the alpha channel, so colors fade to transparent black
 		bgColor := e.applyAlpha(color.RGBA{15, 15, 25, 240}, alpha)
 		borderColor := e.applyAlpha(color.RGBA{80, 80, 100, 255}, alpha)
+		if hasTitle {
+			titleColor := e.getTitleColorFromLine(lines[0])
+			borderColor = e.applyAlpha(titleColor, alpha)
+		}
 
-		// Border
-		vector.DrawFilledRect(screen,
-			calloutX-1, calloutY-1,
-			float32(boxWidth+2), float32(boxHeight+2),
-			borderColor, false)
-
-		// Background
-		vector.DrawFilledRect(screen,
-			calloutX, calloutY,
-			float32(boxWidth), float32(boxHeight),
-			bgColor, false)
+		boxW := float32(boxWidth)
+		boxH := float32(boxHeight)
+		const tooltipCornerRadius = 6
+		const tooltipBorderWidth = 1
+		drawRoundedRectWithShadow(screen, calloutX, calloutY, boxW, boxH, tooltipCornerRadius, tooltipBorderWidth, bgColor, borderColor, float32(alpha))
 
 		// Draw pointer/arrow toward the cell
 		arrowSize := float32(6)
 		arrowY := calloutY + float32(boxHeight/2)
-		if calloutX > float32(cellX+e.tileSize) {
+		if calloutX > float32(cellX+float64(e.tileSize)) {
 			// Arrow pointing left
 			arrowX := calloutX - 1
 			vector.DrawFilledRect(screen, arrowX-arrowSize, arrowY-2, arrowSize, 4, borderColor, false)
@@ -287,8 +289,12 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 			vector.DrawFilledRect(screen, arrowX, arrowY-2, arrowSize, 4, borderColor, false)
 		}
 
-		// Draw text - first line uses title font (bold, 2pt larger), rest use body font
-		startY := int(calloutY) + padding - int(titleFontSize)
+		// Draw text - first line uses title font when TITLE{} present, else body font
+		lineFontSize := fontSize
+		if hasTitle {
+			lineFontSize = titleFontSize
+		}
+		startY := int(calloutY) + padding - int(lineFontSize)
 
 		for i, line := range lines {
 			lineSegments := e.parseMarkup(line)
@@ -299,14 +305,19 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 					color: e.applyAlpha(seg.color, alpha),
 				}
 			}
+			face := e.getSansFontFace()
+			if i == 0 && hasTitle {
+				face = titleFace
+			}
 			var textY int
 			if i == 0 {
 				textY = startY
-				e.drawColoredTextSegmentsWithFace(screen, fadedSegments, int(calloutX)+padding, textY, titleFace)
-			} else {
+			} else if hasTitle {
 				textY = startY + firstLineHeight + (i-1)*otherLineHeight
-				e.drawColoredTextSegments(screen, fadedSegments, int(calloutX)+padding, textY)
+			} else {
+				textY = startY + i*otherLineHeight
 			}
+			e.drawColoredTextSegmentsWithFace(screen, fadedSegments, int(calloutX)+padding, textY, face)
 		}
 	}
 }

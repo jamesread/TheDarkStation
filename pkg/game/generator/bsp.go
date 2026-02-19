@@ -5,6 +5,7 @@ import (
 	"math/rand"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/deck"
 )
 
 // BSPGenerator generates maps using Binary Space Partitioning
@@ -28,19 +29,6 @@ type bspRoom struct {
 	name, description   string
 }
 
-// Room name templates - Space Station theme
-var roomNames = []string{
-	"Bridge", "Cargo Bay", "Engineering", "Med Bay", "Crew Quarters",
-	"Airlock", "Server Room", "Reactor Core", "Armory", "Lab",
-	"Hangar", "Command Center", "Life Support", "Mess Hall", "Storage",
-	"Observatory", "Communications", "Maintenance Bay", "Hydroponics", "Security",
-}
-
-var roomAdjectives = []string{
-	"Abandoned", "Damaged", "Derelict", "Emergency",
-	"Isolated", "Sealed", "Depressurized", "Overgrown",
-}
-
 // Global room counter for unique names
 var roomCounter int
 
@@ -52,28 +40,34 @@ const (
 	corridorWidth = 3 // Width of corridors (wall + path + wall)
 )
 
-// Generate creates a new grid using BSP algorithm
+// Generate creates a new grid using BSP algorithm.
+// Deck identity (functional type) drives thematic room naming; final deck uses minimal layout.
 func (g *BSPGenerator) Generate(level int) *world.Grid {
 	grid := &world.Grid{}
 
 	// Reset room counter for this level
 	roomCounter = 0
 
-	// Start small and scale grid size with level (add 2 for perimeter)
-	// Level 1: 8x16 (simplified), Level 2+: 14x28, Level 5: 30x58, Level 10: 50x88
+	// Thematic naming from deck functional type (GDD §3.1)
+	ft := deck.FunctionalType(level)
+	roomBases, roomAdjectives := deck.RoomNamesForType(ft)
+
+	// Final deck: minimal layout — smaller grid, fewer rooms (GDD §10.2)
+	isFinal := deck.IsFinalDeck(level)
 	var rows, cols int
-	if level == 1 {
-		// Much smaller grid for level 1 to reduce complexity
+	if isFinal {
+		rows = 8 + 2
+		cols = 14 + 2
+	} else if level == 1 {
 		rows = 8 + 2
 		cols = 16 + 2
 	} else {
 		baseRows := 12 + 2
 		baseCols := 24 + 2
-		rows = baseRows + ((level - 1) * 4) // Adjust for level 2 starting point
+		rows = baseRows + ((level - 1) * 4)
 		cols = baseCols + ((level - 1) * 6)
 	}
 
-	// Cap maximum size
 	if rows > 60 {
 		rows = 60
 	}
@@ -83,7 +77,6 @@ func (g *BSPGenerator) Generate(level int) *world.Grid {
 
 	grid.Build(rows, cols)
 
-	// Create BSP tree (leaving 1 cell border for perimeter walls)
 	root := &bspNode{
 		x:      1,
 		y:      1,
@@ -91,16 +84,17 @@ func (g *BSPGenerator) Generate(level int) *world.Grid {
 		height: rows - 2,
 	}
 
-	// Split the BSP tree
-	// More splits at higher levels for more rooms
+	// More splits at higher levels for more rooms; final deck keeps minimal splits
 	minSize := minNodeSize - (level / 3)
 	if minSize < 6 {
 		minSize = 6
 	}
+	if isFinal {
+		minSize = 14 // Fewer, larger nodes → fewer rooms
+	}
 	splitBSP(root, minSize)
 
-	// Create rooms in leaf nodes
-	createRooms(root)
+	createRooms(root, roomBases, roomAdjectives)
 
 	// Carve rooms into the grid
 	carveRooms(grid, root)
@@ -207,20 +201,18 @@ func splitBSP(node *bspNode, minSize int) {
 	splitBSP(node.right, minSize)
 }
 
-// createRooms creates rooms in leaf nodes
-func createRooms(node *bspNode) {
+// createRooms creates rooms in leaf nodes using thematic bases and adjectives.
+func createRooms(node *bspNode, bases, adjectives []string) {
 	if node.left != nil || node.right != nil {
-		// Not a leaf node, recurse
 		if node.left != nil {
-			createRooms(node.left)
+			createRooms(node.left, bases, adjectives)
 		}
 		if node.right != nil {
-			createRooms(node.right)
+			createRooms(node.right, bases, adjectives)
 		}
 		return
 	}
 
-	// Leaf node - create a room
 	roomWidth := minRoomSize + rand.Intn(node.width-minRoomSize-roomPadding+1)
 	roomHeight := minRoomSize + rand.Intn(node.height-minRoomSize-roomPadding+1)
 
@@ -234,10 +226,15 @@ func createRooms(node *bspNode) {
 	roomX := node.x + rand.Intn(node.width-roomWidth)
 	roomY := node.y + rand.Intn(node.height-roomHeight)
 
-	// Generate unique room name
 	roomCounter++
-	adjective := roomAdjectives[rand.Intn(len(roomAdjectives))]
-	baseName := roomNames[rand.Intn(len(roomNames))]
+	if len(adjectives) == 0 {
+		adjectives = []string{"Emergency"}
+	}
+	if len(bases) == 0 {
+		bases = []string{"Section"}
+	}
+	adjective := adjectives[rand.Intn(len(adjectives))]
+	baseName := bases[rand.Intn(len(bases))]
 	name := fmt.Sprintf("%s %s", adjective, baseName)
 	description := fmt.Sprintf("ROOM_%s", baseName)
 

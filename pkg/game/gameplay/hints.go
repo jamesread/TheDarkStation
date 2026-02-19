@@ -51,7 +51,7 @@ func ShowInteractableHints(g *state.Game) {
 			furniture := gameworld.GetGameData(cell).Furniture
 			if furniture.IsChecked() {
 				// Furniture already checked: show normal description tooltip
-				calloutText := fmt.Sprintf("FURNITURE{%s}\n%s", furniture.Name, furniture.Description)
+				calloutText := fmt.Sprintf("TITLE{%s}\n%s", furniture.Name, furniture.Description)
 				renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
 			} else {
 				// Furniture not checked yet: show interaction hint (only for first 3 interactions)
