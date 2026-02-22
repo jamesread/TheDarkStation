@@ -132,7 +132,9 @@ func PlaceHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells
 			}
 		} else {
 			// Place the control panel in a reachable area on a cell that is NOT an articulation point,
-			// so the shutoff valve doesn't block the only path to a room
+			// so the shutoff valve doesn't block the only path to a room (global reachability).
+			// Per-room R8 (RoomStillConnectedIfBlock) is deferred for hazard controls; R8 spec
+			// includes them but placement uses global articulation only.
 			controlRoom := FindNonArticulationCellInReachable(g.Grid, g.Grid.StartCell(), lockedDoorCells, reachableWithHazard, avoid)
 			if controlRoom == nil {
 				controlRoom = FindNonArticulationCellInReachable(g.Grid, g.Grid.StartCell(), lockedDoorCells, currentlyReachable, avoid)

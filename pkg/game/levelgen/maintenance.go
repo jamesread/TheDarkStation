@@ -105,7 +105,11 @@ func PlaceMaintenanceTerminals(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 			}
 		}
 
-		// R8: only place where room stays connected (all doorways mutually reachable)
+		// R8: only place where room stays connected (all doorways mutually reachable).
+		// No fallback to validCells: if no R8-compliant candidate exists, skip this room
+		// (including start room) to avoid disconnecting the room per I7.
+		// The start room may therefore have zero maintenance terminals; InitMaintenanceTerminalPower
+		// will then power none (accepted trade-off to preserve I7).
 		var entryCells []*world.Cell
 		if entryData := roomEntries[roomName]; entryData != nil {
 			entryCells = entryData.EntryCells
@@ -116,20 +120,10 @@ func PlaceMaintenanceTerminals(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 				connectedCandidates = append(connectedCandidates, cell)
 			}
 		}
-		// For start room: must have a terminal (InitMaintenanceTerminalPower only powers start room terminals).
-		// Without one, the level would have 0 accessible powered terminals and be unsolvable.
-		// Fall back to validCells if no R8-compliant candidate exists.
-		candidates := connectedCandidates
-		if len(candidates) == 0 && len(validCells) > 0 {
-			startCell := g.Grid.StartCell()
-			if startCell != nil && startCell.Name == roomName {
-				candidates = validCells
-			} else {
-				continue
-			}
-		} else if len(candidates) == 0 {
+		if len(connectedCandidates) == 0 {
 			continue
 		}
+		candidates := connectedCandidates
 
 		selectedCell := candidates[rand.Intn(len(candidates))]
 		maintenanceTerm := entities.NewMaintenanceTerminal(fmt.Sprintf("Maintenance Terminal - %s", roomName), roomName)

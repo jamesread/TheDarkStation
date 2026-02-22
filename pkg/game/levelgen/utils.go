@@ -2,7 +2,6 @@
 package levelgen
 
 import (
-	"fmt"
 	"math/rand"
 	"strings"
 
@@ -12,12 +11,6 @@ import (
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 )
-
-// RoomEntryPoints represents all corridor cells that provide access to a specific room
-type RoomEntryPoints struct {
-	RoomName   string
-	EntryCells []*world.Cell
-}
 
 // CollectReachableRooms collects all reachable rooms from a starting cell using BFS
 func CollectReachableRooms(start *world.Cell, avoid *mapset.Set[*world.Cell]) []*world.Cell {
@@ -111,57 +104,6 @@ func FindRoom(g *state.Game, start *world.Cell, avoid *mapset.Set[*world.Cell]) 
 
 	// Pick a random room from the candidates
 	return farRooms[rand.Intn(len(farRooms))]
-}
-
-// FindRoomEntryPoints finds all corridor cells that serve as entry points to each room
-// Groups them by room so we can door ALL entries to fully block a room
-func FindRoomEntryPoints(grid *world.Grid) map[string]*RoomEntryPoints {
-	entries := make(map[string]*RoomEntryPoints)
-	seenCells := mapset.New[string]() // Track cells we've already assigned
-
-	grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		// Only look at corridor cells
-		if !cell.Room || cell.Name != "Corridor" {
-			return
-		}
-
-		// Check adjacent cells for rooms (not corridors)
-		neighbors := []*world.Cell{cell.North, cell.East, cell.South, cell.West}
-		for _, neighbor := range neighbors {
-			if neighbor != nil && neighbor.Room && neighbor.Name != "Corridor" && neighbor.Name != "" {
-				roomName := neighbor.Name
-				cellKey := fmt.Sprintf("%d,%d-%s", cell.Row, cell.Col, roomName)
-
-				if seenCells.Has(cellKey) {
-					continue
-				}
-				seenCells.Put(cellKey)
-
-				// Initialize entry points for this room if needed
-				if entries[roomName] == nil {
-					entries[roomName] = &RoomEntryPoints{
-						RoomName:   roomName,
-						EntryCells: make([]*world.Cell, 0),
-					}
-				}
-
-				// Add this corridor cell as an entry point
-				// Only add if not already in the list (a corridor might touch multiple cells of same room)
-				alreadyAdded := false
-				for _, existing := range entries[roomName].EntryCells {
-					if existing == cell {
-						alreadyAdded = true
-						break
-					}
-				}
-				if !alreadyAdded {
-					entries[roomName].EntryCells = append(entries[roomName].EntryCells, cell)
-				}
-			}
-		}
-	})
-
-	return entries
 }
 
 // GetReachableCells returns all cells reachable from start without passing through locked doors

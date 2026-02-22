@@ -89,7 +89,6 @@ func TestCanEnter_FurnitureBlocksMovement(t *testing.T) {
 func TestProcessIntent_NilCurrentCellNoPanic(t *testing.T) {
 	// Movement with nil CurrentCell must not panic and must not change state.
 	g, cellLeft, cellRight := makeMinimalGameWithGrid(t)
-	g.Grid = g.Grid // ensure grid is set
 	g.CurrentCell = nil
 	ProcessIntent(g, engineinput.Intent{Action: engineinput.ActionMoveEast})
 	if g.CurrentCell != nil {

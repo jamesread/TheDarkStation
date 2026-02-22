@@ -16,7 +16,12 @@ import (
 // to corridor entries) in the room remain mutually reachable via walkable room cells.
 // Used to prevent placing furniture/terminals that would disconnect a room (R8 / I7).
 // entryCellsForRoom are the corridor-side entry cells for this room (e.g. from RoomEntryPoints.EntryCells).
+//
+// Callers must ensure g != nil and g.Grid != nil; otherwise the function returns true to avoid panics.
 func RoomStillConnectedIfBlock(g *state.Game, roomName string, entryCellsForRoom []*world.Cell, additionalBlockedCell *world.Cell) bool {
+	if g == nil || g.Grid == nil {
+		return true
+	}
 	if len(entryCellsForRoom) == 0 {
 		return true
 	}
@@ -57,13 +62,16 @@ func RoomStillConnectedIfBlock(g *state.Game, roomName string, entryCellsForRoom
 			blocked.Put(cell)
 		}
 	}
-	// BFS from first doorway; count how many doorways we reach
+	// BFS from one doorway; count how many doorways we reach.
+	// Pick deterministically by (row, col) so behavior is stable across runs.
 	firstDoorway := (*world.Cell)(nil)
-	doorwaySet.Each(func(c *world.Cell) {
-		if firstDoorway == nil {
-			firstDoorway = c
+	for _, cell := range roomCells {
+		if doorwaySet.Has(cell) {
+			if firstDoorway == nil || cell.Row < firstDoorway.Row || (cell.Row == firstDoorway.Row && cell.Col < firstDoorway.Col) {
+				firstDoorway = cell
+			}
 		}
-	})
+	}
 	if firstDoorway == nil {
 		return true
 	}

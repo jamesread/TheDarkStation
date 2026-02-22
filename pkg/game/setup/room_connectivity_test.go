@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -87,5 +88,78 @@ func TestRoomStillConnectedIfBlock_EmptyEntryCells(t *testing.T) {
 	got = RoomStillConnectedIfBlock(g, "R", []*world.Cell{}, nil)
 	if !got {
 		t.Errorf("RoomStillConnectedIfBlock(..., empty entryCells) = false, want true")
+	}
+}
+
+// TestRoomStillConnectedIfBlock_ThreeDoorways verifies behavior with 3+ doorways.
+// Room "R" has doorways at (1,0),(1,1),(1,2) and interior cell (2,1); (1,1) is the only path between (1,0) and (1,2).
+func TestRoomStillConnectedIfBlock_ThreeDoorways(t *testing.T) {
+	g := state.NewGame()
+	grid := world.NewGrid(3, 3)
+	grid.MarkAsRoomWithName(0, 0, "Corridor", "corridor")
+	grid.MarkAsRoomWithName(0, 1, "Corridor", "corridor")
+	grid.MarkAsRoomWithName(0, 2, "Corridor", "corridor")
+	grid.MarkAsRoomWithName(1, 0, "R", "room")
+	grid.MarkAsRoomWithName(1, 1, "R", "room")
+	grid.MarkAsRoomWithName(1, 2, "R", "room")
+	grid.MarkAsRoomWithName(2, 1, "R", "room")
+	grid.BuildAllCellConnections()
+	g.Grid = grid
+	for r := 0; r < 3; r++ {
+		for c := 0; c < 3; c++ {
+			if cell := grid.GetCell(r, c); cell != nil {
+				gameworld.InitGameData(cell)
+			}
+		}
+	}
+	entryCells := []*world.Cell{grid.GetCell(0, 0), grid.GetCell(0, 1), grid.GetCell(0, 2)}
+	chokepoint := grid.GetCell(1, 1) // only path between (1,0) and (1,2)
+	if chokepoint == nil {
+		t.Fatal("chokepoint nil")
+	}
+	got := RoomStillConnectedIfBlock(g, "R", entryCells, chokepoint)
+	if got {
+		t.Errorf("RoomStillConnectedIfBlock(..., chokepoint (1,1)) = true, want false (disconnects doorways)")
+	}
+	// Blocking interior cell (2,1) does not disconnect doorways (1,0),(1,1),(1,2)
+	interior := grid.GetCell(2, 1)
+	if interior == nil {
+		t.Fatal("interior nil")
+	}
+	got = RoomStillConnectedIfBlock(g, "R", entryCells, interior)
+	if !got {
+		t.Errorf("RoomStillConnectedIfBlock(..., interior (2,1)) = false, want true (room stays connected)")
+	}
+}
+
+// TestRoomStillConnectedIfBlock_ExistingBlocker verifies that existing blocking entities
+// (e.g. furniture) are included in the blocked set; blocking the chokepoint then disconnects.
+func TestRoomStillConnectedIfBlock_ExistingBlocker(t *testing.T) {
+	g := state.NewGame()
+	grid := world.NewGrid(2, 3)
+	grid.MarkAsRoomWithName(0, 0, "Corridor", "corridor")
+	grid.MarkAsRoomWithName(0, 1, "Corridor", "corridor")
+	grid.MarkAsRoomWithName(0, 2, "Corridor", "corridor")
+	grid.MarkAsRoomWithName(1, 0, "R", "room")
+	grid.MarkAsRoomWithName(1, 1, "R", "room")
+	grid.MarkAsRoomWithName(1, 2, "R", "room")
+	grid.BuildAllCellConnections()
+	g.Grid = grid
+	for _, cell := range []*world.Cell{grid.GetCell(0, 0), grid.GetCell(0, 1), grid.GetCell(0, 2), grid.GetCell(1, 0), grid.GetCell(1, 1), grid.GetCell(1, 2)} {
+		if cell != nil {
+			gameworld.InitGameData(cell)
+		}
+	}
+	// Place furniture on doorway (1,0) so it's already blocked
+	gameworld.GetGameData(grid.GetCell(1, 0)).Furniture = entities.NewFurniture("Desk", "A desk", "desk")
+	entryCells := []*world.Cell{grid.GetCell(0, 0), grid.GetCell(0, 2)}
+	chokepoint := grid.GetCell(1, 1)
+	if chokepoint == nil {
+		t.Fatal("chokepoint nil")
+	}
+	// With furniture at (1,0), blocking (1,1) leaves only (1,2) reachable from (1,2); (1,0) unreachable -> disconnected
+	got := RoomStillConnectedIfBlock(g, "R", entryCells, chokepoint)
+	if got {
+		t.Errorf("RoomStillConnectedIfBlock(..., chokepoint with existing furniture) = true, want false")
 	}
 }
