@@ -1,6 +1,6 @@
 # Story 1.4: Room Connectivity
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -73,8 +73,18 @@ dev-story workflow (workflow.xml + dev-story instructions.xml)
 - pkg/game/levelgen/utils.go
 - pkg/game/levelgen/maintenance.go
 - pkg/game/levelgen/puzzles.go
+- pkg/game/levelgen/placement_test.go
+
+## Senior Developer Review (AI)
+
+- **Review:** Code review (code-review workflow); all HIGH/MEDIUM/LOW issues addressed.
+- **Git vs story:** Uncommitted changes at review time were only under `_bmad-output/` (excluded from app source review); story File List matched implementation. One untracked app file (`pkg/game/gameplay/lifecycle_test.go`) is out of scope for this story (not in File List).
+- **Fixes applied (first pass):** (1) HIGH: Removed start-room fallback to validCells in maintenance.go so R8 is never violated. (2) HIGH: Removed duplicate FindRoomEntryPoints and RoomEntryPoints from levelgen/utils.go; callers use setup. (3) MEDIUM: Added tests for RoomStillConnectedIfBlock (three doorways, existing blocker). (4) LOW: First doorway in room_connectivity.go chosen deterministically by (row,col). (5) LOW: Added levelgen/placement_test.go (TestPlaceMaintenanceTerminals_RespectsR8).
+- **Fixes applied (adversarial follow-up):** (1) MEDIUM: Nil guard and doccomment in setup/room_connectivity.go for g/g.Grid. (2) MEDIUM: Comment in levelgen/hazards.go documenting R8 deferral for hazard controls. (3) MEDIUM: TestPlaceMaintenanceTerminals_SkipsRoomWhenNoR8CompliantCandidate in placement_test.go. (4) LOW: Start-room zero-terminal case documented in maintenance.go. (5) LOW: lifecycle_test.go clarified as out of scope for this story.
 
 ## Change Log
 
 - 2026-02-01: Story created (create-story for 1-4). Ready for dev.
 - 2026-02-01: Story implemented. RoomStillConnectedIfBlock in setup/room_connectivity.go; R8 applied to CCTV and maintenance; puzzle placement per-room check; unit tests; status set to review.
+- 2026-02-21: Code review. Fixes: maintenance R8 fallback removed; levelgen duplicate FindRoomEntryPoints removed; extra setup tests (three doorways, existing blocker); deterministic first doorway; levelgen R8 placement test. Status set to done.
+- 2026-02-21: Adversarial review follow-up. Fixes: room_connectivity.go nil guard + doccomment; hazards.go R8-deferral comment; placement_test.go TestPlaceMaintenanceTerminals_SkipsRoomWhenNoR8CompliantCandidate; maintenance.go start-room zero-terminal comment; story note that lifecycle_test.go is out of scope.

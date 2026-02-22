@@ -44,8 +44,8 @@ development_status:
   1-1-grid-and-movement: done
   1-2-rooms-and-corridors: done
   1-3-start-room-and-exit: done
-  1-4-room-connectivity: review
-  1-5-procedural-deck-generation: backlog
+  1-4-room-connectivity: done
+  1-5-procedural-deck-generation: done
   epic-1-retrospective: optional
 
   epic-2: backlog

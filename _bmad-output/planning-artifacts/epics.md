@@ -7,11 +7,11 @@ inputDocuments:
   - specs/level-layout-and-solvability.md
 ---
 
-# TheDarkCastle - Epic Breakdown
+# The Dark Station - Epic Breakdown
 
 ## Overview
 
-This document provides the complete epic and story breakdown for TheDarkCastle, decomposing the requirements from the PRD, UX Design if it exists, and Architecture requirements into implementable stories.
+This document provides the complete epic and story breakdown for The Dark Station, decomposing the requirements from the GDD, UX Design if it exists, and Architecture requirements into implementable stories.
 
 ## Requirements Inventory
 
@@ -46,7 +46,7 @@ FR25: Level setup order (power-related): InitRoomPower → placement (hazards, f
 ### NonFunctional Requirements
 
 NFR1: Narrative must be implicit—never explain the story directly; only show what systems no longer allow.
-NFR2: Player identity (UNIT / MAINTENANCE ENTITY / AUTONOMOUS SYSTEM) is revealed indirectly; no explicit "you are a robot" or references to food/rest/sleep.
+NFR2: Player identity is revealed indirectly; during play the game must not refer to the player explicitly as "unit," "robot," or "system" (subtle hints only). No references to food/rest/sleep. **Exception:** In the final room, at the docking station, the game may—and should—refer to the player as a robot; that is the intended revelation (player finds out as the last action of the game on first run).
 NFR3: Tone and feel: quiet dread, loneliness, ritual without purpose; design succeeds when the player feels these.
 NFR4: Ending philosophy: completion, not victory, failure, or escape; correct/incorrect/action converge to same outcome.
 NFR5: Deterministic short-out order when overload occurs (e.g. by room name, then doors then CCTV) so behaviour is reproducible.
@@ -126,8 +126,9 @@ So that I can explore the deck.
 
 **Given** a generated level with walkable and blocking cells
 **When** I press movement keys (N/S/E/W or arrows or vim-style)
-**Then** my unit moves to an adjacent walkable cell
+**Then** the player moves to an adjacent walkable cell
 **And** walls and blocking entities (furniture, terminals, hazards, generators) prevent movement
+**And** in-game messaging must not label the player as "unit," "robot," or "system" during play (see GDD: Player identity; exception: docking station in Story 4.4)
 
 ### Story 1.2: Rooms and Corridors
 
@@ -411,5 +412,8 @@ So that the ending matches the design philosophy.
 **When** I reach the final deck
 **Then** it has minimal rooms and systems and barely functional power
 **And** the lift has no destination (no advance option; forward-only, no revisit)
+**And** in the last room I encounter a **docking station** (interaction/cell); interacting with it shuts the player down and triggers the completion ending
+**And** the ending **message** conveys: no communication for a long time; no lifeforms detected; the player is the last semi-sentient thing; no way to replenish power; unit shut down to conserve the station's computer logs; tone of futility and finality
+**And** this is the **only** place the game may refer to the player explicitly as a robot (identity revelation)
 **And** the game ends with completion (job done, job no longer matters), not victory, failure, or escape (NFR4)
-**And** optional final system line (e.g. "NO FURTHER WORK REQUESTS DETECTED" or "ENERGY GRADIENT EQUALIZED")
+**And** optional final system line (e.g. "NO FURTHER WORK REQUESTS DETECTED" or "ENERGY GRADIENT EQUALIZED") may be part of that message
