@@ -96,27 +96,26 @@ func TestToggleCCTV_OnOff(t *testing.T) {
 }
 
 func TestToggleDoorsON_ShortOutProtectsToggledRoom(t *testing.T) {
-	// 100W supply (1 generator). Create 11 doors in RoomA (110W) + 1 door in RoomB (10W).
-	// Pre-power RoomA's doors (110W > 100W triggers overload).
-	// Toggle RoomB doors ON: ShortOutIfOverload protects RoomB and shorts out RoomA.
+	// 100W supply (1 generator). RoomA preloaded with heavy CCTV consumption.
+	// Toggle RoomB doors ON: ShortOutIfOverload protects RoomB and shorts out RoomA first.
 	g := state.NewGame()
-	grid := world.NewGrid(6, 4)
+	grid := world.NewGrid(6, 10)
 	for r := 0; r < 3; r++ {
-		for c := 0; c < 4; c++ {
+		for c := 0; c < 10; c++ {
 			grid.MarkAsRoomWithName(r, c, "RoomA", "desc")
 		}
 	}
 	for r := 3; r < 6; r++ {
-		for c := 0; c < 4; c++ {
+		for c := 0; c < 10; c++ {
 			grid.MarkAsRoomWithName(r, c, "RoomB", "desc")
 		}
 	}
 	grid.SetStartCellAt(0, 0)
-	grid.SetExitCellAt(5, 3)
+	grid.SetExitCellAt(5, 9)
 	grid.BuildAllCellConnections()
 	g.Grid = grid
 	for r := 0; r < 6; r++ {
-		for c := 0; c < 4; c++ {
+		for c := 0; c < 10; c++ {
 			gameworld.InitGameData(grid.GetCell(r, c))
 		}
 	}
@@ -128,16 +127,17 @@ func TestToggleDoorsON_ShortOutProtectsToggledRoom(t *testing.T) {
 	termB.Powered = true
 	gameworld.GetGameData(grid.GetCell(3, 0)).MaintenanceTerm = termB
 
-	// 11 doors in RoomA (each 10W = 110W when powered)
-	for i := 0; i < 11; i++ {
-		r := i / 4
-		c := i % 4
-		if r < 3 {
-			gameworld.GetGameData(grid.GetCell(r, c)).Door = &entities.Door{RoomName: "RoomA", Locked: false}
+	// One door per room (10w each when powered)
+	gameworld.GetGameData(grid.GetCell(0, 1)).Door = &entities.Door{RoomName: "RoomA", Locked: false}
+	gameworld.GetGameData(grid.GetCell(3, 1)).Door = &entities.Door{RoomName: "RoomB", Locked: false}
+	// Heavy RoomA CCTV load: 12 terminals = 120w when CCTV powered
+	placed := 0
+	for r := 0; r < 3 && placed < 12; r++ {
+		for c := 0; c < 10 && placed < 12; c++ {
+			gameworld.GetGameData(grid.GetCell(r, c)).Terminal = entities.NewCCTVTerminal("TA")
+			placed++
 		}
 	}
-	// 1 door in RoomB (10W)
-	gameworld.GetGameData(grid.GetCell(3, 1)).Door = &entities.Door{RoomName: "RoomB", Locked: false}
 
 	gen := entities.NewGenerator("G1", 1)
 	gen.InsertBatteries(1)
@@ -145,16 +145,16 @@ func TestToggleDoorsON_ShortOutProtectsToggledRoom(t *testing.T) {
 	g.UpdatePowerSupply() // 100W
 
 	g.RoomDoorsPowered = map[string]bool{"RoomA": true, "RoomB": false}
-	g.RoomCCTVPowered = map[string]bool{"RoomA": false, "RoomB": false}
+	g.RoomCCTVPowered = map[string]bool{"RoomA": true, "RoomB": false}
 	g.RoomLightsPowered = map[string]bool{"RoomA": true, "RoomB": true}
 	g.PowerConsumption = g.CalculatePowerConsumption()
 
-	// Toggle RoomB doors ON — total would be 120W > 100W supply.
-	// ShortOutIfOverload protects RoomB (the toggled room) and shorts out RoomA.
+	// Toggle RoomB doors ON — total would be 140W > 100W supply.
+	// ShortOutIfOverload protects RoomB (the toggled room) and shorts out RoomA consumers.
 	termCell := grid.GetCell(3, 0)
 	h := NewMaintenanceMenuHandler(g, termCell, termB)
 	toggleB := &RoomPowerToggleMenuItem{G: g, RoomName: "RoomB", PowerType: "doors"}
-	h.OnActivate(toggleB, 0)
+	_, helpText := h.OnActivate(toggleB, 0)
 
 	if !g.RoomDoorsPowered["RoomB"] {
 		t.Error("protected room RoomB: doors should remain ON")
@@ -162,8 +162,14 @@ func TestToggleDoorsON_ShortOutProtectsToggledRoom(t *testing.T) {
 	if g.RoomDoorsPowered["RoomA"] {
 		t.Error("RoomA doors should be shorted out (overload)")
 	}
+	if g.RoomCCTVPowered["RoomA"] {
+		t.Error("RoomA CCTV should be shorted out (overload)")
+	}
 	if g.PowerConsumption > g.PowerSupply {
 		t.Errorf("consumption (%d) should be <= supply (%d) after short-out", g.PowerConsumption, g.PowerSupply)
+	}
+	if helpText != "Power overload! Other systems shorted out." {
+		t.Errorf("helpText = %q, want 'Power overload! Other systems shorted out.'", helpText)
 	}
 }
 
@@ -191,6 +197,49 @@ func TestToggleDoorsOFF_RecalculatesConsumption(t *testing.T) {
 	}
 	if g.PowerConsumption != 0 {
 		t.Errorf("consumption should be 0 after turning off all doors, got %d", g.PowerConsumption)
+	}
+}
+
+func TestToggleCCTVON_OverloadPersistsInProtectedRoom_ShowsWarning(t *testing.T) {
+	g := state.NewGame()
+	grid := world.NewGrid(1, 12)
+	for c := 0; c < 12; c++ {
+		grid.MarkAsRoomWithName(0, c, "RoomA", "desc")
+		gameworld.InitGameData(grid.GetCell(0, c))
+		gameworld.GetGameData(grid.GetCell(0, c)).Terminal = entities.NewCCTVTerminal("TA")
+	}
+	grid.SetStartCellAt(0, 0)
+	grid.SetExitCellAt(0, 11)
+	grid.BuildAllCellConnections()
+	g.Grid = grid
+
+	termA := entities.NewMaintenanceTerminal("MT-A", "RoomA")
+	termA.Powered = true
+	termCell := grid.GetCell(0, 0)
+	gameworld.GetGameData(termCell).MaintenanceTerm = termA
+
+	gen := entities.NewGenerator("G1", 1)
+	gen.InsertBatteries(1)
+	g.AddGenerator(gen)
+	g.UpdatePowerSupply() // 100W
+
+	g.RoomDoorsPowered = map[string]bool{"RoomA": false}
+	g.RoomCCTVPowered = map[string]bool{"RoomA": false}
+	g.RoomLightsPowered = map[string]bool{"RoomA": true}
+	g.PowerConsumption = g.CalculatePowerConsumption()
+
+	h := NewMaintenanceMenuHandler(g, termCell, termA)
+	toggle := &RoomPowerToggleMenuItem{G: g, RoomName: "RoomA", PowerType: "cctv"}
+	_, helpText := h.OnActivate(toggle, 0)
+
+	if !g.RoomCCTVPowered["RoomA"] {
+		t.Error("RoomA CCTV should remain ON (protected room)")
+	}
+	if g.PowerConsumption <= g.PowerSupply {
+		t.Fatalf("expected persistent overload, got consumption=%d supply=%d", g.PowerConsumption, g.PowerSupply)
+	}
+	if helpText != "Power overload persists in this room. Reduce load." {
+		t.Errorf("helpText = %q, want persistent-overload warning", helpText)
 	}
 }
 
@@ -229,5 +278,81 @@ func TestToggleOnActivate_RejectsUnpoweredTerminal(t *testing.T) {
 	}
 	if helpText == "" {
 		t.Error("should return help text explaining terminal must be activated")
+	}
+}
+
+func TestRestorePowerNearbyTerminals_PowersAdjacentRoom(t *testing.T) {
+	g, termCell := makeMenuTestGame(t)
+	termA := gameworld.GetGameData(termCell).MaintenanceTerm
+	termA.Powered = true // We're at RoomA's terminal
+
+	termBCell := g.Grid.GetCell(2, 1)
+	termB := gameworld.GetGameData(termBCell).MaintenanceTerm
+	termB.Powered = false // RoomB terminal starts unpowered
+
+	h := NewMaintenanceMenuHandler(g, termCell, termA)
+	restoreItem := &RestorePowerNearbyTerminalsMenuItem{Parent: h}
+
+	_, helpText := h.OnActivate(restoreItem, 0)
+
+	if !termB.Powered {
+		t.Error("RoomB terminal should be powered after restore")
+	}
+	if helpText != "Restored power to 1 terminal(s)" {
+		t.Errorf("helpText = %q, want 'Restored power to 1 terminal(s)'", helpText)
+	}
+}
+
+func TestRestorePowerNearbyTerminals_NoUnpoweredShowsMessage(t *testing.T) {
+	g, termCell := makeMenuTestGame(t)
+	term := gameworld.GetGameData(termCell).MaintenanceTerm
+	h := NewMaintenanceMenuHandler(g, termCell, term)
+	restoreItem := &RestorePowerNearbyTerminalsMenuItem{Parent: h}
+
+	// Both terminals already powered in makeMenuTestGame
+	_, helpText := h.OnActivate(restoreItem, 0)
+
+	if helpText != "No unpowered terminals in nearby rooms" {
+		t.Errorf("helpText = %q, want 'No unpowered terminals in nearby rooms'", helpText)
+	}
+}
+
+func TestRestorePowerNearbyTerminals_PowersOwnRoomUnpoweredTerminal(t *testing.T) {
+	// RoomA has 2 terminals: one powered (we're using it), one unpowered.
+	// Restore should power the other terminal in own room.
+	g := state.NewGame()
+	grid := world.NewGrid(2, 3)
+	grid.MarkAsRoomWithName(0, 0, "RoomA", "desc")
+	grid.MarkAsRoomWithName(0, 1, "RoomA", "desc")
+	grid.MarkAsRoomWithName(0, 2, "RoomA", "desc")
+	grid.SetStartCellAt(0, 0)
+	grid.BuildAllCellConnections()
+	g.Grid = grid
+
+	for r := 0; r < 2; r++ {
+		for c := 0; c < 3; c++ {
+			gameworld.InitGameData(grid.GetCell(r, c))
+		}
+	}
+
+	term1 := entities.NewMaintenanceTerminal("MT-1", "RoomA")
+	term1.Powered = true
+	term2 := entities.NewMaintenanceTerminal("MT-2", "RoomA")
+	term2.Powered = false
+
+	gameworld.GetGameData(grid.GetCell(0, 0)).MaintenanceTerm = term1
+	gameworld.GetGameData(grid.GetCell(0, 1)).MaintenanceTerm = term2
+
+	termCell := grid.GetCell(0, 0)
+	h := NewMaintenanceMenuHandler(g, termCell, term1)
+	restoreItem := &RestorePowerNearbyTerminalsMenuItem{Parent: h}
+
+	_, helpText := h.OnActivate(restoreItem, 0)
+
+	if !term2.Powered {
+		t.Error("MT-2 in own room should be powered after restore")
+	}
+	if helpText != "Restored power to 1 terminal(s)" {
+		t.Errorf("helpText = %q, want 'Restored power to 1 terminal(s)'", helpText)
 	}
 }

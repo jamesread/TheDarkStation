@@ -175,3 +175,132 @@ func TestInitMaintenanceTerminalPower_NilGridNoPanic(t *testing.T) {
 	g.Grid = nil
 	InitMaintenanceTerminalPower(g) // must not panic
 }
+
+func TestInitMaintenanceTerminalPower_MultipleTerminalsInStartRoom(t *testing.T) {
+	g := state.NewGame()
+	grid := world.NewGrid(3, 3)
+	grid.MarkAsRoomWithName(0, 0, "Start", "desc")
+	grid.MarkAsRoomWithName(0, 1, "Start", "desc")
+	grid.MarkAsRoomWithName(1, 0, "Start", "desc")
+	grid.MarkAsRoomWithName(1, 1, "Other", "desc")
+	grid.MarkAsRoomWithName(2, 0, "Start", "desc")
+	grid.MarkAsRoomWithName(2, 1, "Other", "desc")
+	grid.SetStartCellAt(0, 0)
+	grid.BuildAllCellConnections()
+	g.Grid = grid
+
+	for r := 0; r < 3; r++ {
+		for c := 0; c < 2; c++ {
+			gameworld.InitGameData(grid.GetCell(r, c))
+		}
+	}
+
+	// Two terminals in start room, one in Other
+	term1 := entities.NewMaintenanceTerminal("MT1", "Start")
+	term2 := entities.NewMaintenanceTerminal("MT2", "Start")
+	termOther := entities.NewMaintenanceTerminal("MT-Other", "Other")
+	gameworld.GetGameData(grid.GetCell(0, 1)).MaintenanceTerm = term1
+	gameworld.GetGameData(grid.GetCell(1, 0)).MaintenanceTerm = term2
+	gameworld.GetGameData(grid.GetCell(1, 1)).MaintenanceTerm = termOther
+
+	InitMaintenanceTerminalPower(g)
+
+	if !term1.Powered || !term2.Powered {
+		t.Error("all start room terminals should be powered")
+	}
+	if termOther.Powered {
+		t.Error("Other room terminal should NOT be powered")
+	}
+}
+
+func TestInitMaintenanceTerminalPower_Idempotent(t *testing.T) {
+	g := state.NewGame()
+	grid := world.NewGrid(2, 2)
+	grid.MarkAsRoomWithName(0, 0, "Start", "desc")
+	grid.MarkAsRoomWithName(0, 1, "Other", "desc")
+	grid.MarkAsRoomWithName(1, 0, "Start", "desc")
+	grid.MarkAsRoomWithName(1, 1, "Other", "desc")
+	grid.SetStartCellAt(0, 0)
+	grid.BuildAllCellConnections()
+	g.Grid = grid
+
+	for r := 0; r < 2; r++ {
+		for c := 0; c < 2; c++ {
+			gameworld.InitGameData(grid.GetCell(r, c))
+		}
+	}
+
+	startTerm := entities.NewMaintenanceTerminal("MT-Start", "Start")
+	otherTerm := entities.NewMaintenanceTerminal("MT-Other", "Other")
+	gameworld.GetGameData(grid.GetCell(1, 0)).MaintenanceTerm = startTerm
+	gameworld.GetGameData(grid.GetCell(0, 1)).MaintenanceTerm = otherTerm
+
+	InitMaintenanceTerminalPower(g)
+	InitMaintenanceTerminalPower(g)
+
+	if !startTerm.Powered {
+		t.Error("after double init: start room terminal should be powered")
+	}
+	if otherTerm.Powered {
+		t.Error("after double init: other room terminal should NOT be powered")
+	}
+}
+
+// TestSaveLoadDeckState_MaintenanceTerminalPowerPreserved verifies that terminal Powered state
+// persists across SaveCurrentDeckState/LoadDeckState (state package). Placed here as integration
+// test of InitMaintenanceTerminalPower + deck state round-trip.
+func TestSaveLoadDeckState_MaintenanceTerminalPowerPreserved(t *testing.T) {
+	g := state.NewGame()
+	grid := world.NewGrid(2, 2)
+	grid.MarkAsRoomWithName(0, 0, "Start", "desc")
+	grid.MarkAsRoomWithName(0, 1, "Other", "desc")
+	grid.MarkAsRoomWithName(1, 0, "Start", "desc")
+	grid.MarkAsRoomWithName(1, 1, "Other", "desc")
+	grid.SetStartCellAt(0, 0)
+	grid.BuildAllCellConnections()
+	g.Grid = grid
+
+	for r := 0; r < 2; r++ {
+		for c := 0; c < 2; c++ {
+			gameworld.InitGameData(grid.GetCell(r, c))
+		}
+	}
+
+	startTerm := entities.NewMaintenanceTerminal("MT-Start", "Start")
+	otherTerm := entities.NewMaintenanceTerminal("MT-Other", "Other")
+	gameworld.GetGameData(grid.GetCell(1, 0)).MaintenanceTerm = startTerm
+	gameworld.GetGameData(grid.GetCell(0, 1)).MaintenanceTerm = otherTerm
+
+	InitMaintenanceTerminalPower(g)
+	// Simulate "Restore power" - power the Other room terminal
+	otherTerm.Powered = true
+
+	g.CurrentDeckID = 0
+	g.SaveCurrentDeckState()
+
+	// Simulate overwriting grid (e.g. advancing and coming back)
+	g.Grid = nil
+	g.LoadDeckState(0)
+
+	if g.Grid == nil {
+		t.Fatal("Grid should be restored after LoadDeckState")
+	}
+	// The grid in DeckState has the same cells - terminals are in that grid
+	// Find the Other room terminal and verify it's still powered
+	found := false
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.MaintenanceTerm != nil && data.MaintenanceTerm.Name == "MT-Other" {
+			found = true
+			if !data.MaintenanceTerm.Powered {
+				t.Error("after Save/Load: MT-Other terminal should still be powered")
+			}
+		}
+	})
+	if !found {
+		t.Error("could not find MT-Other terminal in restored grid")
+	}
+}

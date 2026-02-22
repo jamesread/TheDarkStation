@@ -1,6 +1,7 @@
 package gameplay
 
 import (
+	"strings"
 	"testing"
 
 	"darkstation/pkg/engine/world"
@@ -375,5 +376,63 @@ func TestCheckAdjacentHazardControlsAtCell_Powered(t *testing.T) {
 	ctrl := gameworld.GetGameData(ctrlCell).HazardControl
 	if !ctrl.Activated {
 		t.Error("hazard control should be activated when room power on")
+	}
+}
+
+func TestCheckAdjacentMaintenanceTerminalAtCell_UnpoweredBlocksMenu(t *testing.T) {
+	g := makeTestGame(2, 2)
+	g.CurrentCell = g.Grid.GetCell(0, 0)
+	termCell := g.Grid.GetCell(0, 1)
+	maintTerm := entities.NewMaintenanceTerminal("MT-1", "Room")
+	maintTerm.Powered = false
+	gameworld.GetGameData(termCell).MaintenanceTerm = maintTerm
+
+	initialMsgCount := len(g.Messages)
+	result := CheckAdjacentMaintenanceTerminalAtCell(g, termCell)
+
+	if !result {
+		t.Error("unpowered maintenance terminal interaction should return true (consume interaction)")
+	}
+	if len(g.Messages) <= initialMsgCount {
+		t.Error("unpowered interaction should add a message (callout) to the player")
+	}
+	// Verify message contains expected text (AC: "Terminal has no power. Restore power from another maintenance terminal.")
+	found := false
+	for _, m := range g.Messages {
+		if strings.Contains(m.Text, "Terminal has no power") || strings.Contains(m.Text, "Restore power") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected message about terminal having no power / restore power; got messages: %v", g.Messages)
+	}
+}
+
+func TestCheckAdjacentMaintenanceTerminalAtCell_PoweredOpensMenu(t *testing.T) {
+	g := makeTestGame(2, 2)
+	g.CurrentCell = g.Grid.GetCell(0, 0)
+	termCell := g.Grid.GetCell(0, 1)
+	maintTerm := entities.NewMaintenanceTerminal("MT-1", "Room")
+	maintTerm.Powered = true
+	gameworld.GetGameData(termCell).MaintenanceTerm = maintTerm
+
+	originalRun := runMaintenanceMenu
+	defer func() { runMaintenanceMenu = originalRun }()
+
+	called := false
+	runMaintenanceMenu = func(g *state.Game, cell *world.Cell, maintenanceTerm *entities.MaintenanceTerminal) {
+		called = true
+		if cell != termCell {
+			t.Errorf("menu opened for wrong cell: got (%d,%d), want (%d,%d)", cell.Row, cell.Col, termCell.Row, termCell.Col)
+		}
+	}
+
+	result := CheckAdjacentMaintenanceTerminalAtCell(g, termCell)
+	if !result {
+		t.Error("powered maintenance terminal interaction should return true")
+	}
+	if !called {
+		t.Error("powered maintenance terminal should open maintenance menu")
 	}
 }

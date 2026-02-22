@@ -12,6 +12,8 @@ import (
 	gameworld "darkstation/pkg/game/world"
 )
 
+var runMaintenanceMenu = RunMaintenanceMenu
+
 // CheckAdjacentInteractables checks adjacent cells in NSEW priority order for interactables
 // Cycles through interactables when player hasn't moved, skipping previously interacted cells
 // Returns true if an interaction occurred
@@ -355,11 +357,12 @@ func CheckAdjacentMaintenanceTerminalAtCell(g *state.Game, cell *world.Cell) boo
 	maintenanceTerm := gameworld.GetGameData(cell).MaintenanceTerm
 	if !maintenanceTerm.Powered {
 		logMessage(g, "Terminal has no power. Restore power from another maintenance terminal.")
+		renderer.AddCallout(cell.Row, cell.Col, "TITLE{Terminal has no power}", renderer.CalloutColorMaintenance, 0)
 		return true
 	}
 
 	// Open maintenance terminal menu
-	RunMaintenanceMenu(g, cell, maintenanceTerm)
+	runMaintenanceMenu(g, cell, maintenanceTerm)
 	return true
 }
 

@@ -33,9 +33,9 @@ func UpdateLightingExploration(g *state.Game) {
 	playerRow := g.CurrentCell.Row
 	playerCol := g.CurrentCell.Col
 
-	// If we have power, turn on lights in visited cells
-	// If no power, turn off lights (cells will fade from explored)
-	// Exception: cells within 3x3 radius of player always stay visible
+	// If we have power, turn on lights in visited cells.
+	// If no power, turn off lights (cells will fade from explored).
+	// Exception: cells within a 5x5 neighborhood around the player always stay visible.
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil || !cell.Room {
 			return
@@ -43,7 +43,7 @@ func UpdateLightingExploration(g *state.Game) {
 
 		data := gameworld.GetGameData(cell)
 
-		// Calculate distance from player (Manhattan distance for 5x5 radius)
+		// Calculate axis distance from player for a 5x5 neighborhood.
 		rowDist := row - playerRow
 		colDist := col - playerCol
 		if rowDist < 0 {
@@ -72,7 +72,7 @@ func UpdateLightingExploration(g *state.Game) {
 			// No power or lights toggled off - lights off
 			data.LightsOn = false
 
-			// Cells near player always stay visible (3x3 radius)
+			// Cells near player always stay visible (5x5 neighborhood)
 			if isNearPlayer {
 				// Keep nearby cells visible even without power
 				cell.Discovered = true

@@ -346,6 +346,7 @@ func (g *Game) CalculatePowerConsumption() int {
 		return 0
 	}
 	rawConsumption := 0
+	doorRoomCounted := make(map[string]bool)
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil || !cell.Room {
 			return
@@ -354,8 +355,9 @@ func (g *Game) CalculatePowerConsumption() int {
 		if data.Terminal != nil && g.RoomCCTVPowered[cell.Name] {
 			rawConsumption += 10
 		}
-		if data.Door != nil && g.RoomDoorsPowered[data.Door.RoomName] {
+		if data.Door != nil && g.RoomDoorsPowered[data.Door.RoomName] && !doorRoomCounted[data.Door.RoomName] {
 			rawConsumption += 10
+			doorRoomCounted[data.Door.RoomName] = true
 		}
 		if data.Puzzle != nil && data.Puzzle.IsSolved() {
 			rawConsumption += 3

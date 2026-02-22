@@ -6,6 +6,9 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/deck"
+	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/menu"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -260,6 +263,25 @@ func TestResetLevel_ReinitializesRoomPower(t *testing.T) {
 			t.Errorf("after reset: room %q lights should default on", room)
 		}
 	}
+	// Maintenance terminal power: start room terminal(s) powered, others unpowered
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.MaintenanceTerm == nil {
+			return
+		}
+		if cell.Name == newStartRoom {
+			if !data.MaintenanceTerm.Powered {
+				t.Errorf("after reset: start room %q maintenance terminal should be powered", newStartRoom)
+			}
+		} else {
+			if data.MaintenanceTerm.Powered {
+				t.Errorf("after reset: non-start room %q maintenance terminal should be unpowered", cell.Name)
+			}
+		}
+	})
 }
 
 func TestSaveLoadDeckState_RoomPowerMapsPreserved(t *testing.T) {
@@ -330,6 +352,93 @@ func TestSaveLoadDeckState_RoomPowerDeepCopy(t *testing.T) {
 		if v != savedDoors[room] {
 			t.Errorf("mutating g.RoomDoorsPowered affected DeckStates: room %q changed", room)
 		}
+	}
+}
+
+func TestBuildGame_MaintenanceTerminalRestoreFlow(t *testing.T) {
+	// BuildGame → start room terminal(s) powered, others unpowered.
+	// From start room terminal, RestorePowerNearbyTerminalsMenuItem should power adjacent room terminals.
+	var g *state.Game
+	var startRoom string
+	var startTermCell *world.Cell
+	var startTerm *entities.MaintenanceTerminal
+
+	// Generated layouts are randomized; retry to ensure this test validates the restore path.
+	for attempt := 0; attempt < 8; attempt++ {
+		g = BuildGame(2) // Level 2 has multiple rooms with terminals
+		if g == nil || g.Grid == nil {
+			t.Fatal("BuildGame(2) setup failed")
+		}
+
+		startRoom = g.Grid.StartCell().Name
+		startTermCell = nil
+		startTerm = nil
+		g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+			if cell == nil || cell.Name != startRoom {
+				return
+			}
+			data := gameworld.GetGameData(cell)
+			if data.MaintenanceTerm != nil {
+				startTermCell = cell
+				startTerm = data.MaintenanceTerm
+			}
+		})
+		if startTermCell != nil && startTerm != nil {
+			break
+		}
+	}
+	if startTermCell == nil || startTerm == nil {
+		t.Fatal("could not find a start-room maintenance terminal after multiple BuildGame(2) attempts")
+	}
+	if !startTerm.Powered {
+		t.Error("start room maintenance terminal should be powered after BuildGame")
+	}
+
+	// Count unpowered terminals in adjacent rooms
+	adjRooms := setup.GetAdjacentRoomNames(g.Grid, startRoom)
+	if adjRooms == nil {
+		adjRooms = []string{startRoom}
+	}
+	unpoweredBefore := 0
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room {
+			return
+		}
+		for _, rn := range adjRooms {
+			if cell.Name == rn {
+				data := gameworld.GetGameData(cell)
+				if data.MaintenanceTerm != nil && !data.MaintenanceTerm.Powered {
+					unpoweredBefore++
+				}
+				break
+			}
+		}
+	})
+
+	// Simulate "Restore power" from start room terminal
+	h := menu.NewMaintenanceMenuHandler(g, startTermCell, startTerm)
+	restoreItem := &menu.RestorePowerNearbyTerminalsMenuItem{Parent: h}
+	h.OnActivate(restoreItem, 0)
+
+	// Verify previously unpowered terminals are now powered
+	unpoweredAfter := 0
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room {
+			return
+		}
+		for _, rn := range adjRooms {
+			if cell.Name == rn {
+				data := gameworld.GetGameData(cell)
+				if data.MaintenanceTerm != nil && !data.MaintenanceTerm.Powered {
+					unpoweredAfter++
+				}
+				break
+			}
+		}
+	})
+
+	if unpoweredBefore > 0 && unpoweredAfter > 0 {
+		t.Errorf("restore should have powered terminals: before=%d unpowered, after=%d unpowered", unpoweredBefore, unpoweredAfter)
 	}
 }
 

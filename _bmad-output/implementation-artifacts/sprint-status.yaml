@@ -51,9 +51,9 @@ development_status:
   epic-2: in-progress
   2-1-generators-and-batteries: done
   2-2-room-power-doors-and-cctv: done
-  2-3-maintenance-terminal-power: backlog
-  2-4-power-consumption-and-overload: backlog
-  2-5-lighting-and-exploration: backlog
+  2-3-maintenance-terminal-power: done
+  2-4-power-consumption-and-overload: done
+  2-5-lighting-and-exploration: done
   2-6-unpowered-visual-feedback: backlog
   epic-2-retrospective: optional
 

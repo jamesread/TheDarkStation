@@ -217,6 +217,73 @@ func TestCalculatePowerConsumption_NoPoweredDevices(t *testing.T) {
 	}
 }
 
+func TestCalculatePowerConsumption_DoorsCCTVPuzzles(t *testing.T) {
+	// Grid: room "R" with 2 doors (10w once per powered room), 1 CCTV (0,1), 1 solved puzzle (0,2). Base: 10+10+3 = 23.
+	grid := world.NewGrid(1, 3)
+	for c := 0; c < 3; c++ {
+		grid.MarkAsRoomWithName(0, c, "R", "desc")
+		gd := gameworld.InitGameData(grid.GetCell(0, c))
+		if c == 0 {
+			gd.Door = &entities.Door{RoomName: "R", Locked: false}
+		}
+		if c == 1 {
+			gd.Door = &entities.Door{RoomName: "R", Locked: false}
+			gd.Terminal = entities.NewCCTVTerminal("CCTV-1")
+		}
+		if c == 2 {
+			puz := entities.NewPuzzleTerminal("Puzzle-1", entities.PuzzleSequence, "1234", "", entities.RewardBattery, "desc")
+			puz.Solve()
+			gd.Puzzle = puz
+		}
+	}
+	grid.SetStartCellAt(0, 0)
+	grid.SetExitCellAt(0, 2)
+	grid.BuildAllCellConnections()
+
+	g := NewGame()
+	g.CurrentDeckID = 0
+	g.Grid = grid
+	g.RoomDoorsPowered = map[string]bool{"R": true}
+	g.RoomCCTVPowered = map[string]bool{"R": true}
+
+	got := g.CalculatePowerConsumption()
+	// doors 10 + 1 CCTV × 10 + 1 puzzle × 3 = 23 (base, deck 0 multiplier 1.0)
+	if got != 23 {
+		t.Errorf("CalculatePowerConsumption = %d, want 23 (doors 10 + CCTV 10 + puzzle 3)", got)
+	}
+}
+
+func TestCalculatePowerConsumption_UpdatesWhenRoomPowerChanges(t *testing.T) {
+	grid := world.NewGrid(2, 2)
+	for r := 0; r < 2; r++ {
+		for c := 0; c < 2; c++ {
+			grid.MarkAsRoomWithName(r, c, "R", "desc")
+			gd := gameworld.InitGameData(grid.GetCell(r, c))
+			gd.Door = &entities.Door{RoomName: "R", Locked: false}
+		}
+	}
+	grid.SetStartCellAt(0, 0)
+	grid.SetExitCellAt(1, 1)
+	grid.BuildAllCellConnections()
+
+	g := NewGame()
+	g.CurrentDeckID = 0
+	g.Grid = grid
+	g.RoomDoorsPowered = map[string]bool{"R": false}
+	g.RoomCCTVPowered = map[string]bool{"R": false}
+
+	if got := g.CalculatePowerConsumption(); got != 0 {
+		t.Errorf("doors off: consumption = %d, want 0", got)
+	}
+
+	g.RoomDoorsPowered["R"] = true
+	got := g.CalculatePowerConsumption()
+	// Doors consume 10w once per powered room (or scaled by deck)
+	if got == 0 {
+		t.Error("doors on: consumption should be > 0")
+	}
+}
+
 func TestSaveAndLoadDeckState_PreservesGenerators(t *testing.T) {
 	g := NewGame()
 	g.CurrentDeckID = 0
@@ -411,12 +478,13 @@ func TestShortOutIfOverload_NoOverloadReturnsFalse(t *testing.T) {
 }
 
 func TestShortOutIfOverload_UnpowersOthersUntilWithinSupply(t *testing.T) {
-	// Grid: Room A (6 doors = 60w), Room B (6 doors = 60w). Supply 100w. Protect B, short A.
-	grid := world.NewGrid(2, 6)
+	// Grid: Room A has many CCTV terminals + doors, Room B has doors.
+	// Supply 100w. Protect B; overload should short Room A consumers.
+	grid := world.NewGrid(2, 12)
 	for r := 0; r < 2; r++ {
-		for c := 0; c < 6; c++ {
+		for c := 0; c < 12; c++ {
 			room := "A"
-			if c >= 3 {
+			if c >= 10 {
 				room = "B"
 			}
 			grid.MarkAsRoomWithName(r, c, room, "desc")
@@ -424,17 +492,16 @@ func TestShortOutIfOverload_UnpowersOthersUntilWithinSupply(t *testing.T) {
 		}
 	}
 	grid.SetStartCellAt(0, 0)
-	grid.SetExitCellAt(1, 5)
+	grid.SetExitCellAt(1, 11)
 	grid.BuildAllCellConnections()
 
+	// Door in each room (10w per powered room)
+	gameworld.GetGameData(grid.GetCell(0, 0)).Door = &entities.Door{RoomName: "A", Locked: false}
+	gameworld.GetGameData(grid.GetCell(0, 10)).Door = &entities.Door{RoomName: "B", Locked: false}
+	// Twenty CCTV terminals in Room A (200w when CCTV power is on)
 	for r := 0; r < 2; r++ {
-		for c := 0; c < 3; c++ {
-			gameworld.GetGameData(grid.GetCell(r, c)).Door = &entities.Door{RoomName: "A", Locked: false}
-		}
-	}
-	for r := 0; r < 2; r++ {
-		for c := 3; c < 6; c++ {
-			gameworld.GetGameData(grid.GetCell(r, c)).Door = &entities.Door{RoomName: "B", Locked: false}
+		for c := 0; c < 10; c++ {
+			gameworld.GetGameData(grid.GetCell(r, c)).Terminal = entities.NewCCTVTerminal("TA")
 		}
 	}
 
@@ -445,10 +512,10 @@ func TestShortOutIfOverload_UnpowersOthersUntilWithinSupply(t *testing.T) {
 	g.Grid = grid
 	g.AddGenerator(gen)
 	g.RoomDoorsPowered = map[string]bool{"A": true, "B": true}
-	g.RoomCCTVPowered = map[string]bool{"A": false, "B": false}
+	g.RoomCCTVPowered = map[string]bool{"A": true, "B": false}
 	g.UpdatePowerSupply()
 	g.PowerConsumption = g.CalculatePowerConsumption()
-	// 6+6 = 12 doors × 10w = 120w > 100w supply
+	// A: doors 10 + CCTV 200, B: doors 10 => 220w > 100w supply
 
 	got := g.ShortOutIfOverload("B")
 	if !got {
@@ -458,7 +525,10 @@ func TestShortOutIfOverload_UnpowersOthersUntilWithinSupply(t *testing.T) {
 		t.Error("protected room B should remain powered")
 	}
 	if g.RoomDoorsPowered["A"] {
-		t.Error("room A should be shorted out")
+		t.Error("room A doors should be shorted out first")
+	}
+	if g.RoomCCTVPowered["A"] {
+		t.Error("room A CCTV should be shorted out to resolve overload")
 	}
 	if g.PowerConsumption > g.PowerSupply {
 		t.Errorf("after short-out: consumption %d > supply %d", g.PowerConsumption, g.PowerSupply)
@@ -466,7 +536,8 @@ func TestShortOutIfOverload_UnpowersOthersUntilWithinSupply(t *testing.T) {
 }
 
 func TestShortOutIfOverload_DeterministicOrder(t *testing.T) {
-	// Four rooms: RA,RB,RC,RD. Total 12 doors = 120w. Supply 100w. Protect RC (30w).
+	// Four rooms: RA,RB,RC,RD. Each has one door (10w) and two CCTV terminals (20w when on): 30w/room.
+	// Supply 100w, total 120w. Protect RC. Deterministic order should short RA doors then RA CCTV.
 	grid := world.NewGrid(2, 8)
 	for r := 0; r < 2; r++ {
 		for c := 0; c < 8; c++ {
@@ -483,7 +554,20 @@ func TestShortOutIfOverload_DeterministicOrder(t *testing.T) {
 			}
 			grid.MarkAsRoomWithName(r, c, room, "desc")
 			gd := gameworld.InitGameData(grid.GetCell(r, c))
-			gd.Door = &entities.Door{RoomName: room, Locked: false}
+			// One door per room
+			if (room == "RA" && r == 0 && c == 0) ||
+				(room == "RB" && r == 0 && c == 2) ||
+				(room == "RC" && r == 0 && c == 4) ||
+				(room == "RD" && r == 0 && c == 6) {
+				gd.Door = &entities.Door{RoomName: room, Locked: false}
+			}
+			// Two CCTV terminals per room
+			if (room == "RA" && ((r == 0 && c == 1) || (r == 1 && c == 1))) ||
+				(room == "RB" && ((r == 0 && c == 3) || (r == 1 && c == 3))) ||
+				(room == "RC" && ((r == 0 && c == 5) || (r == 1 && c == 5))) ||
+				(room == "RD" && ((r == 0 && c == 7) || (r == 1 && c == 7))) {
+				gd.Terminal = entities.NewCCTVTerminal("T")
+			}
 		}
 	}
 	grid.SetStartCellAt(0, 0)
@@ -497,14 +581,26 @@ func TestShortOutIfOverload_DeterministicOrder(t *testing.T) {
 	g.Grid = grid
 	g.AddGenerator(gen)
 	g.RoomDoorsPowered = map[string]bool{"RA": true, "RB": true, "RC": true, "RD": true}
-	g.RoomCCTVPowered = map[string]bool{"RA": false, "RB": false, "RC": false, "RD": false}
+	g.RoomCCTVPowered = map[string]bool{"RA": true, "RB": true, "RC": true, "RD": true}
 	g.UpdatePowerSupply()
 	g.PowerConsumption = g.CalculatePowerConsumption()
-	// 16 doors × 10w = 160w > 100w
+	// 30w * 4 rooms = 120w > 100w
 
 	g.ShortOutIfOverload("RC")
+	if g.RoomDoorsPowered["RA"] {
+		t.Error("RA doors should be shorted first (room-name + doors-first order)")
+	}
+	if g.RoomCCTVPowered["RA"] {
+		t.Error("RA CCTV should be shorted before touching RB/RD (deterministic order)")
+	}
+	if !g.RoomDoorsPowered["RB"] || !g.RoomCCTVPowered["RB"] {
+		t.Error("RB consumers should remain powered after resolving overload via RA")
+	}
 	if !g.RoomDoorsPowered["RC"] {
 		t.Error("protected room RC should remain powered")
+	}
+	if !g.RoomCCTVPowered["RC"] {
+		t.Error("protected room RC CCTV should remain powered")
 	}
 	if g.PowerConsumption > g.PowerSupply {
 		t.Errorf("consumption %d > supply %d after short-out", g.PowerConsumption, g.PowerSupply)

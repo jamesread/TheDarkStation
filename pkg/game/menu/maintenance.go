@@ -32,7 +32,7 @@ func roomPowerSummary(g *state.Game, roomName string) (supply, consumption int) 
 		}
 	})
 
-	// Consumption from doors (any cell), CCTV and puzzles (in this room)
+	// Consumption from doors (10w per powered room), CCTV and puzzles (in this room)
 	var rawConsumption int
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil {
@@ -81,6 +81,26 @@ func (d *DeviceMenuItem) IsSelectable() bool {
 // GetHelpText returns help text for this device.
 func (d *DeviceMenuItem) GetHelpText() string {
 	return ""
+}
+
+// RestorePowerNearbyTerminalsMenuItem powers all maintenance terminals in adjacent rooms (including own).
+type RestorePowerNearbyTerminalsMenuItem struct {
+	Parent *MaintenanceMenuHandler
+}
+
+// GetLabel returns the display label.
+func (r *RestorePowerNearbyTerminalsMenuItem) GetLabel() string {
+	return "Restore power to nearby terminals"
+}
+
+// IsSelectable returns true (menu is only open at powered terminals).
+func (r *RestorePowerNearbyTerminalsMenuItem) IsSelectable() bool {
+	return true
+}
+
+// GetHelpText returns help text.
+func (r *RestorePowerNearbyTerminalsMenuItem) GetHelpText() string {
+	return "Press Enter to restore power to terminals in adjacent rooms"
 }
 
 // PingTerminalsMenuItem is a selectable menu item that discovers nearby terminals in the room.
@@ -303,6 +323,8 @@ func (r *RoomPowerToggleMenuItem) GetHelpText() string {
 }
 
 // MaintenanceTerminalPowerMenuItem is a selectable menu item that toggles power for one maintenance terminal.
+// Power is restored only via "Restore power to nearby terminals"; this toggle allows turning a terminal
+// off for player convenience (e.g. testing or deliberate shutdown).
 type MaintenanceTerminalPowerMenuItem struct {
 	G    *state.Game
 	Term *entities.MaintenanceTerminal
@@ -536,7 +558,7 @@ func buildRoomDevices(g *state.Game, roomName string, maintenanceTerm *entities.
 
 	// Consumption: doors (10w each when powered) + device power
 	if doorCount > 0 && g.RoomDoorsPowered[roomName] {
-		roomConsumption += doorCount * 10
+		roomConsumption += 10
 	}
 	for _, d := range devices {
 		roomConsumption += d.PowerCost
@@ -598,6 +620,8 @@ func (h *MaintenanceMenuHandler) OnActivate(item MenuItem, index int) (shouldClo
 			if h.g.RoomDoorsPowered[toggle.RoomName] {
 				if h.g.ShortOutIfOverload(toggle.RoomName) {
 					helpText = "Power overload! Other systems shorted out."
+				} else if h.g.PowerConsumption > h.g.PowerSupply {
+					helpText = "Power overload persists in this room. Reduce load."
 				}
 			} else {
 				h.g.UpdatePowerSupply()
@@ -608,6 +632,8 @@ func (h *MaintenanceMenuHandler) OnActivate(item MenuItem, index int) (shouldClo
 			if h.g.RoomCCTVPowered[toggle.RoomName] {
 				if h.g.ShortOutIfOverload(toggle.RoomName) {
 					helpText = "Power overload! Other systems shorted out."
+				} else if h.g.PowerConsumption > h.g.PowerSupply {
+					helpText = "Power overload persists in this room. Reduce load."
 				}
 			} else {
 				h.g.UpdatePowerSupply()
@@ -632,6 +658,37 @@ func (h *MaintenanceMenuHandler) OnActivate(item MenuItem, index int) (shouldClo
 		items := handler.GetMenuItems()
 		RunMenu(h.g, items, handler)
 		return false, ""
+	}
+	if restoreItem, isRestore := item.(*RestorePowerNearbyTerminalsMenuItem); isRestore {
+		if restoreItem.Parent.g.Grid == nil {
+			return false, ""
+		}
+		rooms := setup.GetAdjacentRoomNames(restoreItem.Parent.g.Grid, restoreItem.Parent.terminalRoomName)
+		if rooms == nil {
+			rooms = []string{restoreItem.Parent.terminalRoomName}
+		}
+		roomSet := make(map[string]bool)
+		for _, r := range rooms {
+			roomSet[r] = true
+		}
+		restored := 0
+		restoreItem.Parent.g.Grid.ForEachCell(func(row, col int, c *world.Cell) {
+			if c == nil || !c.Room || !roomSet[c.Name] {
+				return
+			}
+			data := gameworld.GetGameData(c)
+			if data.MaintenanceTerm == nil || data.MaintenanceTerm.Powered {
+				return
+			}
+			data.MaintenanceTerm.Powered = true
+			restored++
+		})
+		if restored > 0 {
+			helpText = fmt.Sprintf("Restored power to %d terminal(s)", restored)
+		} else {
+			helpText = "No unpowered terminals in nearby rooms"
+		}
+		return false, helpText
 	}
 	if _, isPing := item.(*PingTerminalsMenuItem); isPing {
 		centerRow, centerCol := h.cell.Row, h.cell.Col
@@ -751,6 +808,7 @@ func (h *MaintenanceMenuHandler) GetMenuItems() []MenuItem {
 
 	items = append(items,
 		&InfoMenuItem{Label: ""}, // Empty line
+		&RestorePowerNearbyTerminalsMenuItem{Parent: h},
 		&PingTerminalsMenuItem{}, // Ping discovers nearby terminals on the map
 		&InfoMenuItem{Label: ""}, // Empty line
 		&CloseMenuItem{Label: "Close"},
