@@ -274,7 +274,13 @@ func (g *Game) SaveCurrentDeckState() {
 	}
 	doorsCopy, cctvCopy, lightsCopy := copyPowerMaps(g.RoomDoorsPowered, g.RoomCCTVPowered, g.RoomLightsPowered)
 	genCopy := make([]*entities.Generator, len(g.Generators))
-	copy(genCopy, g.Generators)
+	for i, gen := range g.Generators {
+		genCopy[i] = &entities.Generator{
+			Name:              gen.Name,
+			BatteriesRequired: gen.BatteriesRequired,
+			BatteriesInserted: gen.BatteriesInserted,
+		}
+	}
 	g.DeckStates[g.CurrentDeckID] = &DeckState{
 		Grid:              g.Grid,
 		LevelSeed:         g.LevelSeed,
@@ -298,7 +304,13 @@ func (g *Game) LoadDeckState(deckID int) {
 	g.LevelSeed = ds.LevelSeed
 	g.RoomDoorsPowered, g.RoomCCTVPowered, g.RoomLightsPowered = copyPowerMaps(ds.RoomDoorsPowered, ds.RoomCCTVPowered, ds.RoomLightsPowered)
 	g.Generators = make([]*entities.Generator, len(ds.Generators))
-	copy(g.Generators, ds.Generators)
+	for i, gen := range ds.Generators {
+		g.Generators[i] = &entities.Generator{
+			Name:              gen.Name,
+			BatteriesRequired: gen.BatteriesRequired,
+			BatteriesInserted: gen.BatteriesInserted,
+		}
+	}
 	g.HasMap = false
 	g.Hints = nil
 	g.FoundCodes = make(map[string]bool)

@@ -4,8 +4,10 @@ package gameplay
 import (
 	"testing"
 
+	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/state"
+	gameworld "darkstation/pkg/game/world"
 )
 
 func TestBuildGame_GeneratesOnlyStartingDeck(t *testing.T) {
@@ -180,6 +182,154 @@ func TestIsFinalDeck_MatchesTotalDecks(t *testing.T) {
 	}
 	if deck.IsFinalDeck(deck.TotalDecks - 1) {
 		t.Errorf("IsFinalDeck(TotalDecks-1)=true, want false")
+	}
+}
+
+func TestBuildGame_StartRoomDoorsPowered(t *testing.T) {
+	g := BuildGame(1)
+	if g == nil || g.Grid == nil {
+		t.Fatal("BuildGame(1) setup failed")
+	}
+	startCell := g.Grid.StartCell()
+	if startCell == nil {
+		t.Fatal("no start cell")
+	}
+	startRoom := startCell.Name
+	if !g.RoomDoorsPowered[startRoom] {
+		t.Errorf("start room %q doors should be powered after BuildGame", startRoom)
+	}
+}
+
+func TestBuildGame_StartRoomMaintenanceTerminalPowered(t *testing.T) {
+	g := BuildGame(1)
+	if g == nil || g.Grid == nil {
+		t.Fatal("BuildGame(1) setup failed")
+	}
+	startRoom := g.Grid.StartCell().Name
+	found := false
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || cell.Name != startRoom {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.MaintenanceTerm != nil {
+			found = true
+			if !data.MaintenanceTerm.Powered {
+				t.Errorf("start room %q maintenance terminal at (%d,%d) should be powered", startRoom, row, col)
+			}
+		}
+	})
+	if !found {
+		t.Logf("no maintenance terminal found in start room %q (may not have one on level 1)", startRoom)
+	}
+}
+
+func TestBuildGame_SetupOrderIncludesSolvability(t *testing.T) {
+	// BuildGame → SetupLevel runs EnsureSolvabilityDoorPower (after terminal placement).
+	// Verify that the setup pipeline completed: start room doors powered and at least
+	// one room has power. Full path solvability is covered by solvability_test.go.
+	g := BuildGame(1)
+	if g == nil || g.Grid == nil {
+		t.Fatal("BuildGame(1) setup failed")
+	}
+	startRoom := g.Grid.StartCell().Name
+	if !g.RoomDoorsPowered[startRoom] {
+		t.Errorf("start room %q doors should be powered (EnsureSolvabilityDoorPower / InitRoomPower)", startRoom)
+	}
+	if len(g.RoomDoorsPowered) == 0 {
+		t.Error("RoomDoorsPowered should be populated after setup")
+	}
+}
+
+func TestResetLevel_ReinitializesRoomPower(t *testing.T) {
+	g := BuildGame(1)
+	if g == nil || g.Grid == nil {
+		t.Fatal("BuildGame(1) setup failed")
+	}
+
+	ResetLevel(g)
+
+	// After reset, the new start room's doors should be powered
+	newStartRoom := g.Grid.StartCell().Name
+	if !g.RoomDoorsPowered[newStartRoom] {
+		t.Errorf("after reset: start room %q doors should be powered", newStartRoom)
+	}
+	// Lights should default on for all rooms
+	for room, lightsOn := range g.RoomLightsPowered {
+		if !lightsOn {
+			t.Errorf("after reset: room %q lights should default on", room)
+		}
+	}
+}
+
+func TestSaveLoadDeckState_RoomPowerMapsPreserved(t *testing.T) {
+	g := BuildGame(1)
+	if g == nil || g.Grid == nil {
+		t.Fatal("BuildGame(1) setup failed")
+	}
+
+	// Set specific room power states
+	for room := range g.RoomDoorsPowered {
+		g.RoomDoorsPowered[room] = true
+	}
+	for room := range g.RoomCCTVPowered {
+		g.RoomCCTVPowered[room] = true
+	}
+
+	g.SaveCurrentDeckState()
+
+	// Mutate live state
+	for room := range g.RoomDoorsPowered {
+		g.RoomDoorsPowered[room] = false
+	}
+	for room := range g.RoomCCTVPowered {
+		g.RoomCCTVPowered[room] = false
+	}
+
+	// Load saved state
+	g.LoadDeckState(0)
+
+	// Verify restored
+	for room, powered := range g.RoomDoorsPowered {
+		if !powered {
+			t.Errorf("after LoadDeckState: RoomDoorsPowered[%q] should be true", room)
+		}
+	}
+	for room, powered := range g.RoomCCTVPowered {
+		if !powered {
+			t.Errorf("after LoadDeckState: RoomCCTVPowered[%q] should be true", room)
+		}
+	}
+}
+
+func TestSaveLoadDeckState_RoomPowerDeepCopy(t *testing.T) {
+	g := BuildGame(1)
+	if g == nil || g.Grid == nil {
+		t.Fatal("BuildGame(1) setup failed")
+	}
+
+	g.SaveCurrentDeckState()
+
+	// Mutate live maps — should NOT affect saved state
+	for room := range g.RoomDoorsPowered {
+		g.RoomDoorsPowered[room] = !g.RoomDoorsPowered[room]
+	}
+
+	// Re-load — g gets fresh maps from deep copy, ds holds the saved copy
+	g.LoadDeckState(0)
+	ds := g.DeckStates[0]
+	// Mutate g and verify ds is unaffected (deep copy isolation)
+	savedDoors := make(map[string]bool)
+	for room, v := range ds.RoomDoorsPowered {
+		savedDoors[room] = v
+	}
+	for room := range g.RoomDoorsPowered {
+		g.RoomDoorsPowered[room] = !g.RoomDoorsPowered[room]
+	}
+	for room, v := range ds.RoomDoorsPowered {
+		if v != savedDoors[room] {
+			t.Errorf("mutating g.RoomDoorsPowered affected DeckStates: room %q changed", room)
+		}
 	}
 }
 

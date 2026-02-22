@@ -132,6 +132,31 @@ func TestProcessIntent_BlockedMoveDoesNotUpdateCurrentCell(t *testing.T) {
 	}
 }
 
+func TestCanEnter_UnpoweredDoorBlocksMovement(t *testing.T) {
+	g, _, cellRight := makeMinimalGameWithGrid(t)
+	// Place a door on the right cell with RoomDoorsPowered = false
+	data := gameworld.GetGameData(cellRight)
+	data.Door = &entities.Door{RoomName: "Blocked", Locked: false}
+	g.RoomDoorsPowered["Blocked"] = false
+
+	ok, _ := CanEnter(g, cellRight, false)
+	if ok {
+		t.Error("CanEnter with unpowered door room should return false")
+	}
+}
+
+func TestCanEnter_PoweredDoorAllowsMovement(t *testing.T) {
+	g, _, cellRight := makeMinimalGameWithGrid(t)
+	data := gameworld.GetGameData(cellRight)
+	data.Door = &entities.Door{RoomName: "Powered", Locked: false}
+	g.RoomDoorsPowered["Powered"] = true
+
+	ok, _ := CanEnter(g, cellRight, false)
+	if !ok {
+		t.Error("CanEnter with powered door room should return true")
+	}
+}
+
 func TestProcessIntent_AllFourDirections(t *testing.T) {
 	// 3x3 grid, center (1,1), move N/S/E/W and assert CurrentCell
 	g := state.NewGame()
