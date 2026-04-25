@@ -41,6 +41,8 @@ jobs:
         run: go vet ./...
 
       - name: Run golangci-lint
-        uses: golangci/golangci-lint-action@v4
+        uses: golangci/golangci-lint-action@v6
         with:
           version: latest
+          # Prebuilt binaries may lag the Go version in go.mod; compile with the same toolchain as the project.
+          install-mode: goinstall

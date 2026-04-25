@@ -4,7 +4,7 @@ version: 2
 builds:
   - id: linux
     binary: darkstation
-    main: main.go
+    main: .
     goos:
       - linux
     env:
@@ -17,7 +17,7 @@ builds:
 
   - id: windows
     binary: darkstation
-    main: main.go
+    main: .
     goos:
       - windows
     goarch:
