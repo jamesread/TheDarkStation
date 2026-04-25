@@ -60,7 +60,7 @@ func (e *EbitenRenderer) drawColoredText(screen *ebiten.Image, str string, x, y 
 // Translates the string using gettext before drawing.
 // Uses the face's size for baseline offset so different font sizes position correctly.
 func (e *EbitenRenderer) drawColoredTextWithFace(screen *ebiten.Image, str string, x, y int, col color.Color, face *text.GoTextFace) {
-	translated := gotext.Get(str)
+	translated := dynamicGet(str)
 
 	op := &text.DrawOptions{}
 	op.GeoM.Translate(float64(x), float64(y)+face.Size)

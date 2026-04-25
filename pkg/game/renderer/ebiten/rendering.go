@@ -697,13 +697,13 @@ func (e *EbitenRenderer) getDirectionText(g *state.Game, cell *world.Cell, direc
 	if gameworld.HasLockedDoor(cell) {
 		data := gameworld.GetGameData(cell)
 		// Translate direction first, then format
-		translatedDir := gotext.Get(direction)
+		translatedDir := dynamicGet(direction)
 		return fmt.Sprintf(gotext.Get("DIRECTION_NEED_KEYCARD"), translatedDir, data.Door.KeycardName())
 	}
 
 	if gameworld.HasBlockingHazard(cell) {
 		// Translate direction first, then format
-		translatedDir := gotext.Get(direction)
+		translatedDir := dynamicGet(direction)
 		return fmt.Sprintf(gotext.Get("DIRECTION_BLOCKED"), translatedDir)
 	}
 
@@ -770,7 +770,7 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 	if hasObjectives {
 		for _, objective := range snap.objectives {
 			// Translate objective if it's a translation key for width calculation
-			translatedObjective := gotext.Get(objective)
+			translatedObjective := dynamicGet(objective)
 			// Parse markup to get actual text width (not markup)
 			segments := e.parseMarkup(translatedObjective)
 			textWidth := 0.0
@@ -881,7 +881,7 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 	if hasObjectives {
 		for _, objective := range snap.objectives {
 			// Translate objective if it's a translation key, then parse markup
-			translatedObjective := gotext.Get(objective)
+			translatedObjective := dynamicGet(objective)
 			// Parse markup to properly color ACTION{} segments
 			segments := e.parseMarkup(translatedObjective)
 			e.drawColoredTextSegments(screen, segments, x, currentY)

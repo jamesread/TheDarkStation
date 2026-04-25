@@ -62,13 +62,13 @@ func TestGenerator_BatteriesNeeded(t *testing.T) {
 
 func TestGenerator_InsertBatteries(t *testing.T) {
 	tests := []struct {
-		name           string
-		required       int
-		alreadyIn      int
-		insert         int
-		wantInserted   int
-		wantTotal      int
-		wantPowered    bool
+		name         string
+		required     int
+		alreadyIn    int
+		insert       int
+		wantInserted int
+		wantTotal    int
+		wantPowered  bool
 	}{
 		{"insert exact needed", 3, 0, 3, 3, 3, true},
 		{"insert partial", 3, 0, 1, 1, 1, false},
