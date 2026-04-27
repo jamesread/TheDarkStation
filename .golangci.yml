@@ -1,29 +1,39 @@
----
-run:
-  timeout: 5m
-
+version: "2"
 linters:
+  default: standard
+  disable:
+    - errcheck # TODO: Enable and fix unchecked errors
+    - gocritic # TODO: Enable for style improvements
+    - gocyclo # TODO: Refactor complex functions
+    - staticcheck # TODO: Fix deprecated APIs and style issues
+    - unused # TODO: Clean up unused code
+  settings:
+    gocyclo:
+      min-complexity: 50
+    govet:
+      disable:
+        - printf # color.Sprintf with dynamic strings
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - govet
+        text: non-constant format string
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
   enable:
     - gofmt
-    - govet
-  disable:
-    - errcheck      # TODO: Enable and fix unchecked errors
-    - gocyclo       # TODO: Refactor complex functions
-    - gocritic      # TODO: Enable for style improvements
-    - staticcheck   # TODO: Fix deprecated APIs and style issues
-    - unused        # TODO: Clean up unused code
-
-linters-settings:
-  gocyclo:
-    min-complexity: 50  # Very lenient for now
-
-  govet:
-    disable:
-      - printf  # Disable printf analysis - we use color.Sprintf with dynamic strings intentionally
-
-issues:
-  exclude-rules:
-    # Ignore format string warnings for color library usage
-    - linters:
-        - govet
-      text: "non-constant format string"
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
