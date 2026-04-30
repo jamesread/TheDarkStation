@@ -3,7 +3,7 @@ module darkstation
 go 1.25.0
 
 require (
-	github.com/hajimehoshi/ebiten/v2 v2.9.7
+	github.com/hajimehoshi/ebiten/v2 v2.9.9
 	github.com/leonelquinteros/gotext v1.7.2
 	github.com/zyedidia/generic v1.1.0
 	golang.org/x/image v0.38.0
