@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
@@ -128,19 +127,9 @@ func (e *EbitenRenderer) FormatText(msg string, args ...any) string {
 	return fmt.Sprintf(msg, args...)
 }
 
-// ShowMessage displays a message to the user
+// ShowMessage is a no-op; gameplay feedback uses callouts/tooltips. Kept for PrintString compatibility.
 func (e *EbitenRenderer) ShowMessage(msg string) {
-	e.messagesMutex.Lock()
-	defer e.messagesMutex.Unlock()
-	now := time.Now().UnixMilli()
-	e.trackedMessages = append(e.trackedMessages, messageEntry{
-		Text:      msg,
-		Timestamp: now,
-	})
-	// Keep only the last 5 messages
-	if len(e.trackedMessages) > 5 {
-		e.trackedMessages = e.trackedMessages[len(e.trackedMessages)-5:]
-	}
+	_ = msg
 }
 
 // GetViewportSize returns the current viewport dimensions

@@ -32,7 +32,7 @@ func ShowInteractableHints(g *state.Game) {
 		return
 	}
 
-	// Check adjacent cells for interactable objects
+	// Match CheckAdjacentInteractables: prefer generators across all directions, then other types in N,S,E,W.
 	neighbors := []*world.Cell{
 		g.CurrentCell.North,
 		g.CurrentCell.South,
@@ -44,9 +44,18 @@ func ShowInteractableHints(g *state.Game) {
 		if cell == nil {
 			continue
 		}
+		if gameworld.HasGenerator(cell) {
+			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
+			return
+		}
+	}
+
+	for _, cell := range neighbors {
+		if cell == nil {
+			continue
+		}
 
 		// Check for interactables that are still interactable (not already used/checked)
-		// Priority order: furniture, terminals, puzzles, hazard controls
 		if gameworld.HasFurniture(cell) {
 			furniture := gameworld.GetGameData(cell).Furniture
 			if furniture.IsChecked() {
@@ -69,18 +78,12 @@ func ShowInteractableHints(g *state.Game) {
 			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
 			return
 		}
-		if gameworld.HasGenerator(cell) {
-			// Generator, show hint
-			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
-			return
-		}
 		if gameworld.HasInactiveHazardControl(cell) {
 			// Hazard control is inactive, show hint
 			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
 			return
 		}
 		if gameworld.HasMaintenanceTerminal(cell) {
-			// Maintenance terminal, show hint
 			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
 			return
 		}

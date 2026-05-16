@@ -168,7 +168,7 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 
 		// Split message by newlines to handle multi-line callouts
 		lines := strings.Split(callout.Message, "\n")
-		// Optional title: first line uses title styling (bold, larger, colorAction) only when TITLE{} markup is present
+		// Optional title row: first line uses title styling when TITLE{}, UNPOWERED{}, POWERED{}, etc. (see hasTitleMarkup)
 		hasTitle := len(lines) > 0 && hasTitleMarkup(lines[0])
 		maxTextWidth := 0.0
 		for lineIdx, line := range lines {
@@ -289,7 +289,7 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 			vector.DrawFilledRect(screen, arrowX, arrowY-2, arrowSize, 4, borderColor, false)
 		}
 
-		// Draw text - first line uses title font when TITLE{} present, else body font
+		// Draw text - first line uses title font when the line has title markup (TITLE/UNPOWERED/POWERED/…)
 		lineFontSize := fontSize
 		if hasTitle {
 			lineFontSize = titleFontSize

@@ -23,12 +23,6 @@ type Callout struct {
 	CreatedAt int64 // Unix timestamp when callout was created (for animations)
 }
 
-// messageEntry represents a message with timestamp for fade-out
-type messageEntry struct {
-	Text      string
-	Timestamp int64 // Unix timestamp in milliseconds when message was added
-}
-
 // roomLabel represents a persistent label for a room, positioned at the leftmost point
 type roomLabel struct {
 	RoomName string
@@ -47,7 +41,6 @@ type renderSnapshot struct {
 	cellName          string
 	hasMap            bool
 	batteries         int
-	messages          []messageEntry
 	ownedItems        []string
 	generators        []generatorState
 	gridRows          int
@@ -142,10 +135,6 @@ type EbitenRenderer struct {
 	// Flag to track if we've logged window opening
 	windowOpenedLogged bool
 
-	// Messages to display with timestamps for fade-out
-	trackedMessages []messageEntry
-	messagesMutex   sync.RWMutex
-
 	// Generic menu overlay state
 	genericMenuActive   bool
 	genericMenuItems    []gamemenu.MenuItem
@@ -173,6 +162,14 @@ type EbitenRenderer struct {
 	menuHeightAnimStartTime    int64   // Timestamp when height animation started (milliseconds)
 	menuHeightAnimating        bool
 
+	// menuAnimClockMilli is set once per Ebiten Update(). Menu overlay animations must not use
+	// time.Now() inside Draw() — Ebiten may call Draw multiple times per Update, which caused
+	// visible jitter on the maintenance terminal / room picker overlay.
+	menuAnimClockMilli int64
+
+	// maintPanDrawCount resets each Update; used only when cvar debug.maint_pan is on
+	maintPanDrawCount int
+
 	// Analog stick state tracking (for edge detection)
 	// Maps gamepad ID to previous stick state (x, y values)
 	stickState      map[ebiten.GamepadID]struct{ x, y float64 }
@@ -195,7 +192,7 @@ type EbitenRenderer struct {
 	cameraTargetCol       float64
 	cameraFromRow         float64
 	cameraFromCol         float64
-	cameraTransitionStart int64 // Timestamp when transition started (nanoseconds, for sub-ms precision)
+	cameraTransitionStart int64 // Unix ms when maintenance room pan started (see menuAnimClockMilli)
 
 	// Offscreen map buffer - render tiles here at integer coords, then blit with fractional
 	// offset. Eliminates per-tile sub-pixel jitter during camera transitions.

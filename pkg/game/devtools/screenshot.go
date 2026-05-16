@@ -10,6 +10,7 @@ import (
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/renderer"
+	rendererebiten "darkstation/pkg/game/renderer/ebiten"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -213,9 +214,9 @@ func getCellHTMLInfo(g *state.Game, r *world.Cell) (string, string) {
 	// Door (show if has map or discovered)
 	if gameworld.HasDoor(r) && (g.HasMap || r.Discovered) {
 		if data.Door.Locked {
-			return "▣", "door-locked"
+			return rendererebiten.IconDoorLocked, "door-locked"
 		}
-		return "□", "door-unlocked"
+		return rendererebiten.IconDoorUnlocked, "door-unlocked"
 	}
 
 	// Generator (show if has map or discovered)
@@ -300,10 +301,10 @@ func getFloorIconHTML(roomName string, visited bool) string {
 		"Server Room":     {"▫", "▪"},
 		"Maintenance Bay": {"▫", "▪"},
 		"Life Support":    {"▫", "▪"},
-		"Cargo Bay":       {"□", "▣"},
-		"Storage":         {"□", "▣"},
-		"Hangar":          {"□", "▣"},
-		"Armory":          {"□", "▣"},
+		"Cargo Bay":       {"*", ":"},
+		"Storage":         {"*", ":"},
+		"Hangar":          {"*", ":"},
+		"Armory":          {"*", ":"},
 		"Med Bay":         {"◇", "◆"},
 		"Lab":             {"◇", "◆"},
 		"Hydroponics":     {"◇", "◆"},

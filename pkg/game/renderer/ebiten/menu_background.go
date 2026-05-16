@@ -29,7 +29,7 @@ func (e *EbitenRenderer) initFloatingTilesUnlocked(screenWidth, screenHeight int
 		IconTerminalUnused, IconTerminalUsed,
 		IconBattery, IconKey,
 		IconExitLocked, IconExitUnlocked,
-		"◎", "◉", "▫", "▪", "□", "▣", "◇", "◆",
+		"◎", "◉", "▫", "▪", "◇", "◆",
 	}
 	// Dark contrasting colors for background animation
 	colors := []color.Color{

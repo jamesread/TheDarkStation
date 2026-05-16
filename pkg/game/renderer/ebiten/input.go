@@ -16,6 +16,10 @@ import (
 
 // Update handles input and game logic (Ebiten interface)
 func (e *EbitenRenderer) Update() error {
+	// Single clock for menu overlays this tick (drawGenericMenuOverlay must not call time.Now).
+	e.menuAnimClockMilli = time.Now().UnixMilli()
+	e.maintPanDrawCount = 0
+
 	// Log window opening on first update (confirms window is actually running)
 	if !e.windowOpenedLogged {
 		e.windowOpenedLogged = true
@@ -57,22 +61,31 @@ func (e *EbitenRenderer) Update() error {
 	// Handle font size changes (Ctrl+= to increase, Ctrl+- to decrease)
 	e.handleZoom()
 
-	// Check for gamepad input first, then fall back to keyboard (raw layer)
-	if intent := e.checkGamepadInput(); intent.Action != engineinput.ActionNone {
-		// Non-blocking send to input channel
-		select {
-		case e.inputChan <- intent:
-		default:
-			// Channel full, drop input
+	// Keyboard before gamepad so E/Enter is not lost to stick drift or held movement.
+	// (See checkInput: interact is also handled before WASD movement within keyboard.)
+	if intent := e.checkInput(); intent.Action != engineinput.ActionNone {
+		if intent.Action == engineinput.ActionInteract {
+			log.Printf("[Interact] input: dispatch ActionInteract via keyboard path")
 		}
-	} else if intent := e.checkInput(); intent.Action != engineinput.ActionNone {
-		// Non-blocking send to input channel
 		select {
 		case e.inputChan <- intent:
 		default:
-			// Channel full, drop input
+			log.Printf("[Interact] input: WARNING dropped intent (inputChan full) action=%v", intent.Action)
+		}
+	} else if intent := e.checkGamepadInput(); intent.Action != engineinput.ActionNone {
+		if intent.Action == engineinput.ActionInteract {
+			log.Printf("[Interact] input: dispatch ActionInteract via gamepad path")
+		}
+		select {
+		case e.inputChan <- intent:
+		default:
+			log.Printf("[Interact] input: WARNING dropped intent (inputChan full) action=%v", intent.Action)
 		}
 	}
+
+	// Camera pan for maintenance menu: once per Update tick, not per Draw (Draw can run
+	// multiple times per frame; time-based interpolation there caused visible jitter).
+	e.advanceMaintenanceCamera()
 
 	return nil
 }
@@ -137,34 +150,34 @@ func (e *EbitenRenderer) recalculateViewport() {
 	if w == 0 || h == 0 {
 		w, h = e.windowWidth, e.windowHeight
 	}
+	e.syncViewportForMap(w, h)
+}
 
-	// Calculate available space for the map (accounting for UI elements)
-	// Header height + small frame border
+// syncViewportForMap sets e.viewportCols/Rows from pixel dimensions using the same margins as Draw()
+// for the map (header + mapMargin). Single source of truth avoids pan jitter when Layout vs Draw disagree.
+func (e *EbitenRenderer) syncViewportForMap(screenWidth, screenHeight int) {
 	uiFontSize := e.getUIFontSize()
 	headerHeight := int(uiFontSize) + 20
-	frameBorder := 10
-	availableHeight := h - headerHeight - frameBorder*2
-	availableWidth := w - frameBorder*2
+	const mapMargin = 20
+	availableHeight := screenHeight - headerHeight - mapMargin*2
+	availableWidth := screenWidth - mapMargin*2
+	viewportCols := availableWidth / e.tileSize
+	viewportRows := availableHeight / e.tileSize
 
-	// Calculate viewport dimensions to maximize the map
-	e.viewportCols = availableWidth / e.tileSize
-	e.viewportRows = availableHeight / e.tileSize
-
-	// Ensure minimum viewport size
-	if e.viewportCols < 15 {
-		e.viewportCols = 15
+	if viewportCols < 15 {
+		viewportCols = 15
 	}
-	if e.viewportRows < 11 {
-		e.viewportRows = 11
+	if viewportRows < 11 {
+		viewportRows = 11
 	}
-
-	// Keep odd numbers for centering
-	if e.viewportCols%2 == 0 {
-		e.viewportCols--
+	if viewportCols%2 == 0 {
+		viewportCols--
 	}
-	if e.viewportRows%2 == 0 {
-		e.viewportRows--
+	if viewportRows%2 == 0 {
+		viewportRows--
 	}
+	e.viewportCols = viewportCols
+	e.viewportRows = viewportRows
 }
 
 // shouldRepeatKey checks if a key/button should trigger (initial press or repeat)
@@ -220,6 +233,29 @@ func (e *EbitenRenderer) checkGamepadInput() engineinput.Intent {
 	ids = ebiten.AppendGamepadIDs(ids[:0])
 
 	for _, id := range ids {
+		// Face buttons and Start before analog sticks so A (interact) is not lost to drift/hold.
+
+		// Face buttons:
+		// - A / Cross: interact
+		// - B / Circle: quit
+		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton0) {
+			return engineinput.Intent{Action: engineinput.ActionInteract}
+		}
+		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton1) {
+			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+				Device: engineinput.DeviceGamepad,
+				Code:   "gamepad_b",
+			}))
+		}
+
+		// Start opens menu
+		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton7) {
+			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+				Device: engineinput.DeviceGamepad,
+				Code:   "gamepad_start",
+			}))
+		}
+
 		// Analog stick (left stick) movement
 		// Axes: 0 = X (left = -1, right = +1), 1 = Y (up = -1, down = +1)
 		const deadZone = 0.5 // Threshold to avoid drift
@@ -303,32 +339,6 @@ func (e *EbitenRenderer) checkGamepadInput() engineinput.Intent {
 				Code:   "gamepad_dpad_down",
 			}))
 		}
-
-		// Face buttons:
-		// - A: show help / hint
-		// - B: quit game
-		// Typical mapping:
-		//  - A / Cross: 0
-		//  - B / Circle: 1
-		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton0) {
-			return engineinput.Intent{Action: engineinput.ActionInteract}
-		}
-		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton1) {
-			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
-				Device: engineinput.DeviceGamepad,
-				Code:   "gamepad_b",
-			}))
-		}
-
-		// Start button opens the bindings/menu.
-		// Typical mapping:
-		//  - Start: 7
-		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton7) {
-			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
-				Device: engineinput.DeviceGamepad,
-				Code:   "gamepad_start",
-			}))
-		}
 	}
 
 	return engineinput.Intent{Action: engineinput.ActionNone}
@@ -336,6 +346,15 @@ func (e *EbitenRenderer) checkGamepadInput() engineinput.Intent {
 
 // checkInput checks for keyboard input and returns the corresponding Intent.
 func (e *EbitenRenderer) checkInput() engineinput.Intent {
+	// Interact must win over held movement keys; otherwise walking into range of a generator
+	// while holding WASD only produces movement intents and E/Enter is never reached.
+	if inpututil.IsKeyJustPressed(ebiten.KeyE) {
+		return engineinput.Intent{Action: engineinput.ActionInteract}
+	}
+	if inpututil.IsKeyJustPressed(ebiten.KeyEnter) || inpututil.IsKeyJustPressed(ebiten.KeyKPEnter) {
+		return engineinput.Intent{Action: engineinput.ActionInteract}
+	}
+
 	// Arrow keys / NSEW navigation with key repeat
 	if e.shouldRepeatKey(func() bool { return ebiten.IsKeyPressed(ebiten.KeyArrowUp) }, "key_arrow_up") {
 		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
@@ -421,9 +440,6 @@ func (e *EbitenRenderer) checkInput() engineinput.Intent {
 			Code:   "n",
 		}))
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyE) {
-		return engineinput.Intent{Action: engineinput.ActionInteract}
-	}
 
 	// Help
 	if inpututil.IsKeyJustPressed(ebiten.KeySlash) && ebiten.IsKeyPressed(ebiten.KeyShift) {
@@ -431,11 +447,6 @@ func (e *EbitenRenderer) checkInput() engineinput.Intent {
 			Device: engineinput.DeviceKeyboard,
 			Code:   "?",
 		}))
-	}
-
-	// Interaction (Enter)
-	if inpututil.IsKeyJustPressed(ebiten.KeyEnter) || inpututil.IsKeyJustPressed(ebiten.KeyKPEnter) {
-		return engineinput.Intent{Action: engineinput.ActionInteract}
 	}
 
 	// Open menu (F10)

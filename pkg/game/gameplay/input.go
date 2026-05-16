@@ -3,6 +3,7 @@ package gameplay
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
 	"os"
 
@@ -98,8 +99,9 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		return
 
 	case engineinput.ActionInteract:
-		// Check for adjacent interactables in NSEW priority order, cycling through them
+		log.Printf("[Interact] ProcessIntent: ActionInteract (game loop tick)")
 		interacted := CheckAdjacentInteractables(g)
+		log.Printf("[Interact] ProcessIntent: CheckAdjacentInteractables returned %v", interacted)
 		if !interacted {
 			logMessage(g, "Nothing to interact with here.")
 		}

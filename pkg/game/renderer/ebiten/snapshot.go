@@ -87,59 +87,6 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 	// Compute persistent room labels (for rooms the player has visited)
 	e.snapshot.roomLabels = e.computeRoomLabels(g)
 
-	// Track messages with timestamps and handle fade-out
-	e.messagesMutex.Lock()
-	now := time.Now().UnixMilli()
-	const messageLifetime = 10000 // 10 seconds in milliseconds
-
-	// Create a map of current game messages for quick lookup
-	currentMessages := make(map[string]bool)
-	for _, msg := range g.Messages {
-		currentMessages[msg.Text] = true
-	}
-
-	// Update tracked messages: add new ones, keep existing ones (even if removed from game), remove expired ones
-	updatedMessages := make([]messageEntry, 0)
-
-	// Keep existing tracked messages that are not expired (even if removed from g.Messages)
-	for _, tracked := range e.trackedMessages {
-		age := now - tracked.Timestamp
-		if age < messageLifetime {
-			updatedMessages = append(updatedMessages, tracked)
-		}
-		// Messages older than 10 seconds are discarded (not added to updatedMessages)
-	}
-
-	// Add new messages from game that aren't already tracked
-	for _, msg := range g.Messages {
-		found := false
-		for _, tracked := range e.trackedMessages {
-			if tracked.Text == msg.Text {
-				found = true
-				break
-			}
-		}
-		if !found {
-			updatedMessages = append(updatedMessages, messageEntry{
-				Text:      msg.Text,
-				Timestamp: msg.Timestamp,
-			})
-		}
-	}
-
-	// Sort messages by timestamp (oldest first) to ensure chronological ordering
-	// This ensures consistent ordering regardless of when messages were added
-	sort.Slice(updatedMessages, func(i, j int) bool {
-		return updatedMessages[i].Timestamp < updatedMessages[j].Timestamp
-	})
-
-	e.trackedMessages = updatedMessages
-
-	// Copy to snapshot (only non-expired messages)
-	e.snapshot.messages = make([]messageEntry, len(e.trackedMessages))
-	copy(e.snapshot.messages, e.trackedMessages)
-	e.messagesMutex.Unlock()
-
 	// Copy owned items
 	// Collect and sort items deterministically
 	e.snapshot.ownedItems = make([]string, 0)

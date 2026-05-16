@@ -63,7 +63,7 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 
 	// Maintenance Terminal (show if has map or discovered) - same visibility as other cells
 	if gameworld.HasMaintenanceTerminal(cell) && (g.HasMap || cell.Discovered) {
-		return CellRenderOptions{Icon: IconMaintenance, Color: colorMaintenance, HasBackground: true}
+		return CellRenderOptions{Icon: IconMaintenance, Color: colorMaintenance, HasBackground: true, BackgroundColor: colorMaintenanceBg}
 	}
 
 	// CCTV Terminal (show if has map or discovered) - same orange as maintenance terminals
@@ -71,7 +71,7 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 		if data.Terminal.IsUsed() {
 			return CellRenderOptions{Icon: IconTerminalUsed, Color: colorTerminalUsed, HasBackground: false}
 		}
-		return CellRenderOptions{Icon: IconTerminalUnused, Color: colorMaintenance, HasBackground: true}
+		return CellRenderOptions{Icon: IconTerminalUnused, Color: colorMaintenance, HasBackground: true, BackgroundColor: colorMaintenanceBg}
 	}
 
 	// Puzzle Terminal (show if has map or discovered)
@@ -108,6 +108,9 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 		}
 		if cellHasBattery(cell) {
 			return CellRenderOptions{Icon: IconBattery, Color: colorBattery, HasBackground: true}
+		}
+		if cellHasMapItem(cell) {
+			return CellRenderOptions{Icon: IconMap, Color: colorItem, HasBackground: true}
 		}
 		return CellRenderOptions{Icon: IconItem, Color: colorItem, HasBackground: true}
 	}
@@ -153,6 +156,17 @@ func getFloorIcon(roomName string, visited bool) string {
 		return IconVisited
 	}
 	return IconUnvisited
+}
+
+// cellHasMapItem checks if a cell has the station map item on the floor.
+func cellHasMapItem(c *world.Cell) bool {
+	found := false
+	c.ItemsOnFloor.Each(func(item *world.Item) {
+		if item.Name == "Map" {
+			found = true
+		}
+	})
+	return found
 }
 
 // cellHasKeycard checks if a cell has a keycard item

@@ -26,6 +26,7 @@ var cvarMutex sync.RWMutex
 // initCvars initializes configuration variables on startup
 func initCvars() {
 	cvarMutex.Lock()
+	cvarMap["debug.maint_pan"] = "0" // 1 = log maintenance menu pan/overlay diagnostics to stderr
 	cvarMap["version"] = renderer.Version
 	if renderer.Commit != "unknown" && len(renderer.Commit) > 0 {
 		cvarMap["commit"] = renderer.Commit
@@ -50,7 +51,7 @@ func initColorCvarsLocked() {
 	cvarMap["colors.door_locked"] = "255,255,0,255"
 	cvarMap["colors.door_unlocked"] = "0,220,0,255"
 	cvarMap["colors.keycard"] = "100,150,255,255"
-	cvarMap["colors.item"] = "220,170,255,255"
+	cvarMap["colors.item"] = "210,185,110,255"
 	cvarMap["colors.battery"] = "255,200,100,255"
 	cvarMap["colors.hazard"] = "255,80,80,255"
 	cvarMap["colors.hazard_ctrl"] = "255,150,200,255"
@@ -59,6 +60,7 @@ func initColorCvarsLocked() {
 	cvarMap["colors.terminal"] = "100,150,255,255"
 	cvarMap["colors.terminal_used"] = "120,120,140,255"
 	cvarMap["colors.maintenance"] = "255,165,0,255"
+	cvarMap["colors.maintenance_bg"] = "58,38,12,255"
 	cvarMap["colors.furniture"] = "255,150,255,255"
 	cvarMap["colors.furniture_check"] = "200,180,100,255"
 	cvarMap["colors.exit_locked"] = "255,100,100,255"
@@ -76,7 +78,7 @@ func initColorCvarsLocked() {
 	cvarMap["colors.callout_success"] = "100,255,150,255"
 	cvarMap["colors.callout_warning"] = "255,220,100,255"
 	cvarMap["colors.callout_danger"] = "255,120,120,255"
-	cvarMap["colors.callout_item"] = "220,170,255,255"
+	cvarMap["colors.callout_item"] = "210,185,110,255"
 	cvarMap["colors.callout_generator"] = "255,100,100,255"
 	cvarMap["colors.callout_generator_on"] = "0,255,100,255"
 	cvarMap["colors.callout_terminal"] = "100,150,255,255"
@@ -137,6 +139,7 @@ func loadColorsFromCvars() {
 	assign("colors.terminal", &colorTerminal)
 	assign("colors.terminal_used", &colorTerminalUsed)
 	assign("colors.maintenance", &colorMaintenance)
+	assign("colors.maintenance_bg", &colorMaintenanceBg)
 	assign("colors.furniture", &colorFurniture)
 	assign("colors.furniture_check", &colorFurnitureCheck)
 	assign("colors.exit_locked", &colorExitLocked)

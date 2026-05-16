@@ -266,6 +266,10 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 
 	screenWidth, screenHeight := screen.Bounds().Dx(), screen.Bounds().Dy()
 
+	maintOverlayStable := strings.Contains(title, "Maintenance Terminal") || title == "Select room"
+	// Default true so callouts/main menu stay soft; maint/room picker uses crisp vector edges (less LCD shimmer).
+	useVectorAA := !maintOverlayStable
+
 	// Calculate required height based on menu content
 	requiredHeight := e.calculateMenuHeight(items, title, helpText)
 
@@ -274,27 +278,43 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	var panelH float64
 
 	if heightAnimating {
-		now := time.Now().UnixMilli()
-		elapsed := now - heightStartTime
-
-		if elapsed >= heightAnimDuration {
-			// Animation complete - use target height
+		// Orange maintenance menus: skip fractional height tween — vector AA + non-integer rect height
+		// showed as border shimmer while the map behind was panning.
+		if maintOverlayStable {
 			panelH = heightTargetHeight
-			// Don't mark complete here - let RenderMenu handle it on next update to avoid deadlock
 		} else {
-			// Interpolate between start and target heights
-			progress := float64(elapsed) / float64(heightAnimDuration)
-			easedProgress := easeInOut(progress)
-			panelH = heightStartHeight + (heightTargetHeight-heightStartHeight)*easedProgress
+			now := e.menuAnimClockMilli
+			if now == 0 {
+				now = time.Now().UnixMilli()
+			}
+			elapsed := now - heightStartTime
+
+			if elapsed >= heightAnimDuration {
+				// Animation complete - use target height
+				panelH = heightTargetHeight
+				// Don't mark complete here - let RenderMenu handle it on next update to avoid deadlock
+			} else {
+				// Interpolate between start and target heights
+				progress := float64(elapsed) / float64(heightAnimDuration)
+				easedProgress := easeInOut(progress)
+				panelH = heightStartHeight + (heightTargetHeight-heightStartHeight)*easedProgress
+			}
 		}
 	} else {
 		// No animation - use required height
 		panelH = requiredHeight
 	}
 
+	if maintOverlayStable {
+		panelH = float64(int(math.Round(panelH)))
+	}
+
 	// Panel covers ~70% of screen width, height is dynamic based on content
 	panelW := int(float32(screenWidth) * 0.7)
 	panelHInt := int(panelH)
+	if panelHInt < 1 {
+		panelHInt = 1
+	}
 	panelX := (screenWidth - panelW) / 2
 	panelY := (screenHeight - panelHInt) / 2
 
@@ -373,7 +393,7 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 			float32(panelX-(i-1)), float32(panelY-(i-1)),
 			panelWFloat+float32((i-1)*2), panelHFloat+float32((i-1)*2),
 			menuCornerRadius+float32(i-1), vector.CounterClockwise)
-		drawOpts := &vector.DrawPathOptions{AntiAlias: true}
+		drawOpts := &vector.DrawPathOptions{AntiAlias: useVectorAA}
 		drawOpts.ColorScale.ScaleWithColor(color.RGBA{shadowR, shadowG, shadowB, alpha})
 		vector.FillPath(screen, &path, nil, drawOpts)
 	}
@@ -382,14 +402,14 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	path.Reset()
 	appendRoundedRect(&path, float32(panelX), float32(panelY), panelWFloat, panelHFloat, menuCornerRadius)
 
-	drawOpts := &vector.DrawPathOptions{AntiAlias: true}
+	drawOpts := &vector.DrawPathOptions{AntiAlias: useVectorAA}
 	drawOpts.ColorScale.ScaleWithColor(bg)
 	vector.FillPath(screen, &path, nil, drawOpts)
 
 	path.Reset()
 	appendRoundedRect(&path, float32(panelX), float32(panelY), panelWFloat, panelHFloat, menuCornerRadius)
 	strokeOpts := &vector.StrokeOptions{Width: borderWidth, MiterLimit: 10}
-	drawOpts = &vector.DrawPathOptions{AntiAlias: true}
+	drawOpts = &vector.DrawPathOptions{AntiAlias: useVectorAA}
 	drawOpts.ColorScale.ScaleWithColor(border)
 	vector.StrokePath(screen, &path, strokeOpts, drawOpts)
 
@@ -443,7 +463,10 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	var highlightIndex int
 
 	if animating {
-		now := time.Now().UnixMilli()
+		now := e.menuAnimClockMilli
+		if now == 0 {
+			now = time.Now().UnixMilli()
+		}
 		elapsed := now - animStartTime
 
 		if elapsed >= animDuration {
@@ -481,10 +504,17 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		rectHeight := float64(textHeight + 4) // small padding below glyphs
 		// Add padding on left and right sides of text
 		const paddingX = 8.0
-		vector.DrawFilledRect(screen,
-			float32(x-paddingX), float32(rectTop),
-			float32(highlightWidth+paddingX*2), float32(rectHeight),
-			highlightColor, false)
+		rx := float32(x - paddingX)
+		ry := float32(rectTop)
+		rw := float32(highlightWidth + paddingX*2)
+		rh := float32(rectHeight)
+		if maintOverlayStable && !animating {
+			rx = float32(math.Round(float64(rx)))
+			ry = float32(math.Round(float64(ry)))
+			rw = float32(math.Round(float64(rw)))
+			rh = float32(math.Round(float64(rh)))
+		}
+		vector.DrawFilledRect(screen, rx, ry, rw, rh, highlightColor, false)
 	}
 
 	// For maintenance terminal menus: align values in columns (tab-separated: label, status, optional watts)

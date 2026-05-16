@@ -3,6 +3,7 @@ package gameplay
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"darkstation/pkg/engine/world"
@@ -14,10 +15,88 @@ import (
 
 var runMaintenanceMenu = RunMaintenanceMenu
 
-// CheckAdjacentInteractables checks adjacent cells in NSEW priority order for interactables
-// Cycles through interactables when player hasn't moved, skipping previously interacted cells
+// logInteractDebugSnapshot prints adjacent-cell flags and cycling state (prefix [Interact]).
+func logInteractDebugSnapshot(g *state.Game, phase string) {
+	if g == nil || g.CurrentCell == nil {
+		log.Printf("[Interact] %s: player cell is nil", phase)
+		return
+	}
+	pc := g.CurrentCell
+	log.Printf("[Interact] %s: player=(%d,%d) lastInteracted=(%d,%d) interactionAnchor=(%d,%d) interactionsCount=%d",
+		phase, pc.Row, pc.Col, g.LastInteractedRow, g.LastInteractedCol,
+		g.InteractionPlayerRow, g.InteractionPlayerCol, g.InteractionsCount)
+
+	dirs := []string{"N", "S", "E", "W"}
+	cells := []*world.Cell{pc.North, pc.South, pc.East, pc.West}
+	for i, cell := range cells {
+		if cell == nil {
+			log.Printf("[Interact] %s: neighbor %s: nil", phase, dirs[i])
+			continue
+		}
+		var tags []string
+		if cell.Discovered {
+			tags = append(tags, "discovered")
+		}
+		if cell.Visited {
+			tags = append(tags, "visited")
+		}
+		if gameworld.HasGenerator(cell) {
+			tags = append(tags, "generator")
+		}
+		if gameworld.HasFurniture(cell) {
+			tags = append(tags, "furniture")
+		}
+		if gameworld.HasUnusedTerminal(cell) {
+			tags = append(tags, "cctv")
+		}
+		if gameworld.HasUnsolvedPuzzle(cell) {
+			tags = append(tags, "puzzle")
+		}
+		if gameworld.HasInactiveHazardControl(cell) {
+			tags = append(tags, "hazardCtrl")
+		}
+		if gameworld.HasMaintenanceTerminal(cell) {
+			tags = append(tags, "maint")
+		}
+		log.Printf("[Interact] %s: neighbor %s: (%d,%d) name=%q flags=[%s]", phase, dirs[i], cell.Row, cell.Col, cell.Name, strings.Join(tags, ","))
+	}
+}
+
+// countAdjacentInteractionCandidates returns how many orthogonal neighbors have at least one
+// interaction type that CheckAdjacentInteractables considers (same Has* gates as the scan).
+func countAdjacentInteractionCandidates(neighbors []*world.Cell) int {
+	n := 0
+	for _, cell := range neighbors {
+		if cell == nil {
+			continue
+		}
+		if gameworld.HasGenerator(cell) ||
+			gameworld.HasFurniture(cell) ||
+			gameworld.HasUnusedTerminal(cell) ||
+			gameworld.HasUnsolvedPuzzle(cell) ||
+			gameworld.HasInactiveHazardControl(cell) ||
+			gameworld.HasMaintenanceTerminal(cell) {
+			n++
+		}
+	}
+	return n
+}
+
+// CheckAdjacentInteractables checks adjacent cells for interactables.
+// Generators are handled in a first pass (any direction) so a generator is not skipped when
+// another direction has e.g. a maintenance terminal or CCTV that would come earlier in plain N,S,E,W order.
+// Cycles through interactables when player hasn't moved, skipping the previously interacted cell.
+// If there is only one adjacent interactable cell, last-interacted cycling is cleared so the first
+// scan always hits that target (no "empty" pass that relies on a second scan).
+// If the only adjacent interactable is the same cell as last time but multiple targets exist elsewhere,
+// a second scan ignores that skip so e.g. the generator callout can open again without moving.
 // Returns true if an interaction occurred
 func CheckAdjacentInteractables(g *state.Game) bool {
+	if g == nil || g.CurrentCell == nil {
+		log.Printf("[Interact] CheckAdjacentInteractables: abort (nil game or current cell)")
+		return false
+	}
+
 	// Check if player has moved since last interaction (reset order if moved)
 	if g.InteractionPlayerRow != g.CurrentCell.Row || g.InteractionPlayerCol != g.CurrentCell.Col {
 		g.LastInteractedRow = -1
@@ -26,43 +105,69 @@ func CheckAdjacentInteractables(g *state.Game) bool {
 		g.InteractionPlayerCol = g.CurrentCell.Col
 	}
 
-	// Check cells in NSEW priority order
-	neighbors := []struct {
-		cell      *world.Cell
-		direction string
-	}{
-		{g.CurrentCell.North, "north"},
-		{g.CurrentCell.South, "south"},
-		{g.CurrentCell.East, "east"},
-		{g.CurrentCell.West, "west"},
+	neighbors := []*world.Cell{
+		g.CurrentCell.North,
+		g.CurrentCell.South,
+		g.CurrentCell.East,
+		g.CurrentCell.West,
 	}
 
-	// Find first interactable cell, skipping the last interacted one
-	for _, neighbor := range neighbors {
-		cell := neighbor.cell
+	if countAdjacentInteractionCandidates(neighbors) <= 1 {
+		g.LastInteractedRow = -1
+		g.LastInteractedCol = -1
+	}
+
+	logInteractDebugSnapshot(g, "before_scan")
+
+	for _, honorLastSkip := range []bool{true, false} {
+		if tryAdjacentInteractableScan(g, neighbors, honorLastSkip) {
+			return true
+		}
+	}
+
+	log.Printf("[Interact] no handler matched (see before_scan neighbor lines)")
+	return false
+}
+
+// tryAdjacentInteractableScan runs the two-pass adjacent scan. When honorLastInteractedSkip is true,
+// the cell matching LastInteractedRow/Col is skipped so the player can cycle other adjacent targets.
+func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLastInteractedSkip bool) bool {
+	skipCell := func(cell *world.Cell) bool {
 		if cell == nil {
+			return true
+		}
+		if honorLastInteractedSkip && cell.Row == g.LastInteractedRow && cell.Col == g.LastInteractedCol {
+			return true
+		}
+		return false
+	}
+
+	// Pass 1: generators only (highest priority across adjacency)
+	for _, cell := range neighbors {
+		if skipCell(cell) {
+			continue
+		}
+		if gameworld.HasGenerator(cell) && CheckAdjacentGeneratorAtCell(g, cell) {
+			g.LastInteractedRow = cell.Row
+			g.LastInteractedCol = cell.Col
+			g.InteractionsCount++
+			log.Printf("[Interact] handled: generator at (%d,%d)", cell.Row, cell.Col)
+			return true
+		}
+	}
+
+	// Pass 2: furniture, terminals, puzzles, hazard controls, maintenance
+	for _, cell := range neighbors {
+		if skipCell(cell) {
 			continue
 		}
 
-		// Skip if this is the cell we just interacted with
-		if cell.Row == g.LastInteractedRow && cell.Col == g.LastInteractedCol {
-			continue
-		}
-
-		// Check for interactables in priority order: generators, furniture, terminals, puzzles, hazard controls
-		if gameworld.HasGenerator(cell) {
-			if CheckAdjacentGeneratorAtCell(g, cell) {
-				g.LastInteractedRow = cell.Row
-				g.LastInteractedCol = cell.Col
-				g.InteractionsCount++
-				return true
-			}
-		}
 		if gameworld.HasFurniture(cell) {
 			if CheckAdjacentFurnitureAtCell(g, cell) {
 				g.LastInteractedRow = cell.Row
 				g.LastInteractedCol = cell.Col
 				g.InteractionsCount++
+				log.Printf("[Interact] handled: furniture at (%d,%d)", cell.Row, cell.Col)
 				return true
 			}
 		}
@@ -71,6 +176,7 @@ func CheckAdjacentInteractables(g *state.Game) bool {
 				g.LastInteractedRow = cell.Row
 				g.LastInteractedCol = cell.Col
 				g.InteractionsCount++
+				log.Printf("[Interact] handled: CCTV terminal at (%d,%d)", cell.Row, cell.Col)
 				return true
 			}
 		}
@@ -79,6 +185,7 @@ func CheckAdjacentInteractables(g *state.Game) bool {
 				g.LastInteractedRow = cell.Row
 				g.LastInteractedCol = cell.Col
 				g.InteractionsCount++
+				log.Printf("[Interact] handled: puzzle at (%d,%d)", cell.Row, cell.Col)
 				return true
 			}
 		}
@@ -87,6 +194,7 @@ func CheckAdjacentInteractables(g *state.Game) bool {
 				g.LastInteractedRow = cell.Row
 				g.LastInteractedCol = cell.Col
 				g.InteractionsCount++
+				log.Printf("[Interact] handled: hazard control at (%d,%d)", cell.Row, cell.Col)
 				return true
 			}
 		}
@@ -96,6 +204,7 @@ func CheckAdjacentInteractables(g *state.Game) bool {
 				g.LastInteractedRow = -1
 				g.LastInteractedCol = -1
 				g.InteractionsCount++
+				log.Printf("[Interact] handled: maintenance terminal at (%d,%d)", cell.Row, cell.Col)
 				return true
 			}
 		}
@@ -113,15 +222,15 @@ func CheckAdjacentGeneratorAtCell(g *state.Game, cell *world.Cell) bool {
 
 	gen := gameworld.GetGameData(cell).Generator
 
-	// Build tooltip message with generator status and power information
+	// Build tooltip message with generator status and power information (UNPOWERED{}/POWERED{} for headline + border tint).
 	var calloutText strings.Builder
-	calloutText.WriteString(fmt.Sprintf("TITLE{%s}\n", gen.Name))
-
 	if gen.IsPowered() {
-		calloutText.WriteString("Status: POWERED{POWERED}\n")
+		calloutText.WriteString(fmt.Sprintf("POWERED{%s}\n", gen.Name))
+		calloutText.WriteString("SUBTLE{Status: }POWERED{Online}\n")
 		calloutText.WriteString(fmt.Sprintf("Batteries: ACTION{%d}/ACTION{%d}\n", gen.BatteriesInserted, gen.BatteriesRequired))
 	} else {
-		calloutText.WriteString("Status: UNPOWERED\n")
+		calloutText.WriteString(fmt.Sprintf("UNPOWERED{%s}\n", gen.Name))
+		calloutText.WriteString("SUBTLE{Status: }UNPOWERED{Unpowered}\n")
 		calloutText.WriteString(fmt.Sprintf("Batteries: ACTION{%d}/ACTION{%d}\n", gen.BatteriesInserted, gen.BatteriesRequired))
 		calloutText.WriteString(fmt.Sprintf("Needs: ACTION{%d} more batteries\n", gen.BatteriesNeeded()))
 	}
@@ -196,7 +305,7 @@ func CheckAdjacentGenerators(g *state.Game) {
 
 			if gen.IsPowered() {
 				logMessage(g, "ITEM{%s} is now powered!", gen.Name)
-				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("TITLE{%s} POWERED{ONLINE}", gen.Name), renderer.CalloutColorGeneratorOn, 0)
+				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("POWERED{%s - online}", gen.Name), renderer.CalloutColorGeneratorOn, 0)
 				// Update power supply when generator is powered
 				g.UpdatePowerSupply()
 				// Update lighting based on new power availability
@@ -204,7 +313,7 @@ func CheckAdjacentGenerators(g *state.Game) {
 				logMessage(g, "Power supply: %dw available", g.GetAvailablePower())
 			} else {
 				logMessage(g, "%s needs ACTION{%d} more batteries", gen.Name, gen.BatteriesNeeded())
-				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("+%d batteries (%d more needed)", inserted, gen.BatteriesNeeded()), renderer.CalloutColorGenerator, 0)
+				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("UNPOWERED{+%d batteries - %d more needed}", inserted, gen.BatteriesNeeded()), renderer.CalloutColorGenerator, 0)
 			}
 		}
 	}
@@ -220,7 +329,7 @@ func CheckAdjacentTerminalsAtCell(g *state.Game, cell *world.Cell) bool {
 	// CCTV terminal requires room power to operate
 	if !g.RoomCCTVPowered[cell.Name] {
 		logMessage(g, "CCTV terminal has no power. Restore power via the maintenance terminal.")
-		renderer.AddCallout(cell.Row, cell.Col, "TITLE{Terminal has no power}", renderer.CalloutColorTerminal, 0)
+		renderer.AddCallout(cell.Row, cell.Col, "UNPOWERED{Terminal has no power}", renderer.CalloutColorTerminal, 0)
 		return true // consumed interaction, but no effect
 	}
 
@@ -334,7 +443,7 @@ func CheckAdjacentHazardControlsAtCell(g *state.Game, cell *world.Cell) bool {
 	// Hazard control (circuit breaker) requires room power to operate
 	if !g.RoomCCTVPowered[cell.Name] {
 		logMessage(g, "Circuit breaker has no power. Restore power via the maintenance terminal.")
-		renderer.AddCallout(cell.Row, cell.Col, "TITLE{No power}", renderer.CalloutColorHazardCtrl, 0)
+		renderer.AddCallout(cell.Row, cell.Col, "UNPOWERED{No power}", renderer.CalloutColorHazardCtrl, 0)
 		return true
 	}
 
@@ -357,7 +466,7 @@ func CheckAdjacentMaintenanceTerminalAtCell(g *state.Game, cell *world.Cell) boo
 	maintenanceTerm := gameworld.GetGameData(cell).MaintenanceTerm
 	if !maintenanceTerm.Powered {
 		logMessage(g, "Terminal has no power. Restore power from another maintenance terminal.")
-		renderer.AddCallout(cell.Row, cell.Col, "TITLE{Terminal has no power}", renderer.CalloutColorMaintenance, 0)
+		renderer.AddCallout(cell.Row, cell.Col, "UNPOWERED{Terminal has no power}", renderer.CalloutColorMaintenance, 0)
 		return true
 	}
 

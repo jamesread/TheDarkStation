@@ -69,10 +69,11 @@ func (e *EbitenRenderer) drawColoredTextWithFace(screen *ebiten.Image, str strin
 	text.Draw(screen, translated, face, op)
 }
 
-// hasTitleMarkup returns true if the string contains title-style markup (TITLE{}, UNPOWERED{}, UNPOWERED_SUBTLE{}).
+// hasTitleMarkup returns true if the string contains title-style markup (TITLE{}, UNPOWERED{}, POWERED{}, UNPOWERED_SUBTLE{}).
 // Used to apply title face (bold, larger) to the first line of callouts.
 func hasTitleMarkup(s string) bool {
-	return strings.Contains(s, "TITLE{") || strings.Contains(s, "UNPOWERED{") || strings.Contains(s, "UNPOWERED_SUBTLE{")
+	return strings.Contains(s, "TITLE{") || strings.Contains(s, "UNPOWERED{") ||
+		strings.Contains(s, "POWERED{") || strings.Contains(s, "UNPOWERED_SUBTLE{")
 }
 
 // getTitleColorFromLine returns the accent color from the first marked-up segment in the line, or colorAction as fallback.

@@ -83,41 +83,15 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	headerHeight := int(uiFontSize) + 20
 	statusBarHeight := int(uiFontSize)*2 + 20
 
-	// Consistent margin around map area (20px on all sides)
-	mapMargin := 20
+	const mapMargin = 20
 
-	// Calculate maximum available space for map (after header, with consistent margins)
-	// Note: status bar and messages panel are overlays and do not reduce map height
-	availableHeight := screenHeight - headerHeight - mapMargin*2
-	availableWidth := screenWidth - mapMargin*2
-
-	// Recalculate viewport to maximize based on current available space
-	// This ensures the viewport uses the maximum available space
-	viewportCols := availableWidth / e.tileSize
-	viewportRows := availableHeight / e.tileSize
-
-	// Ensure minimum viewport size
-	if viewportCols < 15 {
-		viewportCols = 15
-	}
-	if viewportRows < 11 {
-		viewportRows = 11
-	}
-
-	// Keep odd numbers for centering
-	if viewportCols%2 == 0 {
-		viewportCols--
-	}
-	if viewportRows%2 == 0 {
-		viewportRows--
-	}
-
-	// Update stored viewport (will be used in next frame's recalculateViewport)
-	e.viewportCols = viewportCols
-	e.viewportRows = viewportRows
+	// Use viewport from Layout/recalculateViewport/zoom only. Do NOT syncViewportForMap from
+	// screen.Bounds() here — Bounds() can disagree slightly with WindowSize() (HiDPI / backing
+	// store), toggling viewportCols/Rows between draws and causing violent pan jitter during
+	// maintenance room navigation even when camera lerp is smooth.
 
 	// Calculate map dimensions to fill available space
-	mapAreaWidth := viewportCols * e.tileSize
+	mapAreaWidth := e.viewportCols * e.tileSize
 
 	// Center the map horizontally and vertically with consistent 20px margins
 	mapX := (screenWidth - mapAreaWidth) / 2
@@ -134,9 +108,6 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	// Draw status bar (overlay on top left of map) - use snapshot data
 	statusY := mapY + mapMargin // Consistent margin from top of map
 	e.drawStatusBarFromSnapshot(screen, &snap, mapX+mapMargin, statusY, mapAreaWidth, statusBarHeight)
-
-	// Draw messages panel as a bottom‑aligned overlay, limited to a few lines
-	e.drawMessagesFromSnapshot(screen, &snap, screenWidth, screenHeight)
 
 	// Draw menu overlays on top of everything (covers most of the screen)
 	if genericMenuActive {
@@ -171,66 +142,112 @@ func (e *EbitenRenderer) drawFPSCounter(screen *ebiten.Image, screenWidth, scree
 	e.drawColoredText(screen, fpsText, x, y, colorSubtle)
 }
 
-// drawMap renders the game map
-func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, mapX, mapY int, snap *renderSnapshot) {
-	if g.CurrentCell == nil || g.Grid == nil {
+// advanceMaintenanceCamera sets the map camera center. With the maintenance room list open,
+// the camera eases toward the selected room center (~1s smootherstep). Jitter fixes are in the
+// overlay (vector AA off, stable panel height) and in drawMap: fractional blit only while the
+// camera is still moving; when idle the blit snaps to whole pixels to avoid static LCD shimmer.
+// Normal play follows the player with no animation.
+func (e *EbitenRenderer) advanceMaintenanceCamera() {
+	const maintCameraPanMs = 1000
+
+	e.gameMutex.RLock()
+	g := e.game
+	e.gameMutex.RUnlock()
+	if g == nil || g.CurrentCell == nil || g.Grid == nil {
 		return
 	}
 
-	// Use snapshot for player position to prevent jitter
-	playerRow := snap.playerRow
-	playerCol := snap.playerCol
-
-	// Compute target center: room center when in select room dialog, else player
-	targetRow := float64(playerRow)
-	targetCol := float64(playerCol)
+	targetRow := float64(g.CurrentCell.Row)
+	targetCol := float64(g.CurrentCell.Col)
 	if g.MaintenanceMenuRoom != "" {
 		if r, c, ok := roomCenter(g.Grid, g.MaintenanceMenuRoom); ok {
 			targetRow, targetCol = float64(r), float64(c)
 		}
 	}
 
-	// Smooth camera transition over 1 second when focusing on room
-	const transitionDurationNs = 1_000_000_000 // 1 second in nanoseconds
-	now := time.Now().UnixNano()
-
 	if g.MaintenanceMenuRoom != "" {
-		// In room select: animate toward target
-		targetChanged := e.cameraTargetRow != targetRow || e.cameraTargetCol != targetCol
-		if targetChanged {
+		const posEps = 1e-6
+		if math.Abs(e.cameraTargetRow-targetRow) > posEps || math.Abs(e.cameraTargetCol-targetCol) > posEps {
 			e.cameraFromRow = e.cameraCenterRow
 			e.cameraFromCol = e.cameraCenterCol
 			e.cameraTargetRow = targetRow
 			e.cameraTargetCol = targetCol
-			e.cameraTransitionStart = now
+			e.cameraTransitionStart = e.menuAnimClockMilli
 		}
-		progress := float64(now-e.cameraTransitionStart) / float64(transitionDurationNs)
-		if progress > 1 {
-			progress = 1
+
+		elapsed := e.menuAnimClockMilli - e.cameraTransitionStart
+		if elapsed < 0 {
+			elapsed = 0
 		}
-		// Quintic ease-in-out for very smooth transition (small steps at start/end)
-		t := progress * progress * progress * (progress*(progress*6-15) + 10)
-		e.cameraCenterRow = e.cameraFromRow + (e.cameraTargetRow-e.cameraFromRow)*t
-		e.cameraCenterCol = e.cameraFromCol + (e.cameraTargetCol-e.cameraFromCol)*t
-	} else {
-		// Not in room select: snap to player immediately
-		e.cameraCenterRow = targetRow
-		e.cameraCenterCol = targetCol
-		e.cameraTargetRow = targetRow
-		e.cameraTargetCol = targetCol
+		progress := float64(elapsed) / float64(maintCameraPanMs)
+		if progress >= 1.0 {
+			e.cameraCenterRow = e.cameraTargetRow
+			e.cameraCenterCol = e.cameraTargetCol
+			progress = 1.0
+		} else {
+			t := smootherstep(progress)
+			e.cameraCenterRow = e.cameraFromRow + (e.cameraTargetRow-e.cameraFromRow)*t
+			e.cameraCenterCol = e.cameraFromCol + (e.cameraTargetCol-e.cameraFromCol)*t
+		}
+		maintPanLogfThrottled("Update maint pan progress=%.4f cam=%.4f,%.4f tgt=%.4f,%.4f room=%q vr=%d,%d",
+			progress, e.cameraCenterRow, e.cameraCenterCol, e.cameraTargetRow, e.cameraTargetCol,
+			g.MaintenanceMenuRoom, e.viewportRows, e.viewportCols)
+		return
 	}
 
-	// Viewport top-left in world space (may be fractional for smooth scrolling)
+	e.cameraCenterRow = targetRow
+	e.cameraCenterCol = targetCol
+	e.cameraTargetRow = targetRow
+	e.cameraTargetCol = targetCol
+}
+
+// smootherstep maps [0,1] → [0,1] with zero first and second derivatives at the endpoints (Wikipedia / Perlin).
+func smootherstep(t float64) float64 {
+	if t <= 0 {
+		return 0
+	}
+	if t >= 1 {
+		return 1
+	}
+	return t * t * t * (t*(t*6-15) + 10)
+}
+
+// drawMap renders the game map
+func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, mapX, mapY int, snap *renderSnapshot) {
+	if g.CurrentCell == nil || g.Grid == nil {
+		return
+	}
+
+	// Camera center is advanced in advanceMaintenanceCamera (Update tick) — see comment there.
 	topLeftRow := e.cameraCenterRow - float64(e.viewportRows)/2
 	topLeftCol := e.cameraCenterCol - float64(e.viewportCols)/2
 
 	startRow := int(math.Floor(topLeftRow))
 	startCol := int(math.Floor(topLeftCol))
 
-	// Sub-tile pixel offset for smooth scrolling (float64 for sub-pixel precision)
+	// Sub-tile pixel offset for smooth scrolling (float64 for sub-tile precision)
 	offsetX := (topLeftCol - math.Floor(topLeftCol)) * float64(e.tileSize)
 	offsetY := (topLeftRow - math.Floor(topLeftRow)) * float64(e.tileSize)
 
+	// Maintenance menu at rest: integer blit offsets reduce static shimmer. While the camera is
+	// easing to a new room, keep fractional offsets so the pan stays visually smooth.
+	const posEps = 1e-5
+	panningMaint := g.MaintenanceMenuRoom != "" && (math.Abs(e.cameraCenterRow-e.cameraTargetRow) > posEps ||
+		math.Abs(e.cameraCenterCol-e.cameraTargetCol) > posEps)
+	blitX := offsetX
+	blitY := offsetY
+	if g.MaintenanceMenuRoom != "" && !panningMaint {
+		blitX = math.Round(offsetX)
+		blitY = math.Round(offsetY)
+	}
+
+	if maintPanDebugOn() && g.MaintenanceMenuRoom != "" {
+		e.maintPanDrawCount++
+		if e.maintPanDrawCount == 2 {
+			maintPanLogf("second Draw() in same Update tick animClockMs=%d offX=%.4f offY=%.4f cam=%.4f,%.4f",
+				e.menuAnimClockMilli, offsetX, offsetY, e.cameraCenterRow, e.cameraCenterCol)
+		}
+	}
 	// Ensure map buffer exists and is correctly sized
 	bufW := e.viewportCols * e.tileSize
 	bufH := e.viewportRows * e.tileSize
@@ -254,12 +271,12 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, mapX, mapY
 
 	// Blit map buffer to screen with fractional offset (one draw = smooth, no jitter)
 	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Translate(float64(mapX)+offsetX, float64(mapY)+offsetY)
+	op.GeoM.Translate(float64(mapX)+blitX, float64(mapY)+blitY)
 	screen.DrawImage(e.mapBuffer, op)
 
 	// Draw overlays on top (labels, callouts, player) - they use screen-space positions
-	mapXF := float64(mapX) + offsetX
-	mapYF := float64(mapY) + offsetY
+	mapXF := float64(mapX) + blitX
+	mapYF := float64(mapY) + blitY
 	e.drawRoomLabels(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawCallouts(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawPlayerWithDebounce(screen, g, snap, mapXF, mapYF, startRow, startCol)
@@ -340,16 +357,126 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 			customBg = opts.BackgroundColor
 		}
 		if customBg == nil && needsClearing {
-			customBg = colorBlockedBackground
+			if opts != nil {
+				customBg = focusPlateForForeground(opts.Color)
+			} else {
+				customBg = colorBlockedBackground
+			}
 		} else if customBg == nil && gameworld.HasPoweredGenerator(cell) {
 			customBg = colorWallBgPowered
 		} else if isFocused || isInteractable {
-			customBg = colorFocusBackground
+			if opts != nil {
+				customBg = focusPlateForForeground(opts.Color)
+			} else {
+				customBg = colorFocusBackground
+			}
 		} else if cell != nil && cell.ExitCell && (g.HasMap || cell.Discovered) && !cell.Locked && g.AllGeneratorsPowered() && g.AllHazardsCleared() {
 			customBg = e.getPulsingExitBackgroundColor()
 		}
 	}
 	return customBg
+}
+
+// focusPlateForForeground returns a dark, semi-opaque tile background aligned with the cell icon color.
+// Warm families (amber maintenance, red alarm, bright yellow locks) use hue-consistent dark plates; other
+// colors use a restrained cool-biased mix (see specs/map-tile-focus-and-contrast.md).
+func focusPlateForForeground(fg color.Color) color.Color {
+	if isAmberTerminalForeground(fg) {
+		return warmFocusPlateForForeground(fg)
+	}
+	if isBrightYellowLockForeground(fg) {
+		return yellowFamilyFocusPlate(fg)
+	}
+	if isRedDominantForeground(fg) {
+		return redFamilyFocusPlate(fg)
+	}
+	r32, g32, b32, _ := fg.RGBA()
+	r8 := uint8(r32 >> 8)
+	g8 := uint8(g32 >> 8)
+	b8 := uint8(b32 >> 8)
+
+	// Default: dark cool base + scaled inverse of foreground (works for blues/greens/purples).
+	const baseR, baseG, baseB = 18, 22, 38
+	invR := 255 - r8
+	invG := 255 - g8
+	invB := 255 - b8
+	const a = 220
+	outR := uint8(min(255, int(baseR)+int(invR)*70/255))
+	outG := uint8(min(255, int(baseG)+int(invG)*65/255))
+	outB := uint8(min(255, int(baseB)+int(invB)*75/255))
+	return color.RGBA{R: outR, G: outG, B: outB, A: a}
+}
+
+// isBrightYellowLockForeground matches locked-door yellow (+) without picking up orange batteries etc.
+func isBrightYellowLockForeground(fg color.Color) bool {
+	r32, g32, b32, _ := fg.RGBA()
+	r8 := uint8(r32 >> 8)
+	g8 := uint8(g32 >> 8)
+	b8 := uint8(b32 >> 8)
+	return r8 >= 235 && g8 >= 215 && b8 <= 50
+}
+
+// isRedDominantForeground matches hazard reds, unpowered generators, red exit tones, etc.
+func isRedDominantForeground(fg color.Color) bool {
+	r32, g32, b32, _ := fg.RGBA()
+	r8 := uint8(r32 >> 8)
+	g8 := uint8(g32 >> 8)
+	b8 := uint8(b32 >> 8)
+	if r8 < 130 {
+		return false
+	}
+	return int(r8) >= int(g8)+20 && int(r8) >= int(b8)+20
+}
+
+// redFamilyFocusPlate is a dark plate in the red/alarm family (not complementary teal).
+func redFamilyFocusPlate(fg color.Color) color.Color {
+	r32, g32, b32, _ := fg.RGBA()
+	r8 := uint8(r32 >> 8)
+	g8 := uint8(g32 >> 8)
+	b8 := uint8(b32 >> 8)
+	const a = 220
+	const br, bgBase, bb = 72, 22, 22
+	outR := uint8(min(255, br+int(r8)*48/255))
+	outG := uint8(min(255, bgBase+int(g8)*38/255))
+	outB := uint8(min(255, bb+int(b8)*38/255))
+	return color.RGBA{R: outR, G: outG, B: outB, A: a}
+}
+
+// yellowFamilyFocusPlate is a dark gold/brown behind bright yellow glyphs.
+func yellowFamilyFocusPlate(fg color.Color) color.Color {
+	r32, g32, b32, _ := fg.RGBA()
+	r8 := uint8(r32 >> 8)
+	g8 := uint8(g32 >> 8)
+	b8 := uint8(b32 >> 8)
+	const a = 220
+	const br, bgBase, bb = 52, 44, 10
+	outR := uint8(min(255, br+int(r8)*48/255))
+	outG := uint8(min(255, bgBase+int(g8)*42/255))
+	outB := uint8(min(255, bb+int(b8)*35/255))
+	return color.RGBA{R: outR, G: outG, B: outB, A: a}
+}
+
+// isAmberTerminalForeground reports hues like maintenance/CCTV orange (not pure yellow door-locked, etc.).
+func isAmberTerminalForeground(fg color.Color) bool {
+	r32, g32, b32, _ := fg.RGBA()
+	r8 := uint8(r32 >> 8)
+	g8 := uint8(g32 >> 8)
+	b8 := uint8(b32 >> 8)
+	return r8 > 200 && g8 >= 100 && g8 < 235 && b8 < 100
+}
+
+// warmFocusPlateForForeground is a dark amber/brown plate aligned with maintenance terminal coloring.
+func warmFocusPlateForForeground(fg color.Color) color.Color {
+	r32, g32, b32, _ := fg.RGBA()
+	r8 := uint8(r32 >> 8)
+	g8 := uint8(g32 >> 8)
+	b8 := uint8(b32 >> 8)
+	const a = 220
+	const br, bgBase, bb = 50, 32, 10
+	outR := uint8(min(255, br+int(r8)*55/255))
+	outG := uint8(min(255, bgBase+int(g8)*50/255))
+	outB := uint8(min(255, bb+int(b8)*40/255))
+	return color.RGBA{R: outR, G: outG, B: outB, A: a}
 }
 
 // drawTileWithBg draws a single tile with optional custom background color.
@@ -932,137 +1059,5 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 		}
 		genText += strings.Join(genParts, ", ")
 		e.drawColoredTextSegments(screen, e.parseMarkup(genText), x, currentY)
-	}
-}
-
-// drawMessagesFromSnapshot draws the messages panel as a bottom‑aligned overlay using snapshot data.
-// The background panel is only drawn when there are visible (non‑expired) messages and shows at most 4 lines.
-func (e *EbitenRenderer) drawMessagesFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, screenWidth, screenHeight int) {
-	const maxVisibleLines = 4
-
-	fontSize := e.getUIFontSize()
-	lineHeight := int(fontSize) + 4 // Font size plus padding for proper line spacing
-
-	if len(snap.messages) == 0 {
-		// No messages to show, so don't draw any panel background
-		return
-	}
-
-	now := time.Now().UnixMilli()
-	const messageLifetime = 10000 // 10 seconds in milliseconds
-
-	// Collect visible messages (messages are already sorted chronologically in snapshot)
-	type visibleMessage struct {
-		segments []textSegment
-	}
-	visible := make([]visibleMessage, 0, maxVisibleLines)
-
-	// Iterate through messages in chronological order (oldest first)
-	// Take the last maxVisibleLines messages (most recent)
-	startIdx := len(snap.messages) - maxVisibleLines
-	if startIdx < 0 {
-		startIdx = 0
-	}
-
-	for i := startIdx; i < len(snap.messages) && len(visible) < maxVisibleLines; i++ {
-		msgEntry := snap.messages[i]
-		age := now - msgEntry.Timestamp
-		if age >= messageLifetime {
-			continue // Skip fully faded/expired messages (shouldn't happen, but double-check)
-		}
-
-		// Calculate alpha: 1.0 at start, 0.0 at messageLifetime
-		// Fade starts at 7 seconds (70% of lifetime), fully transparent at 10 seconds
-		fadeStart := int64(messageLifetime * 7 / 10) // Start fading at 7 seconds
-		alpha := 1.0
-		if age > fadeStart {
-			// Fade from 1.0 to 0.0 over the last 3 seconds
-			fadeProgress := float64(age-fadeStart) / float64(messageLifetime-fadeStart)
-			alpha = 1.0 - fadeProgress
-			if alpha < 0 {
-				alpha = 0
-			}
-		}
-
-		// Parse markup and apply alpha to segment colors
-		segments := e.parseMarkup(msgEntry.Text)
-		fadedSegments := make([]textSegment, len(segments))
-		for j, seg := range segments {
-			fadedSegments[j] = textSegment{
-				text:  seg.text,
-				color: e.applyAlpha(seg.color, alpha),
-			}
-		}
-
-		visible = append(visible, visibleMessage{segments: fadedSegments})
-	}
-
-	// If no messages are actually visible after fading, don't draw anything
-	if len(visible) == 0 {
-		return
-	}
-
-	// Calculate the maximum width needed for all messages
-	maxTextWidth := 0.0
-	// Include header width
-	headerText := "─── Messages ───"
-	headerWidth := e.getTextWidth(headerText)
-	if headerWidth > maxTextWidth {
-		maxTextWidth = headerWidth
-	}
-	// Calculate width for each visible message (sum of all segments)
-	for _, vm := range visible {
-		msgWidth := 0.0
-		for _, seg := range vm.segments {
-			msgWidth += e.getTextWidth(seg.text)
-		}
-		if msgWidth > maxTextWidth {
-			maxTextWidth = msgWidth
-		}
-	}
-
-	// Calculate dynamic panel height based on number of visible messages
-	headerHeight := int(fontSize) + 8
-	bodyHeight := len(visible) * lineHeight
-	panelHeight := headerHeight + bodyHeight + 10 // Extra padding
-
-	// Calculate panel width based on widest text, with padding
-	panelWidth := int(maxTextWidth) + 20 // 10px padding on each side
-	if panelWidth < 100 {
-		panelWidth = 100 // Minimum width
-	}
-	// Don't exceed screen width
-	if panelWidth > screenWidth-40 {
-		panelWidth = screenWidth - 40
-	}
-
-	// Position panel aligned to the bottom of the window, centered horizontally
-	marginBottom := 20
-	bgX := float32((screenWidth - panelWidth) / 2)
-	bgY := float32(screenHeight - marginBottom - panelHeight)
-	if bgY < 0 {
-		bgY = 0
-	}
-	bgW := float32(panelWidth)
-	bgH := float32(panelHeight)
-
-	// Border matches title color (header uses colorSubtle, but panel has title area)
-	borderColor := colorAction
-
-	// Border
-	vector.DrawFilledRect(screen, bgX-1, bgY-1, bgW+2, bgH+2, borderColor, false)
-	// Background
-	vector.DrawFilledRect(screen, bgX, bgY, bgW, bgH, colorPanelBackground, false)
-
-	// Header - position at top with proper padding (centered in panel)
-	x := int(bgX) + 10
-	headerY := int(bgY) + 8 - int(fontSize) // Small padding from top, account for baseline
-	e.drawColoredText(screen, headerText, x, headerY, colorSubtle)
-
-	// Messages - start below header with proper spacing
-	messageStartY := int(bgY) + headerHeight + 4
-	for i, vm := range visible {
-		msgY := messageStartY + i*lineHeight - int(fontSize)
-		e.drawColoredTextSegments(screen, vm.segments, x, msgY)
 	}
 }

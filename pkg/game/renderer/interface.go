@@ -38,8 +38,7 @@ type Renderer interface {
 	// Clear clears the display
 	Clear()
 
-	// RenderFrame renders a complete game frame
-	// This includes the map, status bar, messages, and input prompt
+	// RenderFrame renders a complete game frame (map, status bar, callouts, menus)
 	RenderFrame(g *state.Game)
 
 	// GetInput gets user input (event-based)
@@ -53,7 +52,7 @@ type Renderer interface {
 	// FormatText formats a message with the renderer's markup system
 	FormatText(msg string, args ...any) string
 
-	// ShowMessage displays a message to the user
+	// ShowMessage optional hook (Ebiten: no-op; use callouts). Used by PrintString compatibility.
 	ShowMessage(msg string)
 
 	// GetViewportSize returns the current viewport dimensions (rows, cols)
@@ -182,7 +181,7 @@ var (
 	CalloutColorSuccess          = color.RGBA{100, 255, 150, 255} // Green
 	CalloutColorWarning          = color.RGBA{255, 220, 100, 255} // Yellow
 	CalloutColorDanger           = color.RGBA{255, 120, 120, 255} // Red
-	CalloutColorItem             = color.RGBA{220, 170, 255, 255} // Purple
+	CalloutColorItem             = color.RGBA{210, 185, 110, 255} // Tan (matches colorItem / map pickups)
 	CalloutColorGenerator        = color.RGBA{255, 100, 100, 255} // Red (unpowered)
 	CalloutColorGeneratorOn      = color.RGBA{0, 255, 100, 255}   // Green (powered)
 	CalloutColorTerminal         = color.RGBA{100, 150, 255, 255} // Blue
