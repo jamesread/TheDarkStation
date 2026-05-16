@@ -84,6 +84,8 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	statusBarHeight := int(uiFontSize)*2 + 20
 
 	const mapMargin = 20
+	// Objectives/deck/inventory panel hugs the window top-left; outer rounded rect is drawn at (x-10, y-5).
+	const objectivesWindowMargin = 12
 
 	// Use viewport from Layout/recalculateViewport/zoom only. Do NOT syncViewportForMap from
 	// screen.Bounds() here — Bounds() can disagree slightly with WindowSize() (HiDPI / backing
@@ -105,9 +107,10 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	// Draw the map using snapshot for player position
 	e.drawMap(screen, g, mapX, mapY, &snap)
 
-	// Draw status bar (overlay on top left of map) - use snapshot data
-	statusY := mapY + mapMargin // Consistent margin from top of map
-	e.drawStatusBarFromSnapshot(screen, &snap, mapX+mapMargin, statusY, mapAreaWidth, statusBarHeight)
+	// Objectives/deck/inventory overlay (snapshot): window top-left with small inset (matches FPS margin style).
+	statusX := objectivesWindowMargin + 10
+	statusY := objectivesWindowMargin + 5
+	e.drawStatusBarFromSnapshot(screen, &snap, statusX, statusY, mapAreaWidth, statusBarHeight)
 
 	// Draw menu overlays on top of everything (covers most of the screen)
 	if genericMenuActive {
@@ -837,7 +840,8 @@ func (e *EbitenRenderer) getDirectionText(g *state.Game, cell *world.Cell, direc
 	return direction
 }
 
-// drawStatusBarFromSnapshot draws the inventory and generator status using snapshot data
+// drawStatusBarFromSnapshot draws deck/objectives plus inventory and generator lines using snapshot data.
+// Caller supplies anchor x,y so panel/outlining aligns with layout (window top-left in gameplay).
 func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, x, y, width, height int) {
 	// Check if there's anything to show
 	hasObjectives := len(snap.objectives) > 0
