@@ -1,4 +1,4 @@
-# generated: 2026-05-16
+# generated: 2026-05-17
 # project: TheDarkStation
 # project_key: TheDarkStation
 # tracking_system: file-system
@@ -33,7 +33,7 @@
 # - SM typically creates next story after previous one is 'done' to incorporate learnings
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
-generated: "2026-05-16"
+generated: "2026-05-17"
 project: TheDarkStation
 project_key: TheDarkStation
 tracking_system: file-system
@@ -72,15 +72,9 @@ development_status:
   4-4-final-deck-and-completion-ending: done
   epic-4-retrospective: optional
 
-  epic-5: in-progress
-  5-1-environmental-legibility-and-diegetic-detail: review
-  5-2-observation-led-investigation-beats: backlog
-  5-3-multi-hop-inference-and-cross-room-linkage: backlog
-  5-4-terminal-depth-as-instruments-not-door-switches: backlog
+  epic-5: done
+  5-1-environmental-legibility-and-diegetic-detail: done
+  5-2-observation-led-investigation-beats: done
+  5-3-multi-hop-inference-and-cross-room-linkage: done
+  5-4-terminal-depth-as-instruments-not-door-switches: done
   epic-5-retrospective: optional
-
-  epic-6: backlog
-  6-1-deck-scaled-movement-and-input-friction: backlog
-  6-2-maintenance-terminal-interaction-decay: backlog
-  6-3-system-status-message-escalation: backlog
-  epic-6-retrospective: optional

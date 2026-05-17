@@ -30,7 +30,7 @@ var (
 	colorMaintenance     = color.RGBA{255, 165, 0, 255}   // Orange for maintenance terminals
 	colorMaintenanceBg   = color.RGBA{58, 38, 12, 255}    // Dark orange tile plate (pairs with colorMaintenance)
 	colorFurniture       = color.RGBA{255, 150, 255, 255} // Bright pink
-	colorFurnitureCheck  = color.RGBA{200, 180, 100, 255} // Tan/brown
+	colorFurnitureCheck  = color.RGBA{180, 105, 242, 255} // Violet-purple (checked; natural hue shift from pink)
 	colorExitLocked      = color.RGBA{255, 100, 100, 255} // Bright red
 	colorExitUnlocked    = color.RGBA{100, 255, 100, 255} // Bright green
 	colorSubtle          = color.RGBA{120, 130, 180, 255} // Soft blue-purple-gray

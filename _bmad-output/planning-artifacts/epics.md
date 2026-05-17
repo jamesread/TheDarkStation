@@ -43,7 +43,6 @@ FR23: Start room doors powered at init so the player can leave.
 FR24: Room connectivity: every named room's walkable cells (excluding blocking entities) form a single connected component; placement of blocking entities must not disconnect room (all doorways mutually reachable within room).
 FR25: Level setup order (power-related): InitRoomPower → placement (hazards, furniture, puzzles, maintenance terminals) → EnsureSolvabilityDoorPower → InitMaintenanceTerminalPower → player at start cell; reset/advance level re-runs setup so room and terminal power return to initial state.
 FR26: **Riven-inspired exploration and puzzle depth (incremental scope):** deepen engagement beyond repetitive “terminal menu → toggle → door → keycard” loops while preserving the existing minimal/text-forward presentation and procedural deck generation. The station should feel more **environmentally legible** and puzzles more **observation-led** and **multi-step** where procedural constraints allow—in the spirit of Riven’s exploration-first, decaying-world, observational puzzles and futile-but-resolvable progression—but **explicitly not** a goal of matching Riven’s scale, bespoke geometry density, or puzzle intricacy (“fraction-of-Riven” backlog honesty). No lose condition; completion philosophy unchanged (NFR4).
-FR27: Late-game mechanical decay (optional horror flavour): on deeper decks, inputs occasionally require repetition; movement may stall briefly between moves; terminal selections may fail on first attempt; actions may complete after a short delay; paired with escalating technical status messaging per GDD (e.g. STATION POWER UNSTABLE → UNIT RESPONSE DELAYED → UNIT POWER RESERVE CRITICAL). Behaviour must remain fair (no unwinnable states), reproducible where feasible (deterministic hooks documented), and toggleable or thresholded so early decks stay unaffected unless configured otherwise.
 
 ### NonFunctional Requirements
 
@@ -65,7 +64,6 @@ NFR7: Technical stack and structure: Go 1.24, Ebiten; single executable; engine 
 - Level layout: Invariants I1–I7 and rules R1–R8 (level generation and layout) must be followed; EnsureSolvabilityDoorPower runs after maintenance terminal placement; locked door cells impassable for reachability; placement checks to avoid room disconnection (R8).
 - Level layout: Solvability validation recommended (e.g. devtools/CI): given dumped level, verify exit reachable and win conditions satisfiable; optionally verify no gatekeeper room with unpowered doors and no adjacent-reachable maintenance terminal.
 - Riven-inspired depth and puzzle engagement: **FR26**, **Epic 5** (preserve art/generation pillars; incremental depth—see epic preamble).
-- Late-game mechanical decay: **FR27**, **Epic 6** (optional flavour; thresholds and determinism in stories).
 
 ### FR Coverage Map
 
@@ -95,7 +93,6 @@ FR23: Epic 1 - Start room doors powered at init
 FR24: Epic 1 - Room connectivity (single component, placement rules)
 FR25: Epic 2 - Level setup order (power-related)
 FR26: Epic 5 - Riven-inspired exploration & puzzle depth (incremental)
-FR27: Epic 6 - Late-game mechanical decay (inputs, terminals, status escalation)
 
 ## Epic List
 
@@ -118,10 +115,6 @@ Player experiences the intended narrative and tone: terminals as narrative surfa
 ### Epic 5: Riven-Inspired Depth (Environmental & Puzzle Engagement)
 Incrementally moves gameplay toward **Riven-like** qualities—exploration-led pacing, a decaying coherent place, observational puzzles, no lose state, and futility framed as completion—not triumph—while keeping **existing rendering minimalism** and **procedural deck generation**. Explicit product honesty: deliver meaningful uplift over menu-door loops, not Myst-era bespoke density.
 **FRs covered:** FR26 (+ NFR1 implicit narrative; NFR3 tone; existing power/gates remain substrate—Epics 2–3)
-
-### Epic 6: Late-Game Mechanical Decay
-Player feels the maintenance unit itself degrade on deeper decks—inputs stutter, terminals hesitate, and status lines escalate—without introducing death, failure, or unsolvable states. Optional GDD horror flavour tied to progression depth.
-**FRs covered:** FR27 (+ NFR3 tone compatibility; technical copy stays dry—see Story 6.3 for deliberate STATUS wording)
 
 ---
 
@@ -492,52 +485,3 @@ So that terminals feel like instrumentation embedded in a world rather than gene
 **Then** terminals surface **secondary read-only strata** (e.g. timestamp-like markers, subsystem IDs consistent with environmental labels, correlated fault codes) that reward cross-checking with room observations
 **And** menus retain Epic 4 tone (technical, dry, non-personified narrator); optional navigational grouping improves browseability without breaking minimal presentation
 **And** performance remains acceptable on desktop targets (NFR7 ethos); no networked dependency introduced
-
----
-
-## Epic 6: Late-Game Mechanical Decay
-
-Player feels the maintenance unit itself degrade on deeper decks—inputs stutter, terminals hesitate, and status lines escalate—without introducing death, failure, or unwinnable layouts. **FRs covered:** FR27.
-
-### Story 6.1: Deck-Scaled Movement and Input Friction
-
-As a player,
-I want subtle friction on movement and core actions on later decks,
-So that progressing deeper feels physically strained without a game-over state.
-
-**Acceptance Criteria:**
-
-**Given** FR27 decay is enabled (feature flag or deck-depth threshold documented in implementation)
-**When** I play on decks at or beyond that threshold
-**Then** movement keys may occasionally require an extra press before a step registers (bounded rate; deterministic or seeded logic documented for tests)
-**And** brief stalls between accepted moves may occur (maximum duration capped so traversal cannot deadlock indefinitely)
-**And** non-movement actions may complete after a visible short delay while remaining cancellable or repeatable where the existing UX allows
-**And** earlier decks remain unaffected unless configuration explicitly enables decay there
-
-### Story 6.2: Maintenance Terminal Interaction Decay
-
-As a player,
-I want maintenance terminals on degraded decks to feel unreliable,
-So that ritual-without-purpose extends to how I operate station systems.
-
-**Acceptance Criteria:**
-
-**Given** a powered maintenance terminal on a deck subject to decay (same threshold as Story 6.1)
-**When** I navigate menus or confirm choices
-**Then** a selection may occasionally fail to register on the first attempt (player-visible retry; no soft-lock—every intended choice remains reachable within bounded extra inputs)
-**And** feedback distinguishes ignored input vs deferred acceptance vs success without contradicting Epic 4’s technical tone
-**And** behaviour composes safely with existing terminal power rules (Story 2.3, Story 4.1)
-
-### Story 6.3: System Status Message Escalation
-
-As a player,
-I want status and terminal banners to escalate as decay intensifies,
-So that dread is reinforced through systems language, not exposition.
-
-**Acceptance Criteria:**
-
-**Given** decay messaging tiers tied to deck depth or a documented decay stage
-**When** I read maintenance terminals or other authoritative status surfaces on deeper decks
-**Then** messaging escalates along the GDD ladder at minimum from **STATION POWER UNSTABLE** toward **UNIT RESPONSE DELAYED** and **UNIT POWER RESERVE CRITICAL** as depth/stage increases (exact tier boundaries configurable but documented)
-**And** copy stays technical, dry, and implicit (NFR1); complements—not duplicates—overload and power callouts from Epic 2
-**And** deliberate use of **UNIT** in these status lines follows GDD/Epic guidance for subsystem-style reporting and does not replace broader NFR2 rules for narrative voice elsewhere during play

@@ -271,7 +271,7 @@ Movement and interaction are keyboard-first; no combat or twitch timing. Control
 
 ### Fear Mechanics
 
-**No traditional fear mechanics.** No pursuer, no sanity meter, no combat. “Fear” is existential: the player infers heat death, last semi-sentient unit, systems that no longer allow. Visibility/darkness: when `GetAvailablePower() <= 0`, cells beyond a small radius can darken (discovered/visited cleared). Vulnerability is logical (stuck until puzzle solved), not physical. Optional late-game flavour: unit decay (inputs repeat, movement pauses, terminal lag); messages shift from STATION POWER UNSTABLE to UNIT RESPONSE DELAYED to UNIT POWER RESERVE CRITICAL.
+**No traditional fear mechanics.** No pursuer, no sanity meter, no combat. “Fear” is existential: the player infers heat death, last semi-sentient unit, systems that no longer allow. Visibility/darkness: when `GetAvailablePower() <= 0`, cells beyond a small radius can darken (discovered/visited cleared). Vulnerability is logical (stuck until puzzle solved), not physical.
 
 ### Resource Scarcity
 
@@ -287,7 +287,7 @@ Movement and interaction are keyboard-first; no combat or twitch timing. Control
 
 ### Player Progression
 
-**No character or item upgrades within a run.** Progression is learning: rules of power, short-out behaviour, keycard and hazard placement patterns, terminal language. Cross-run: players get faster and more intentional; replay value is “solve this new instance” (procedural deck). Optional (from specs): late-game unit decay as flavour—inputs occasionally repeat, movement pauses, terminal options fail to register; system messages shift toward UNIT POWER RESERVE CRITICAL. That is narrative/atmosphere, not a progression unlock.
+**No character or item upgrades within a run.** Progression is learning: rules of power, short-out behaviour, keycard and hazard placement patterns, terminal language. Cross-run: players get faster and more intentional; replay value is “solve this new instance” (procedural deck).
 
 ### Difficulty Curve
 

@@ -1,6 +1,7 @@
 package menu
 
 import (
+	"strings"
 	"testing"
 
 	"darkstation/pkg/engine/world"
@@ -354,5 +355,76 @@ func TestRestorePowerNearbyTerminals_PowersOwnRoomUnpoweredTerminal(t *testing.T
 	}
 	if helpText != "Restored power to 1 terminal(s)" {
 		t.Errorf("helpText = %q, want 'Restored power to 1 terminal(s)'", helpText)
+	}
+}
+
+func TestMaintenanceInstrumentMenuLines_deterministic(t *testing.T) {
+	g, _ := makeMenuTestGame(t)
+	g.Level = 5
+	g.CurrentDeckID = 4
+	g.LevelSeed = 424242
+
+	a := strings.Join(maintenanceInstrumentMenuLines(g, "RoomA"), "\n")
+	b := strings.Join(maintenanceInstrumentMenuLines(g, "RoomA"), "\n")
+	if a != b {
+		t.Fatalf("instrument lines not deterministic")
+	}
+	if !strings.Contains(a, "SUBSYS-\tBUS-") || !strings.Contains(a, "LOG\tT+") {
+		t.Fatalf("expected trace lines, got:\n%s", a)
+	}
+}
+
+func TestMaintenanceInstrumentMenuLines_localCorrelates(t *testing.T) {
+	g := state.NewGame()
+	grid := world.NewGrid(3, 2)
+	grid.MarkAsRoomWithName(0, 0, "RoomA", "desc")
+	grid.MarkAsRoomWithName(0, 1, "RoomA", "desc")
+	grid.MarkAsRoomWithName(1, 0, "Corridor", "ROOM_CORRIDOR")
+	grid.MarkAsRoomWithName(1, 1, "Corridor", "ROOM_CORRIDOR")
+	grid.MarkAsRoomWithName(2, 0, "RoomB", "desc")
+	grid.MarkAsRoomWithName(2, 1, "RoomB", "desc")
+	grid.SetStartCellAt(0, 0)
+	grid.SetExitCellAt(2, 1)
+	grid.BuildAllCellConnections()
+	g.Grid = grid
+	g.Level = 5
+	g.CurrentDeckID = 2
+
+	for r := 0; r < 3; r++ {
+		for c := 0; c < 2; c++ {
+			gameworld.InitGameData(grid.GetCell(r, c))
+		}
+	}
+
+	puz := entities.NewPuzzleTerminal("P", entities.PuzzleSequence, "2-4-6-8", "", entities.RewardNone, "seq")
+	puz.LinkageToken = "LINK-MHOP-A"
+	gameworld.GetGameData(grid.GetCell(0, 0)).Puzzle = puz
+
+	corr := grid.GetCell(1, 0)
+	cgd := gameworld.GetGameData(corr)
+	cgd.LinkageTag = "LINK-MHOP-A"
+	cgd.EnvPlaqueMsgID = "ENV_PLAQUE_LINK_MHOP_A"
+
+	lines := maintenanceInstrumentMenuLines(g, "RoomA")
+	got := strings.Join(lines, "\n")
+	for _, needle := range []string{"XCORE-", "JNCT-", "ENVREF-", "LINK-MHOP-A", "ENV_PLAQUE_LINK_MHOP_A"} {
+		if !strings.Contains(got, needle) {
+			t.Fatalf("missing %q in:\n%s", needle, got)
+		}
+	}
+}
+
+func TestMaintenanceMenuItems_includeInstrumentStrata(t *testing.T) {
+	g, termCell := makeMenuTestGame(t)
+	term := gameworld.GetGameData(termCell).MaintenanceTerm
+	h := NewMaintenanceMenuHandler(g, termCell, term)
+	var joined strings.Builder
+	for _, it := range h.GetMenuItems() {
+		joined.WriteString(it.GetLabel())
+		joined.WriteByte('\n')
+	}
+	s := joined.String()
+	if !strings.Contains(s, "LOG\tT+") || !strings.Contains(s, "SUBSYS-\tBUS-") {
+		t.Fatalf("menu should include instrument trace lines:\n%s", s)
 	}
 }

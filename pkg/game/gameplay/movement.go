@@ -222,6 +222,9 @@ func MoveCell(g *state.Game, requestedCell *world.Cell) {
 		}
 
 		g.CurrentCell = requestedCell
+		maybeAnnounceObservationCueOnMove(g, requestedCell)
+		maybeAnnounceLinkageCueOnMove(g, requestedCell)
+		noteLinkageTagFromVisitedCell(g, requestedCell)
 	} else {
 		// Movement failed - trigger debounce animation
 		if direction != "" {

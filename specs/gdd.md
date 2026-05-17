@@ -225,29 +225,6 @@ It is **obedient to dead rules**.
 
 ---
 
-### 9.2 Player Decay (Late Game)
-
-The player unit begins to fail.
-
-This is communicated mechanically, not visually.
-
-Examples:
-- Inputs occasionally require repetition
-- Movement pauses briefly
-- Terminal options fail to register
-- Actions complete with delay
-
-System messages shift focus:
-
-- Early: `STATION POWER UNSTABLE`
-- Late: `UNIT RESPONSE DELAYED`
-- Final: `UNIT POWER RESERVE CRITICAL`
-
-The player is not being punished.
-They are **running out of time in a universe that no longer has time**.
-
----
-
 ## 10. Procedural Generation with an Ending
 
 ### 10.1 Finite Structure

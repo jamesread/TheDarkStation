@@ -19,6 +19,9 @@ type PuzzleTerminal struct {
 	Solved      bool         // Whether the puzzle has been solved
 	Reward      PuzzleReward // What the player gets for solving
 	Description string       // Description of the terminal
+	// LinkageToken (Story 5.3): nonempty means player must satisfy cross-room linkage
+	// (RecordLinkageToken) before solve even when FoundCodes includes the solution.
+	LinkageToken string
 }
 
 // PuzzleReward represents what the player gets for solving a puzzle

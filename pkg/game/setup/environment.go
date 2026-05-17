@@ -16,6 +16,11 @@ func isCorridorCell(c *world.Cell) bool {
 	return c != nil && c.Room && c.Name == "Corridor" && c.Description == "ROOM_CORRIDOR"
 }
 
+// IsCorridorJunctionLayer returns true for corridor cells used as junction plaque / linkage anchors (Stories 5.1–5.3).
+func IsCorridorJunctionLayer(c *world.Cell) bool {
+	return isCorridorCell(c)
+}
+
 func corridorNeighborCount(grid *world.Grid, row, col int) int {
 	cell := grid.GetCell(row, col)
 	if cell == nil {

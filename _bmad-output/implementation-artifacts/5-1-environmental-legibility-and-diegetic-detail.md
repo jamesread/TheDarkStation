@@ -1,6 +1,6 @@
 # Story 5.1: Environmental Legibility & Diegetic Detail
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -99,8 +99,8 @@ Epic 4 story markdown files are not present under `_bmad-output/implementation-a
 
 ## Story Completion Status
 
-- **Status:** review
-- **Note:** Corridor junction plaques + functional-layer furniture fallback implemented; ready for code-review workflow.
+- **Status:** done
+- **Note:** Corridor junction plaques + functional-layer furniture fallback implemented; Epic 5 closed in sprint tracking after review.
 
 ## Questions / Clarifications (non-blocking)
 

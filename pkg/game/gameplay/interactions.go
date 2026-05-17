@@ -393,6 +393,7 @@ func CheckAdjacentTerminalsAtCell(g *state.Game, cell *world.Cell) bool {
 }
 
 // CheckAdjacentPuzzlesAtCell checks a specific cell for puzzles and interacts with it
+// Observation-first beats (Story 5.2) add diegetic corridor stamps; solves still require FoundCodes here.
 // Returns true if a puzzle was interacted with
 func CheckAdjacentPuzzlesAtCell(g *state.Game, cell *world.Cell) bool {
 	if cell == nil || !gameworld.HasUnsolvedPuzzle(cell) {
@@ -409,6 +410,11 @@ func CheckAdjacentPuzzlesAtCell(g *state.Game, cell *world.Cell) bool {
 
 	// Check if player has found the solution code
 	if g.HasFoundCode(puzzle.Solution) {
+		// Story 5.3: correlation token must be inferred from another reachable surface before admit.
+		if puzzle.LinkageToken != "" && !g.HasLinkageToken(puzzle.LinkageToken) {
+			logMessage(g, "The terminal accepts your fragment, but a relay identifier is still unresolved.")
+			return true
+		}
 		// Player has the code, solve the puzzle
 		if !puzzle.IsSolved() {
 			puzzle.Solve()
@@ -439,6 +445,8 @@ func CheckAdjacentFurnitureAtCell(g *state.Game, cell *world.Cell) bool {
 	}
 
 	furniture := gameworld.GetGameData(cell).Furniture
+
+	noteLinkageRelaysFromText(g, furniture.Description)
 
 	// Track if this is the first time checking this furniture
 	wasChecked := furniture.IsChecked()

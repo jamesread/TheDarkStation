@@ -220,3 +220,39 @@ msgstr	"ARCHIVE GATE — INDEX ROT LOCKED"
 
 msgid	"ENV_PLAQUE_GEN_ROUTE"
 msgstr	"SERVICE ROUTE — NEXT NODE UNKNOWN"
+
+msgid	"ENV_PLAQUE_OBS_SEQ_1234"
+msgstr	"ROUTE SEG STAMP 01·02·03·04"
+
+msgid	"ENV_PLAQUE_OBS_SEQ_2468"
+msgstr	"PRIMARY STAGES — 02 / 04 / 06 / 08"
+
+msgid	"ENV_PLAQUE_LINK_MHOP_A"
+msgstr	"MULTI-HOP RELAY — DESIGNATION LINK-MHOP-A"
+
+msgid	"MAINT_DIAG_TRACE_HEADER"
+msgstr	"Diagnostics — subsystem trace"
+
+msgid	"MAINT_DIAG_CORRELATES_HEADER"
+msgstr	"Local correlates"
+
+msgid	"MAINT_DIAG_LOG_CLOCK_SUFFIX"
+msgstr	"reference clock drift nil"
+
+msgid	"MAINT_DIAG_SUBSYS_SUFFIX"
+msgstr	"routing supervision idle"
+
+msgid	"MAINT_DIAG_FLT_ADVISORY"
+msgstr	"advisory - no breaker trip"
+
+msgid	"MAINT_DIAG_CLK_SYNC"
+msgstr	"synchronisation nominal"
+
+msgid	"MAINT_DIAG_XCORE_TAIL"
+msgstr	"latch awaits correlator traverse"
+
+msgid	"MAINT_DIAG_JNCT_TAIL"
+msgstr	"junction telemetry stamp"
+
+msgid	"MAINT_DIAG_ENVREF_TAIL"
+msgstr	"routing signage index"

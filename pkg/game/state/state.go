@@ -75,6 +75,15 @@ type Game struct {
 	RoomCCTVPowered   map[string]bool // room name -> CCTV terminals and hazard controls powered
 	RoomLightsPowered map[string]bool // room name -> lights enabled (0w; toggled at maintenance terminal)
 
+	// ObservationCueVisited prevents duplicate corridor-stamp callouts per cell (Story 5.2).
+	ObservationCueVisited map[string]struct{}
+
+	// LinkageTokensSeen records cross-room relay tokens inferred by the player (Story 5.3).
+	LinkageTokensSeen map[string]struct{}
+
+	// LinkageCueVisited suppresses repeat callouts for linkage corridor stamps (Story 5.3).
+	LinkageCueVisited map[string]struct{}
+
 	// MaintenanceMenuRoom is set while the maintenance menu is open; the room whose
 	// maintenance view is displayed. Used to highlight that room's wall cells on the map.
 	MaintenanceMenuRoom string
@@ -89,26 +98,66 @@ type MessageEntry struct {
 // NewGame creates a new game instance
 func NewGame() *Game {
 	return &Game{
-		OwnedItems:           mapset.New[*world.Item](),
-		HasMap:               false,
-		Messages:             make([]MessageEntry, 0),
-		Level:                1,
-		CurrentDeckID:        0,
-		DeckStates:           make(map[int]*DeckState),
-		Batteries:            0,
-		Generators:           make([]*entities.Generator, 0),
-		FoundCodes:           make(map[string]bool),
-		LastInteractedRow:    -1,
-		LastInteractedCol:    -1,
-		InteractionPlayerRow: -1,
-		InteractionPlayerCol: -1,
-		PowerSupply:          0,
-		PowerConsumption:     0,
-		PowerOverloadWarned:  false,
-		RoomDoorsPowered:     make(map[string]bool),
-		RoomCCTVPowered:      make(map[string]bool),
-		RoomLightsPowered:    make(map[string]bool),
+		OwnedItems:            mapset.New[*world.Item](),
+		HasMap:                false,
+		Messages:              make([]MessageEntry, 0),
+		Level:                 1,
+		CurrentDeckID:         0,
+		DeckStates:            make(map[int]*DeckState),
+		Batteries:             0,
+		Generators:            make([]*entities.Generator, 0),
+		FoundCodes:            make(map[string]bool),
+		LastInteractedRow:     -1,
+		LastInteractedCol:     -1,
+		InteractionPlayerRow:  -1,
+		InteractionPlayerCol:  -1,
+		PowerSupply:           0,
+		PowerConsumption:      0,
+		PowerOverloadWarned:   false,
+		RoomDoorsPowered:      make(map[string]bool),
+		RoomCCTVPowered:       make(map[string]bool),
+		RoomLightsPowered:     make(map[string]bool),
+		ObservationCueVisited: make(map[string]struct{}),
+		LinkageTokensSeen:     make(map[string]struct{}),
+		LinkageCueVisited:     make(map[string]struct{}),
 	}
+}
+
+// ResetObservationCueAnnounced clears one-shot Story 5.2 movement callout state (new deck / reset).
+func (g *Game) ResetObservationCueAnnounced() {
+	if g == nil {
+		return
+	}
+	g.ObservationCueVisited = make(map[string]struct{})
+}
+
+// ResetLinkageTokensSeen clears Story 5.3 relay attribution (new deck / load / reset).
+func (g *Game) ResetLinkageTokensSeen() {
+	if g == nil {
+		return
+	}
+	g.LinkageTokensSeen = make(map[string]struct{})
+	g.LinkageCueVisited = make(map[string]struct{})
+}
+
+// RecordLinkageToken notes that the player has correlated a linkage token across readings.
+func (g *Game) RecordLinkageToken(token string) {
+	if g == nil || token == "" {
+		return
+	}
+	if g.LinkageTokensSeen == nil {
+		g.LinkageTokensSeen = make(map[string]struct{})
+	}
+	g.LinkageTokensSeen[token] = struct{}{}
+}
+
+// HasLinkageToken reports whether linkage has been satisfied for token.
+func (g *Game) HasLinkageToken(token string) bool {
+	if g == nil || token == "" || g.LinkageTokensSeen == nil {
+		return false
+	}
+	_, ok := g.LinkageTokensSeen[token]
+	return ok
 }
 
 // AddBatteries adds batteries to the player's inventory
@@ -238,6 +287,7 @@ func (g *Game) AdvanceLevel() {
 	g.Batteries = 0
 	g.Generators = make([]*entities.Generator, 0)
 	g.FoundCodes = make(map[string]bool)
+	g.ResetLinkageTokensSeen()
 	g.PowerSupply = 0
 	g.PowerConsumption = 0
 	g.PowerOverloadWarned = false
@@ -314,9 +364,11 @@ func (g *Game) LoadDeckState(deckID int) {
 	g.HasMap = false
 	g.Hints = nil
 	g.FoundCodes = make(map[string]bool)
+	g.ResetLinkageTokensSeen()
 	g.PowerSupply = 0
 	g.PowerConsumption = 0
 	g.PowerOverloadWarned = false
+	g.ResetObservationCueAnnounced()
 	g.CurrentCell = g.Grid.StartCell()
 }
 

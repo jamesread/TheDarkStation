@@ -50,6 +50,8 @@ func BuildGame(startLevel int) *state.Game {
 
 // SetupLevel configures the current level with items and keys
 func SetupLevel(g *state.Game) {
+	g.ResetObservationCueAnnounced()
+	g.ResetLinkageTokensSeen()
 	config := setup.SetupLevel(g)
 	avoid := &config.Avoid
 	lockedDoorCells := &config.LockedDoorCells
@@ -82,6 +84,8 @@ func SetupLevel(g *state.Game) {
 
 	// Diegetic corridor signage tied to functional deck layer (Story 5.1).
 	setup.ApplyEnvironmentalSignage(g)
+	setup.ApplyObservationLedPuzzleCues(g)
+	setup.ApplyMultiHopLinkage(g)
 
 	// Move player to start cell (setup package sets current cell to center)
 	MoveCell(g, g.Grid.StartCell())

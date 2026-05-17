@@ -755,14 +755,23 @@ func (h *MaintenanceMenuHandler) ShouldCloseOnAnyAction() bool {
 
 // GetMenuItems returns the menu items for the maintenance menu.
 // Labels use tab (\t) so the renderer can align values in a column (maintenance terminal style).
-// First line is a deck-depth flavour message (Phase 5.2; GDD §6).
+// First line is a deck-depth flavour message (Phase 5.2; GDD §6), followed by Story 5.4 read-only diagnostic strata.
 func (h *MaintenanceMenuHandler) GetMenuItems() []MenuItem {
 	devices, roomConsumption, doorCount, lightCount := buildRoomDevices(h.g, h.selectedRoomName, h.maintenanceTerm)
 
 	flavourLine := deck.TerminalFlavourText(h.g.CurrentDeckID)
+	instrLines := maintenanceInstrumentMenuLines(h.g, h.selectedRoomName)
 	items := []MenuItem{
 		&InfoMenuItem{Label: "SUBTLE{" + flavourLine + "}"},
 		&InfoMenuItem{Label: ""},
+	}
+	for _, line := range instrLines {
+		items = append(items, &InfoMenuItem{Label: line})
+	}
+	if len(instrLines) > 0 {
+		items = append(items, &InfoMenuItem{Label: ""})
+	}
+	items = append(items,
 		&RoomSelectorMenuItem{Parent: h},
 		&InfoMenuItem{Label: ""},
 		&InfoMenuItem{Label: fmt.Sprintf("Power Supply:\t%s", renderer.FormatPowerWatts(h.g.PowerSupply, false))},
@@ -770,7 +779,7 @@ func (h *MaintenanceMenuHandler) GetMenuItems() []MenuItem {
 		&InfoMenuItem{Label: fmt.Sprintf("Available Power:\t%s", renderer.FormatPowerWatts(h.g.GetAvailablePower(), false))},
 		&InfoMenuItem{Label: ""}, // Empty line
 		&InfoMenuItem{Label: fmt.Sprintf("Room (%d devices):", len(devices))},
-	}
+	)
 
 	if len(devices) == 0 {
 		items = append(items, &InfoMenuItem{Label: "No active devices in this room."})

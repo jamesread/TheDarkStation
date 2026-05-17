@@ -26,7 +26,9 @@ func PlacePuzzles(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		numPuzzles = 2
 	}
 
-	// Generate puzzle solutions
+	// Generate puzzle solutions (Story 5.2: leading numeric sequences must stay aligned
+	// with deck.ObservationSeqPlaqueMsgID for corridor junction stamp fingerprints).
+	// Story 5.3: second numeric solution must stay aligned with deck.MultiHopKeyedSequenceSolution (+ linkage tier).
 	puzzleSolutions := []string{
 		"1-2-3-4",
 		"2-4-6-8",

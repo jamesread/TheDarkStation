@@ -188,7 +188,7 @@ var (
 	CalloutColorGeneratorOn      = color.RGBA{0, 255, 100, 255}   // Green (powered)
 	CalloutColorTerminal         = color.RGBA{100, 150, 255, 255} // Blue
 	CalloutColorFurniture        = color.RGBA{255, 150, 255, 255} // Pink (unchecked)
-	CalloutColorFurnitureChecked = color.RGBA{200, 180, 100, 255} // Tan/brown (checked, decorative)
+	CalloutColorFurnitureChecked = color.RGBA{180, 105, 242, 255} // Violet-purple (checked; natural shift from pink)
 	CalloutColorHazardCtrl       = color.RGBA{0, 255, 255, 255}   // Cyan
 	CalloutColorHazard           = color.RGBA{255, 80, 80, 255}   // Red for hazards
 	CalloutColorRoom             = color.RGBA{180, 180, 220, 255} // Light gray-blue for room names

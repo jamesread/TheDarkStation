@@ -23,6 +23,8 @@ type GameCellData struct {
 	// EnvPlaqueMsgID is an optional gettext msgid for diegetic corridor signage (Story 5.1).
 	// Empty means no plaque on this cell.
 	EnvPlaqueMsgID string
+	// LinkageTag (Story 5.3): correlates with PuzzleTerminal.LinkageToken; satisfied by visiting this cell.
+	LinkageTag string
 }
 
 // InitGameData initializes game data for a cell if not already set
