@@ -86,6 +86,7 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 
 	// Compute persistent room labels (for rooms the player has visited)
 	e.snapshot.roomLabels = e.computeRoomLabels(g)
+	e.snapshot.envPlaques = e.computeEnvPlaques(g)
 
 	// Copy owned items
 	// Collect and sort items deterministically
@@ -306,4 +307,23 @@ func (e *EbitenRenderer) computeRoomLabels(g *state.Game) []roomLabel {
 		})
 	}
 	return labels
+}
+
+// computeEnvPlaques collects corridor plaques for cells the player has discovered or visited.
+func (e *EbitenRenderer) computeEnvPlaques(g *state.Game) []envPlaque {
+	if g == nil || g.Grid == nil {
+		return nil
+	}
+	var out []envPlaque
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || (!cell.Visited && !cell.Discovered) {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.EnvPlaqueMsgID == "" {
+			return
+		}
+		out = append(out, envPlaque{Row: row, Col: col, MsgID: data.EnvPlaqueMsgID})
+	})
+	return out
 }

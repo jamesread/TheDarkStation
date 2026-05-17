@@ -62,16 +62,16 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 			// Show unlock message as callout with proper item colors
 			var calloutMsg string
 			if doorsUnlocked > 1 {
-				calloutMsg = fmt.Sprintf("Used ITEM{%s} to unlock ACTION{%d} doors to ROOM{%s}!", keycardName, doorsUnlocked, rData.Door.RoomName)
+				calloutMsg = fmt.Sprintf("Used KEYCARD{%s} to unlock ACTION{%d} doors to ROOM{%s}!", keycardName, doorsUnlocked, rData.Door.RoomName)
 			} else {
-				calloutMsg = fmt.Sprintf("Used ITEM{%s} to unlock the %s!", keycardName, rData.Door.DoorName())
+				calloutMsg = fmt.Sprintf("Used KEYCARD{%s} to unlock the %s!", keycardName, rData.Door.DoorName())
 			}
-			renderer.AddCallout(r.Row, r.Col, calloutMsg, renderer.CalloutColorItem, 0)
+			renderer.AddCallout(r.Row, r.Col, calloutMsg, renderer.CalloutColorKeycard, 0)
 		} else {
 			if logReason {
 				logMessage(g, "This door requires a %s", renderer.StyledKeycard(keycardName))
 				// Contextual tooltip next to the locked door
-				renderer.AddCallout(r.Row, r.Col, fmt.Sprintf("TITLE{Door Locked}\nNeeds: ITEM{%s}", keycardName), renderer.CalloutColorDoor, 0)
+				renderer.AddCallout(r.Row, r.Col, fmt.Sprintf("TITLE{Door Locked}\nNeeds: KEYCARD{%s}", keycardName), renderer.CalloutColorDoor, 0)
 			}
 			return false, &missingItems
 		}

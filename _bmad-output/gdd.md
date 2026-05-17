@@ -345,13 +345,13 @@ Movement and interaction are keyboard-first; no combat or twitch timing. Control
 
 *(Summary from `_bmad-output/planning-artifacts/epics.md`. Full FR/NFR list and story breakdown are in that file.)*
 
-- **Epic 1: Deck Exploration and Structure** — Grid, movement, rooms, corridors, start/exit, room connectivity, procedural deck generation. FR1, FR2, FR10, FR23, FR24. Stories: 1.1 Grid and Movement (done), 1.2 Rooms and Corridors (done), 1.3 Start Room and Exit (done), 1.4 Room Connectivity (review), 1.5 Procedural Deck Generation (backlog).
+- **Epic 1: Deck Exploration and Structure** — Grid, movement, rooms, corridors, start/exit, room connectivity, procedural deck generation. FR1, FR2, FR10, FR23, FR24. Stories: 1.1–1.5 (done).
 
-- **Epic 2: Power Grid and Room Control** — Generators, batteries, room power (doors/CCTV), maintenance terminal power and “restore nearby,” overload/short-out, lighting, unpowered visual feedback. FR4, FR11–FR16, FR25. Stories: 2.1–2.6 (backlog).
+- **Epic 2: Power Grid and Room Control** — Generators, batteries, room power (doors/CCTV), maintenance terminal power and “restore nearby,” overload/short-out, lighting, unpowered visual feedback. FR4, FR11–FR16, FR25. Stories: 2.1–2.6 (done).
 
-- **Epic 3: Gates, Keys, and Solvability** — Doors and room power, locked doors and keycards, blocking hazards and controls, generators and exit win condition, gatekeeper and door-power solvability. FR17–FR22. Stories: 3.1–3.5 (backlog).
+- **Epic 3: Gates, Keys, and Solvability** — Doors and room power, locked doors and keycards, blocking hazards and controls, generators and exit win condition, gatekeeper and door-power solvability. FR17–FR22. Stories: 3.1–3.5 (done).
 
-- **Epic 4: Narrative, Tone, and Completion** — Maintenance terminals as narrative surface, room and item naming, progressive decay across decks, final deck and completion ending (docking station shutdown). FR3, FR5–FR9, NFR1–NFR4. Stories: 4.1–4.4 (backlog).
+- **Epic 4: Narrative, Tone, and Completion** — Maintenance terminals as narrative surface, room and item naming, progressive decay across decks, final deck and completion ending (docking station shutdown). FR3, FR5–FR9, NFR1–NFR4. Stories: 4.1–4.4 (done).
 
 **Reference:** See `_bmad-output/planning-artifacts/epics.md` for full acceptance criteria and FR coverage.
 

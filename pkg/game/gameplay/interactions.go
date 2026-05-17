@@ -3,6 +3,7 @@ package gameplay
 
 import (
 	"fmt"
+	"image/color"
 	"log"
 	"strings"
 
@@ -258,15 +259,52 @@ func PickUpItemsOnFloor(g *state.Game) {
 			g.HasMap = true
 			g.OwnedItems.Put(item)
 			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, "Picked up: ITEM{Map}", renderer.CalloutColorItem, 0)
-		} else if item.Name == "Battery" {
+		} else if strings.Contains(strings.ToLower(item.Name), "battery") {
 			g.AddBatteries(1)
-			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, "Picked up: ACTION{Battery}", renderer.CalloutColorItem, 0)
+			msg := fmt.Sprintf("Picked up: BATTERY{%s}", item.Name)
+			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, msg, renderer.CalloutColorBattery, 0)
 		} else {
 			g.OwnedItems.Put(item)
-			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, fmt.Sprintf("Picked up: ITEM{%s}", item.Name), renderer.CalloutColorItem, 0)
+			msg, c := floorPickupOwnedItemCallout(item.Name)
+			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, msg, c, 0)
 		}
 	})
 
+}
+
+// floorPickupOwnedItemCallout returns markup and AddCallout color for a carried item (not Map/Battery pickup paths).
+func floorPickupOwnedItemCallout(itemName string) (string, color.RGBA) {
+	l := strings.ToLower(itemName)
+	switch {
+	case strings.Contains(l, "keycard"):
+		return fmt.Sprintf("Picked up: KEYCARD{%s}", itemName), renderer.CalloutColorKeycard
+	default:
+		return fmt.Sprintf("Picked up: ITEM{%s}", itemName), renderer.CalloutColorItem
+	}
+}
+
+func furnitureFoundItemSegment(itemName string) string {
+	l := strings.ToLower(itemName)
+	switch {
+	case strings.Contains(l, "battery"):
+		return fmt.Sprintf("BATTERY{%s}", itemName)
+	case strings.Contains(l, "keycard"):
+		return fmt.Sprintf("KEYCARD{%s}", itemName)
+	default:
+		return fmt.Sprintf("ITEM{%s}", itemName)
+	}
+}
+
+func furnitureCalloutHeading(name string) string {
+	return fmt.Sprintf("FURNITURE_CHECKED{%s}", name)
+}
+
+func furnitureCalloutBody(text string) string {
+	return fmt.Sprintf("FURNITURE_CHECKED{%s}", text)
+}
+
+func furnitureCalloutFoundWithItem(itemName string) string {
+	return fmt.Sprintf("FURNITURE_CHECKED{Found: }%s!", furnitureFoundItemSegment(itemName))
 }
 
 // CheckAdjacentGenerators checks adjacent cells for unpowered generators and inserts batteries
@@ -417,17 +455,17 @@ func CheckAdjacentFurnitureAtCell(g *state.Game, cell *world.Cell) bool {
 
 	// If furniture contained an item, give it to the player and show callout
 	if item != nil {
-		if item.Name == "Battery" {
+		if strings.Contains(strings.ToLower(item.Name), "battery") {
 			g.AddBatteries(1)
-			calloutText := fmt.Sprintf("TITLE{%s}\nFound: ACTION{Battery}!", furniture.Name)
+			calloutText := fmt.Sprintf("%s\n%s", furnitureCalloutHeading(furniture.Name), furnitureCalloutFoundWithItem(item.Name))
 			renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
 		} else {
 			g.OwnedItems.Put(item)
-			calloutText := fmt.Sprintf("TITLE{%s}\nFound: ITEM{%s}!", furniture.Name, item.Name)
+			calloutText := fmt.Sprintf("%s\n%s", furnitureCalloutHeading(furniture.Name), furnitureCalloutFoundWithItem(item.Name))
 			renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
 		}
 	} else {
-		calloutText := fmt.Sprintf("TITLE{%s}\n%s", furniture.Name, furniture.Description)
+		calloutText := fmt.Sprintf("%s\n%s", furnitureCalloutHeading(furniture.Name), furnitureCalloutBody(furniture.Description))
 		renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
 	}
 	return true
@@ -512,7 +550,7 @@ func applyPuzzleReward(g *state.Game, puzzle *entities.PuzzleTerminal, cell *wor
 	case entities.RewardBattery:
 		g.AddBatteries(1)
 		logMessage(g, "Received: ACTION{Battery}")
-		renderer.AddCallout(cell.Row, cell.Col, "TITLE{Battery received!}", renderer.CalloutColorItem, 0)
+		renderer.AddCallout(cell.Row, cell.Col, "TITLE{Battery received!}", renderer.CalloutColorBattery, 0)
 	case entities.RewardRevealRoom:
 		// Reveal a random room
 		logMessage(g, "Security feed activated - a new area is revealed.")

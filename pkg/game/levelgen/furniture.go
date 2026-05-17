@@ -7,6 +7,7 @@ import (
 	"github.com/zyedidia/generic/mapset"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
@@ -27,6 +28,9 @@ func PlaceFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 	// For each unique room, try to place 1-2 furniture pieces
 	for roomName, cells := range roomCells {
 		templates := entities.GetAllFurnitureForRoom(roomName)
+		if len(templates) == 0 {
+			templates = entities.FurnitureFallbackForFunctionalLayer(deck.FunctionalType(g.Level))
+		}
 		if len(templates) == 0 {
 			continue
 		}

@@ -264,10 +264,13 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 		// Apply alpha to colors (fade from black/transparent, not white)
 		// The applyAlpha function multiplies the alpha channel, so colors fade to transparent black
 		bgColor := e.applyAlpha(color.RGBA{15, 15, 25, 240}, alpha)
-		borderColor := e.applyAlpha(color.RGBA{80, 80, 100, 255}, alpha)
+		var borderColor color.Color
 		if hasTitle {
 			titleColor := e.getTitleColorFromLine(lines[0])
 			borderColor = e.applyAlpha(titleColor, alpha)
+		} else {
+			// No title row: align tooltip chrome with semantic callout color (e.g. keycard/battery pickups).
+			borderColor = e.applyAlpha(callout.Color, alpha)
 		}
 
 		boxW := float32(boxWidth)

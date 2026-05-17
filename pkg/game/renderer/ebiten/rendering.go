@@ -281,6 +281,7 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, mapX, mapY
 	mapXF := float64(mapX) + blitX
 	mapYF := float64(mapY) + blitY
 	e.drawRoomLabels(screen, snap, mapXF, mapYF, startRow, startCol)
+	e.drawEnvironmentalPlaques(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawCallouts(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawPlayerWithDebounce(screen, g, snap, mapXF, mapYF, startRow, startCol)
 	e.drawExitAnimation(screen, snap, mapXF, mapYF, startRow, startCol)
@@ -393,6 +394,9 @@ func focusPlateForForeground(fg color.Color) color.Color {
 	if isRedDominantForeground(fg) {
 		return redFamilyFocusPlate(fg)
 	}
+	if isPinkMagentaForeground(fg) {
+		return magentaFocusPlateForForeground(fg)
+	}
 	r32, g32, b32, _ := fg.RGBA()
 	r8 := uint8(r32 >> 8)
 	g8 := uint8(g32 >> 8)
@@ -479,6 +483,37 @@ func warmFocusPlateForForeground(fg color.Color) color.Color {
 	outR := uint8(min(255, br+int(r8)*55/255))
 	outG := uint8(min(255, bgBase+int(g8)*50/255))
 	outB := uint8(min(255, bb+int(b8)*40/255))
+	return color.RGBA{R: outR, G: outG, B: outB, A: a}
+}
+
+// isPinkMagentaForeground matches bright magenta/pink glyphs (unchecked furniture,
+// hazard-control pink tones) where complementary math would wrongly shift toward green.
+func isPinkMagentaForeground(fg color.Color) bool {
+	r32, g32, b32, _ := fg.RGBA()
+	r8 := uint8(r32 >> 8)
+	g8 := uint8(g32 >> 8)
+	b8 := uint8(b32 >> 8)
+	if r8 < 180 || b8 < 180 {
+		return false
+	}
+	minRB := r8
+	if b8 < minRB {
+		minRB = b8
+	}
+	return int(minRB)-int(g8) >= 35
+}
+
+// magentaFocusPlateForForeground is a dark magenta/plum plate in the pink glyph family (not teal/green complementary).
+func magentaFocusPlateForForeground(fg color.Color) color.Color {
+	r32, g32, b32, _ := fg.RGBA()
+	r8 := uint8(r32 >> 8)
+	g8 := uint8(g32 >> 8)
+	b8 := uint8(b32 >> 8)
+	const a = 220
+	const br, bgBase, bb = 44, 18, 44
+	outR := uint8(min(255, br+int(r8)*45/255))
+	outG := uint8(min(255, bgBase+int(g8)*42/255))
+	outB := uint8(min(255, bb+int(b8)*45/255))
 	return color.RGBA{R: outR, G: outG, B: outB, A: a}
 }
 
@@ -783,6 +818,59 @@ func (e *EbitenRenderer) drawRoomLabels(screen *ebiten.Image, snap *renderSnapsh
 		// Draw bold-ish by rendering twice with slight offset
 		e.drawColoredTextSegments(screen, segments, textX, textY)
 		e.drawColoredTextSegments(screen, segments, textX+1, textY)
+	}
+}
+
+// drawEnvironmentalPlaques renders small diegetic corridor signage inside tiles (Story 5.1).
+func (e *EbitenRenderer) drawEnvironmentalPlaques(screen *ebiten.Image, snap *renderSnapshot, mapX, mapY float64, startRow, startCol int) {
+	if len(snap.envPlaques) == 0 {
+		return
+	}
+
+	const maxRunes = 28
+	const baselinePadding = 5
+
+	face := e.getMonoFontFace()
+
+	for _, ep := range snap.envPlaques {
+		labelRow := ep.Row
+		labelCol := ep.Col
+		if labelCol < startCol || labelCol > startCol+e.viewportCols-1 {
+			continue
+		}
+		vCol := labelCol - startCol
+		vRow := labelRow - startRow
+		if vRow < 0 || vRow >= e.viewportRows {
+			continue
+		}
+
+		cellX := mapX + float64(vCol*e.tileSize)
+		cellY := mapY + float64(vRow*e.tileSize)
+
+		txt := dynamicGet(ep.MsgID)
+		rs := []rune(txt)
+		if len(rs) > maxRunes {
+			txt = string(rs[:maxRunes-1]) + "…"
+		}
+
+		w, _ := text.Measure(txt, face, 0)
+		scale := 0.38
+		maxW := float64(e.tileSize) - 6
+		if w*scale > maxW && w > 0 {
+			scale = maxW / w
+			if scale < 0.26 {
+				scale = 0.26
+			}
+		}
+
+		px := cellX + 3
+		baselineY := cellY + float64(e.tileSize) - baselinePadding
+
+		op := &text.DrawOptions{}
+		op.GeoM.Scale(scale, scale)
+		op.GeoM.Translate(px/scale, baselineY/scale)
+		op.ColorScale.ScaleWithColor(colorPlaque)
+		text.Draw(screen, txt, face, op)
 	}
 }
 

@@ -181,7 +181,9 @@ var (
 	CalloutColorSuccess          = color.RGBA{100, 255, 150, 255} // Green
 	CalloutColorWarning          = color.RGBA{255, 220, 100, 255} // Yellow
 	CalloutColorDanger           = color.RGBA{255, 120, 120, 255} // Red
-	CalloutColorItem             = color.RGBA{210, 185, 110, 255} // Tan (matches colorItem / map pickups)
+	CalloutColorItem             = color.RGBA{210, 185, 110, 255} // Tan (matches colorItem / generic map pickups)
+	CalloutColorKeycard          = color.RGBA{100, 150, 255, 255} // Bright blue (matches colorKeycard)
+	CalloutColorBattery          = color.RGBA{255, 200, 100, 255} // Orange (matches colorBattery)
 	CalloutColorGenerator        = color.RGBA{255, 100, 100, 255} // Red (unpowered)
 	CalloutColorGeneratorOn      = color.RGBA{0, 255, 100, 255}   // Green (powered)
 	CalloutColorTerminal         = color.RGBA{100, 150, 255, 255} // Blue

@@ -31,6 +31,13 @@ type roomLabel struct {
 	EndCol   int // Same as StartCol (kept for compatibility)
 }
 
+// envPlaque is diegetic corridor signage (gettext msgid); drawn small inside the tile.
+type envPlaque struct {
+	Row   int
+	Col   int
+	MsgID string
+}
+
 // renderSnapshot holds a consistent snapshot of game state for rendering
 // This prevents jitter from race conditions between game logic and rendering
 type renderSnapshot struct {
@@ -47,6 +54,7 @@ type renderSnapshot struct {
 	gridCols          int
 	callouts          []Callout
 	roomLabels        []roomLabel
+	envPlaques        []envPlaque
 	objectives        []string // Current level objectives
 	exitAnimating     bool     // True when exit animation is playing
 	exitAnimStartTime int64    // Timestamp when exit animation started

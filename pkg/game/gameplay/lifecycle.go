@@ -80,6 +80,9 @@ func SetupLevel(g *state.Game) {
 	// Only the start room's maintenance terminal(s) start powered; others can be restored from nearby.
 	setup.InitMaintenanceTerminalPower(g)
 
+	// Diegetic corridor signage tied to functional deck layer (Story 5.1).
+	setup.ApplyEnvironmentalSignage(g)
+
 	// Move player to start cell (setup package sets current cell to center)
 	MoveCell(g, g.Grid.StartCell())
 }

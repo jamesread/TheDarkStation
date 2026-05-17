@@ -79,6 +79,8 @@ func initColorCvarsLocked() {
 	cvarMap["colors.callout_warning"] = "255,220,100,255"
 	cvarMap["colors.callout_danger"] = "255,120,120,255"
 	cvarMap["colors.callout_item"] = "210,185,110,255"
+	cvarMap["colors.callout_keycard"] = "100,150,255,255"
+	cvarMap["colors.callout_battery"] = "255,200,100,255"
 	cvarMap["colors.callout_generator"] = "255,100,100,255"
 	cvarMap["colors.callout_generator_on"] = "0,255,100,255"
 	cvarMap["colors.callout_terminal"] = "100,150,255,255"
@@ -157,12 +159,16 @@ func loadColorsFromCvars() {
 	assign("colors.callout_warning", &ColorCalloutWarning)
 	assign("colors.callout_danger", &ColorCalloutDanger)
 	assign("colors.callout_item", &ColorCalloutItem)
+	assign("colors.callout_keycard", &ColorCalloutKeycard)
+	assign("colors.callout_battery", &ColorCalloutBattery)
 	// Renderer package CalloutColor* (used by gameplay)
 	assign("colors.callout_info", &renderer.CalloutColorInfo)
 	assign("colors.callout_success", &renderer.CalloutColorSuccess)
 	assign("colors.callout_warning", &renderer.CalloutColorWarning)
 	assign("colors.callout_danger", &renderer.CalloutColorDanger)
 	assign("colors.callout_item", &renderer.CalloutColorItem)
+	assign("colors.callout_keycard", &renderer.CalloutColorKeycard)
+	assign("colors.callout_battery", &renderer.CalloutColorBattery)
 	assign("colors.callout_generator", &renderer.CalloutColorGenerator)
 	assign("colors.callout_generator_on", &renderer.CalloutColorGeneratorOn)
 	assign("colors.callout_terminal", &renderer.CalloutColorTerminal)

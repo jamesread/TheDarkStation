@@ -20,6 +20,9 @@ type GameCellData struct {
 	MaintenanceTerm *entities.MaintenanceTerminal // Maintenance terminal in this cell (if any)
 	LightsOn        bool                          // Whether lights are on in this cell
 	Lighted         bool                          // Whether this cell has been lit (stays explored)
+	// EnvPlaqueMsgID is an optional gettext msgid for diegetic corridor signage (Story 5.1).
+	// Empty means no plaque on this cell.
+	EnvPlaqueMsgID string
 }
 
 // InitGameData initializes game data for a cell if not already set

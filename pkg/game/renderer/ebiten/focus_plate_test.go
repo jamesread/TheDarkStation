@@ -50,3 +50,21 @@ func TestFocusPlateForForeground_hazardRed_keepsRedHue(t *testing.T) {
 		t.Fatalf("hazard red fg should use red-family plate (r highest): got (%d,%d,%d)", r, g, b)
 	}
 }
+
+func TestFocusPlateForForeground_uncheckedFurniturePink_isDarkPinkPlateNotGreen(t *testing.T) {
+	plate := focusPlateForForeground(colorFurniture)
+	r32, g32, b32, a32 := plate.RGBA()
+	r := uint8(r32 >> 8)
+	g := uint8(g32 >> 8)
+	b := uint8(b32 >> 8)
+	if a32>>8 != 220 {
+		t.Fatalf("alpha = %d, want 220", a32>>8)
+	}
+	// Dark magenta family: red and blue lead green (avoid complementary/teal-green read).
+	if int(g) >= int(min(r, b)) {
+		t.Fatalf("magenta-plate expects g below r and b: got (%d,%d,%d)", r, g, b)
+	}
+	if int(min(r, b)) <= int(g)+15 {
+		t.Fatalf("pink furniture focus should stay in dark pink family (r,b well above g): got (%d,%d,%d)", r, g, b)
+	}
+}

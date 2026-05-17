@@ -69,11 +69,12 @@ func (e *EbitenRenderer) drawColoredTextWithFace(screen *ebiten.Image, str strin
 	text.Draw(screen, translated, face, op)
 }
 
-// hasTitleMarkup returns true if the string contains title-style markup (TITLE{}, UNPOWERED{}, POWERED{}, UNPOWERED_SUBTLE{}).
+// hasTitleMarkup returns true if the string contains title-style markup (TITLE{}, UNPOWERED{}, POWERED{}, UNPOWERED_SUBTLE{}, FURNITURE{}, FURNITURE_CHECKED{}).
 // Used to apply title face (bold, larger) to the first line of callouts.
 func hasTitleMarkup(s string) bool {
 	return strings.Contains(s, "TITLE{") || strings.Contains(s, "UNPOWERED{") ||
-		strings.Contains(s, "POWERED{") || strings.Contains(s, "UNPOWERED_SUBTLE{")
+		strings.Contains(s, "POWERED{") || strings.Contains(s, "UNPOWERED_SUBTLE{") ||
+		strings.Contains(s, "FURNITURE{") || strings.Contains(s, "FURNITURE_CHECKED{")
 }
 
 // getTitleColorFromLine returns the accent color from the first marked-up segment in the line, or colorAction as fallback.
@@ -114,6 +115,12 @@ func (e *EbitenRenderer) parseMarkup(msg string) []textSegment {
 		switch function {
 		case "ITEM":
 			segColor = colorItem
+		case "KEYCARD":
+			// Matches floor keycard icon (colorKeycard)
+			segColor = colorKeycard
+		case "BATTERY":
+			// Matches floor battery icon (colorBattery)
+			segColor = colorBattery
 		case "ROOM":
 			segColor = colorFloorVisited // Light gray-blue for room names
 		case "ACTION":
@@ -128,9 +135,12 @@ func (e *EbitenRenderer) parseMarkup(msg string) []textSegment {
 			// GT{} is for translations - look up the translation
 			content = dynamicGet(content)
 			segColor = colorText
-		case "FURNITURE":
-			// FURNITURE{} uses the furniture callout color (tan/brown for checked furniture)
+		case "FURNITURE_CHECKED":
+			// Checked furniture icon on map (colorFurnitureCheck)
 			segColor = renderer.CalloutColorFurnitureChecked
+		case "FURNITURE":
+			// Unchecked furniture icon on map (colorFurniture)
+			segColor = renderer.CalloutColorFurniture
 		case "HAZARD":
 			// HAZARD{} uses the hazard color (red)
 			segColor = colorHazard

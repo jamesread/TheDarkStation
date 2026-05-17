@@ -36,6 +36,7 @@ var (
 	colorSubtle          = color.RGBA{120, 130, 180, 255} // Soft blue-purple-gray
 	colorUnpoweredSubtle = color.RGBA{90, 95, 120, 255}   // Muted gray for unpowered due to dependency (room terminal off)
 	colorLocation        = color.RGBA{160, 170, 210, 255} // Softer blue-gray for location/room labels
+	colorPlaque          = color.RGBA{118, 112, 102, 255} // Diegetic stencil / stamped corridor signage
 	colorText            = color.RGBA{200, 210, 245, 255} // Soft off-white with blue-purple tint
 	colorAction          = color.RGBA{180, 150, 250, 255} // Blue-purple (less pink, more blue)
 	colorDenied          = color.RGBA{255, 100, 100, 255} // Bright red
@@ -51,6 +52,8 @@ var (
 	ColorCalloutWarning = color.RGBA{255, 220, 100, 255} // Yellow for warnings
 	ColorCalloutDanger  = color.RGBA{255, 120, 120, 255} // Red for danger/blocked
 	ColorCalloutItem    = color.RGBA{210, 185, 110, 255} // Tan — item callouts (see colorItem)
+	ColorCalloutKeycard = color.RGBA{100, 150, 255, 255} // Keycard pickup / map icon
+	ColorCalloutBattery = color.RGBA{255, 200, 100, 255} // Battery pickup / map icon
 )
 
 // Icon constants - Unicode characters for proper font rendering
