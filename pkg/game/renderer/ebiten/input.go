@@ -17,7 +17,9 @@ import (
 // Update handles input and game logic (Ebiten interface)
 func (e *EbitenRenderer) Update() error {
 	// Single clock for menu overlays this tick (drawGenericMenuOverlay must not call time.Now).
-	e.menuAnimClockMilli = time.Now().UnixMilli()
+	now := time.Now()
+	e.menuAnimClockMilli = now.UnixMilli()
+	e.menuAnimTimeNano = now.UnixNano()
 	e.maintPanDrawCount = 0
 
 	// Log window opening on first update (confirms window is actually running)
@@ -355,6 +357,32 @@ func (e *EbitenRenderer) checkInput() engineinput.Intent {
 		return engineinput.Intent{Action: engineinput.ActionInteract}
 	}
 
+	// Maintenance menu shortcuts (consumed only while maintenance menu is open)
+	if inpututil.IsKeyJustPressed(ebiten.KeyTab) {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "tab",
+		}))
+	}
+	if inpututil.IsKeyJustPressed(ebiten.Key1) || inpututil.IsKeyJustPressed(ebiten.KeyDigit1) || inpututil.IsKeyJustPressed(ebiten.KeyNumpad1) {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "1",
+		}))
+	}
+	if inpututil.IsKeyJustPressed(ebiten.Key2) || inpututil.IsKeyJustPressed(ebiten.KeyDigit2) || inpututil.IsKeyJustPressed(ebiten.KeyNumpad2) {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "2",
+		}))
+	}
+	if inpututil.IsKeyJustPressed(ebiten.Key3) || inpututil.IsKeyJustPressed(ebiten.KeyDigit3) || inpututil.IsKeyJustPressed(ebiten.KeyNumpad3) {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "3",
+		}))
+	}
+
 	// Arrow keys / NSEW navigation with key repeat
 	if e.shouldRepeatKey(func() bool { return ebiten.IsKeyPressed(ebiten.KeyArrowUp) }, "key_arrow_up") {
 		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
@@ -449,13 +477,14 @@ func (e *EbitenRenderer) checkInput() engineinput.Intent {
 		}))
 	}
 
-	// Open menu (F10)
 	if inpututil.IsKeyJustPressed(ebiten.KeyF9) {
 		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
 			Device: engineinput.DeviceKeyboard,
 			Code:   "f9",
 		}))
 	}
+
+	// Open menu (F10)
 	if inpututil.IsKeyJustPressed(ebiten.KeyF10) {
 		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
 			Device: engineinput.DeviceKeyboard,

@@ -25,6 +25,8 @@ type GameCellData struct {
 	EnvPlaqueMsgID string
 	// LinkageTag (Story 5.3): correlates with PuzzleTerminal.LinkageToken; satisfied by visiting this cell.
 	LinkageTag string
+	// PowerRelay (power-routing Phase 3): corridor routing switch; nil on non-relay cells.
+	PowerRelay *entities.PowerRelay
 }
 
 // InitGameData initializes game data for a cell if not already set
@@ -190,4 +192,16 @@ func SetLightsOn(cell *world.Cell, on bool) {
 func IsLighted(cell *world.Cell) bool {
 	data := GetGameData(cell)
 	return data.Lighted
+}
+
+// HasPowerRelay returns true if this cell has a corridor power relay.
+func HasPowerRelay(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	return data != nil && data.PowerRelay != nil
+}
+
+// RelayBlocksMesh returns true when a relay on this cell blocks terminal-mesh propagation.
+func RelayBlocksMesh(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	return data != nil && data.PowerRelay != nil && !data.PowerRelay.Closed
 }

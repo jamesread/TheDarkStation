@@ -76,6 +76,7 @@ func countAdjacentInteractionCandidates(neighbors []*world.Cell) int {
 			gameworld.HasUnusedTerminal(cell) ||
 			gameworld.HasUnsolvedPuzzle(cell) ||
 			gameworld.HasInactiveHazardControl(cell) ||
+			gameworld.HasPowerRelay(cell) ||
 			gameworld.HasMaintenanceTerminal(cell) {
 			n++
 		}
@@ -196,6 +197,15 @@ func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLa
 				g.LastInteractedCol = cell.Col
 				g.InteractionsCount++
 				log.Printf("[Interact] handled: hazard control at (%d,%d)", cell.Row, cell.Col)
+				return true
+			}
+		}
+		if gameworld.HasPowerRelay(cell) {
+			if CheckAdjacentPowerRelayAtCell(g, cell) {
+				g.LastInteractedRow = cell.Row
+				g.LastInteractedCol = cell.Col
+				g.InteractionsCount++
+				log.Printf("[Interact] handled: power relay at (%d,%d)", cell.Row, cell.Col)
 				return true
 			}
 		}
@@ -499,6 +509,22 @@ func CheckAdjacentHazardControlsAtCell(g *state.Game, cell *world.Cell) bool {
 	info := entities.HazardTypes[control.Type]
 	logMessage(g, "Activated %s: %s", renderer.StyledHazardCtrl(control.Name), info.FixedMessage)
 	renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("TITLE{%s activated!}", control.Name), renderer.CalloutColorHazardCtrl, 0)
+	return true
+}
+
+// CheckAdjacentPowerRelayAtCell toggles a corridor routing relay (Phase 3 power mesh).
+func CheckAdjacentPowerRelayAtCell(g *state.Game, cell *world.Cell) bool {
+	if cell == nil || !gameworld.HasPowerRelay(cell) {
+		return false
+	}
+	relay := gameworld.GetGameData(cell).PowerRelay
+	relay.Closed = !relay.Closed
+	stateLabel := "OPEN"
+	if relay.Closed {
+		stateLabel = "CLOSED"
+	}
+	msg := fmt.Sprintf("RELAY{%s}\nSUBTLE{Routing: }ACTION{%s}", "Power routing relay", stateLabel)
+	renderer.AddCallout(cell.Row, cell.Col, msg, renderer.CalloutColorMaintenance, 0)
 	return true
 }
 

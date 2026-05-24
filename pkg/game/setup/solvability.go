@@ -113,21 +113,24 @@ func EnsureSolvabilityDoorPower(g *state.Game) {
 			continue
 		}
 
-		// R is a gatekeeper: every path to exit goes through R. Check if any room adjacent to R
-		// that has a maintenance terminal is reachable without entering R (so the player can
-		// power R's doors from that terminal).
-		adjacentSet := make(map[string]bool)
+		// R is a gatekeeper: check if any terminal room adjacent to R is on the power routing mesh
+		// from start without entering R (powered doors + closed relays).
+		meshWithoutR := RoomsReachableInPowerMeshExcluding(g, start, roomName)
+		hasReachableAdjacent := false
 		for _, q := range GetAdjacentRoomNames(g.Grid, roomName) {
-			if q != roomName && roomsWithTerminal[q] {
-				adjacentSet[q] = true
+			if q == roomName || !roomsWithTerminal[q] {
+				continue
+			}
+			for _, reached := range meshWithoutR {
+				if reached == q {
+					hasReachableAdjacent = true
+					break
+				}
+			}
+			if hasReachableAdjacent {
+				break
 			}
 		}
-		hasReachableAdjacent := false
-		reachableWithoutR.Each(func(cell *world.Cell) {
-			if cell != nil && cell.Room && cell.Name != "" && adjacentSet[cell.Name] {
-				hasReachableAdjacent = true
-			}
-		})
 
 		if !hasReachableAdjacent {
 			// Deadlock: R is gatekeeper, unpowered, and no adjacent room is reachable without entering R.

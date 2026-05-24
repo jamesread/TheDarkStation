@@ -53,6 +53,10 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		devtools.SwitchToDevMap(g)
 		return
 
+	case engineinput.ActionMaintPanTestMap:
+		devtools.SwitchToMaintPanTestMap(g)
+		return
+
 	case engineinput.ActionDebugMapDump:
 		path, err := devtools.DumpRevealedMapToFile(g)
 		if err != nil {

@@ -21,6 +21,7 @@ func ContainsSubstring(s, substr string) bool {
 // SwitchToDevMap switches the game to a hard-coded 50x50 developer testing map
 // All possible game cells are placed with a 3-cell margin between each, grouped by type in rows
 func SwitchToDevMap(g *state.Game) {
+	g.Generators = nil
 	// Create a 50x50 grid
 	grid := world.NewGrid(50, 50)
 
@@ -57,7 +58,7 @@ func SwitchToDevMap(g *state.Game) {
 	}
 	currentRow += margin + 1
 
-	// Row 2: Generators (unpowered and powered)
+	// Row 2: Generators (all powered — ample grid supply for exercising maintenance/power UI)
 	genRow := currentRow
 	genCol := currentCol
 	for i := 0; i < 3; i++ {
@@ -65,10 +66,7 @@ func SwitchToDevMap(g *state.Game) {
 		if cell != nil {
 			data := gameworld.InitGameData(cell)
 			gen := entities.NewGenerator(fmt.Sprintf("Generator %d", i+1), 2)
-			if i == 2 {
-				// Third generator is powered
-				gen.BatteriesInserted = 2
-			}
+			gen.BatteriesInserted = gen.BatteriesRequired
 			data.Generator = gen
 			g.AddGenerator(gen)
 		}
@@ -235,9 +233,12 @@ func SwitchToDevMap(g *state.Game) {
 	g.Grid = grid
 	g.CurrentDeckID = deck.TotalDecks
 	g.Level = 999 // Mark as dev map
+	g.UpdatePowerSupply()
+	g.PowerConsumption = g.CalculatePowerConsumption()
 	g.ClearMessages()
 	logMessage(g, "Switched to developer testing map!")
 	logMessage(g, "All entity types are placed in rows with 3-cell margins.")
+	logMessage(g, "Console command ITEM{maint_pan_test} loads the static maintenance pan test layout.")
 }
 
 // logMessage adds a formatted message to the game's message log

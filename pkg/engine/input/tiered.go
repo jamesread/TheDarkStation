@@ -32,13 +32,20 @@ const (
 	ActionQuit
 	ActionScreenshot
 	ActionOpenMenu
-	ActionAction       // Generic "action/confirm" (e.g., Enter/A)
-	ActionInteract     // Interact with furniture/objects (E, Enter, A button)
-	ActionDevMap       // Switch to developer testing map (F9)
+	ActionAction   // Generic "action/confirm" (e.g., Enter/A)
+	ActionInteract // Interact with furniture/objects (E, Enter, A button)
+	ActionDevMap   // Switch to developer testing map (F9)
+	ActionMaintPanTestMap
 	ActionDebugMapDump // Dump revealed map to map.txt (F8)
 	ActionResetLevel   // Reset current level (F5)
 	ActionZoomIn       // Zoom in (increase font/tile size)
 	ActionZoomOut      // Zoom out (decrease font/tile size)
+
+	// Maintenance menu (only consumed while maintenance menu is open)
+	ActionMaintModeToggle // Tab: switch Controls / Diagnostics
+	ActionCircuitOff      // 1: apply OFF preset to viewed room
+	ActionCircuitEssential
+	ActionCircuitFull // 3: apply FULL preset
 )
 
 // Intent is the 4th‑layer, high‑level description of what the player wants to do.
@@ -133,6 +140,18 @@ var bindings = map[string]Action{
 
 	"gamepad_b":     ActionQuit,     // B button / Circle
 	"gamepad_start": ActionOpenMenu, // Start button
+
+	// Maintenance menu shortcuts (consumed only while maintenance menu is open)
+	"tab":     ActionMaintModeToggle,
+	"1":       ActionCircuitOff,
+	"digit1":  ActionCircuitOff,
+	"numpad1": ActionCircuitOff,
+	"2":       ActionCircuitEssential,
+	"digit2":  ActionCircuitEssential,
+	"numpad2": ActionCircuitEssential,
+	"3":       ActionCircuitFull,
+	"digit3":  ActionCircuitFull,
+	"numpad3": ActionCircuitFull,
 }
 
 // MapToIntent is the 3rd+4th layer: it applies the current bindings to a
@@ -165,6 +184,8 @@ func ActionName(a Action) string {
 		return "Open Menu"
 	case ActionDevMap:
 		return "Dev Map"
+	case ActionMaintPanTestMap:
+		return "Maint pan test map"
 	case ActionDebugMapDump:
 		return "Debug Map Dump"
 	case ActionAction:

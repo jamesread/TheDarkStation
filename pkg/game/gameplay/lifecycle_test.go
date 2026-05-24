@@ -394,17 +394,24 @@ func TestBuildGame_MaintenanceTerminalRestoreFlow(t *testing.T) {
 		t.Error("start room maintenance terminal should be powered after BuildGame")
 	}
 
-	// Count unpowered terminals in adjacent rooms
+	// Mesh restore requires powered doors along the path — enable doors on adjacent rooms for this integration test.
 	adjRooms := setup.GetAdjacentRoomNames(g.Grid, startRoom)
 	if adjRooms == nil {
 		adjRooms = []string{startRoom}
+	}
+	for _, rn := range adjRooms {
+		g.RoomDoorsPowered[rn] = true
+	}
+	meshRooms := setup.RoomsReachableInPowerMesh(g, startTermCell)
+	if len(meshRooms) == 0 {
+		meshRooms = adjRooms
 	}
 	unpoweredBefore := 0
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil || !cell.Room {
 			return
 		}
-		for _, rn := range adjRooms {
+		for _, rn := range meshRooms {
 			if cell.Name == rn {
 				data := gameworld.GetGameData(cell)
 				if data.MaintenanceTerm != nil && !data.MaintenanceTerm.Powered {
@@ -415,7 +422,7 @@ func TestBuildGame_MaintenanceTerminalRestoreFlow(t *testing.T) {
 		}
 	})
 
-	// Simulate "Restore power" from start room terminal
+	// Simulate "Restore routing mesh" from start room terminal
 	h := menu.NewMaintenanceMenuHandler(g, startTermCell, startTerm)
 	restoreItem := &menu.RestorePowerNearbyTerminalsMenuItem{Parent: h}
 	h.OnActivate(restoreItem, 0)
@@ -426,7 +433,7 @@ func TestBuildGame_MaintenanceTerminalRestoreFlow(t *testing.T) {
 		if cell == nil || !cell.Room {
 			return
 		}
-		for _, rn := range adjRooms {
+		for _, rn := range meshRooms {
 			if cell.Name == rn {
 				data := gameworld.GetGameData(cell)
 				if data.MaintenanceTerm != nil && !data.MaintenanceTerm.Powered {

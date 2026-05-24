@@ -2,6 +2,7 @@
 package ebiten
 
 import (
+	"image/color"
 	"strings"
 
 	"darkstation/pkg/engine/world"
@@ -99,6 +100,15 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 		pulseColor := e.getPulsingExitColor()
 		// Background will be drawn with pulsing color separately
 		return CellRenderOptions{Icon: IconExitUnlocked, Color: pulseColor, HasBackground: true}
+	}
+
+	// Corridor power relay (discovered corridors only)
+	if gameworld.HasPowerRelay(cell) && (g.HasMap || cell.Discovered) {
+		relay := gameworld.GetGameData(cell).PowerRelay
+		if relay != nil && relay.Closed {
+			return CellRenderOptions{Icon: IconRelayClosed, Color: colorMaintenance, HasBackground: true, BackgroundColor: colorWallBgPowered}
+		}
+		return CellRenderOptions{Icon: IconRelayOpen, Color: colorHazard, HasBackground: true, BackgroundColor: colorHazardBackground}
 	}
 
 	// Items on floor (show if has map or discovered)
@@ -235,6 +245,32 @@ func hasAdjacentRoomNamed(c *world.Cell, roomName string) bool {
 		}
 	}
 	return false
+}
+
+// maintSelectableRoomWallBg tints walls for adjacent selectable rooms while the maintenance menu is open.
+func maintSelectableRoomWallBg(g *state.Game, cell *world.Cell) color.Color {
+	if g == nil || cell == nil || g.MaintenanceMenuRoom == "" || len(g.MaintenanceSelectableRooms) == 0 {
+		return nil
+	}
+	for _, room := range g.MaintenanceSelectableRooms {
+		if room == g.MaintenanceMenuRoom {
+			continue
+		}
+		if !hasAdjacentRoomNamed(cell, room) {
+			continue
+		}
+		doors := g.RoomDoorsPowered[room]
+		cctv := g.RoomCCTVPowered[room]
+		switch {
+		case doors && cctv:
+			return color.RGBA{35, 90, 55, 255}
+		case doors:
+			return color.RGBA{40, 70, 48, 255}
+		default:
+			return color.RGBA{48, 44, 58, 255}
+		}
+	}
+	return nil
 }
 
 // roomHasPower checks if the room adjacent to a wall cell has power

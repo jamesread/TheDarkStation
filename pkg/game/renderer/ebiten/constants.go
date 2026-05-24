@@ -78,6 +78,8 @@ const (
 	IconTerminalUnused = "▫" // Unused CCTV terminal
 	IconTerminalUsed   = "▪" // Used CCTV terminal
 	IconMaintenance    = "▤" // Maintenance terminal
+	IconRelayClosed    = "╬" // Corridor relay conducting
+	IconRelayOpen      = "╳" // Corridor relay open (blocks mesh)
 )
 
 // Floor icons for different room types (visited/unvisited pairs)

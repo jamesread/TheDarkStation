@@ -506,6 +506,7 @@ type MaintenanceMenuHandler struct {
 	terminalRoomName string   // room where the terminal is
 	selectedRoomName string   // room currently being viewed (mutable)
 	selectableRooms  []string // current + adjacent rooms
+	mode             string   // maintModeControls or maintModeDiagnostics
 }
 
 // buildRoomDevices builds device list (CCTV, puzzles only), room consumption, and counts for doors/lights.
@@ -569,12 +570,12 @@ func buildRoomDevices(g *state.Game, roomName string, maintenanceTerm *entities.
 // NewMaintenanceMenuHandler creates a new maintenance menu handler.
 func NewMaintenanceMenuHandler(g *state.Game, cell *world.Cell, maintenanceTerm *entities.MaintenanceTerminal) *MaintenanceMenuHandler {
 	roomName := maintenanceTerm.RoomName
-	selectableRooms := setup.GetAdjacentRoomNames(g.Grid, roomName)
+	selectableRooms := setup.SelectableRoomsForTerminal(g, g.Grid, roomName)
 	if selectableRooms == nil {
 		selectableRooms = []string{roomName}
 	}
 
-	return &MaintenanceMenuHandler{
+	h := &MaintenanceMenuHandler{
 		g:                g,
 		cell:             cell,
 		maintenanceTerm:  maintenanceTerm,
@@ -582,6 +583,8 @@ func NewMaintenanceMenuHandler(g *state.Game, cell *world.Cell, maintenanceTerm 
 		selectedRoomName: roomName,
 		selectableRooms:  selectableRooms,
 	}
+	h.initMaintenanceMenuState()
+	return h
 }
 
 // GetTitle returns the menu title.
@@ -596,7 +599,13 @@ func (h *MaintenanceMenuHandler) GetMaintenanceRoom(selectedIndex int, items []M
 
 // GetInstructions returns the menu instructions.
 func (h *MaintenanceMenuHandler) GetInstructions(selected MenuItem) string {
-	return "Press Enter to select. Escape or Menu to close."
+	base := "Up/Down: select | Enter: activate | A/D: switch room | 1/2/3: OFF/ESSENTIAL/FULL | Tab: mode | Esc: close"
+	if selected != nil {
+		if ht := selected.GetHelpText(); ht != "" {
+			return ht + " — " + base
+		}
+	}
+	return base
 }
 
 // OnSelect is called when an item is selected.
@@ -653,91 +662,35 @@ func (h *MaintenanceMenuHandler) OnActivate(item MenuItem, index int) (shouldClo
 		termItem.Term.Powered = !termItem.Term.Powered
 		return false, "" // Keep menu open like doors/CCTV
 	}
-	if _, isRoomSel := item.(*RoomSelectorMenuItem); isRoomSel {
-		handler := &RoomSelectorMenuHandler{parent: h, rooms: h.selectableRooms}
-		items := handler.GetMenuItems()
-		RunMenu(h.g, items, handler)
-		return false, ""
+	if presetItem, isPreset := item.(*RoomCircuitPresetMenuItem); isPreset {
+		next := CurrentCircuitPreset(h.g, presetItem.Parent.selectedRoomName).NextPreset()
+		return false, presetItem.Parent.applyCircuitPreset(next)
 	}
+	if _, isMode := item.(*ModeToggleMenuItem); isMode {
+		h.toggleMode()
+		if h.mode == maintModeDiagnostics {
+			return false, "Diagnostics panel"
+		}
+		return false, "Controls panel"
+	}
+	if _, isRestoreAll := item.(*RestoreAllAdjacentMenuItem); isRestoreAll {
+		return false, h.restoreAllAdjacent()
+	}
+	if _, isRestoreSel := item.(*RestoreSelectedRoomMenuItem); isRestoreSel {
+		return false, h.restoreSelectedRoom()
+	}
+	// Legacy type used in tests — same as restore all adjacent.
 	if restoreItem, isRestore := item.(*RestorePowerNearbyTerminalsMenuItem); isRestore {
-		if restoreItem.Parent.g.Grid == nil {
-			return false, ""
-		}
-		rooms := setup.GetAdjacentRoomNames(restoreItem.Parent.g.Grid, restoreItem.Parent.terminalRoomName)
-		if rooms == nil {
-			rooms = []string{restoreItem.Parent.terminalRoomName}
-		}
-		roomSet := make(map[string]bool)
-		for _, r := range rooms {
-			roomSet[r] = true
-		}
-		restored := 0
-		restoreItem.Parent.g.Grid.ForEachCell(func(row, col int, c *world.Cell) {
-			if c == nil || !c.Room || !roomSet[c.Name] {
-				return
-			}
-			data := gameworld.GetGameData(c)
-			if data.MaintenanceTerm == nil || data.MaintenanceTerm.Powered {
-				return
-			}
-			data.MaintenanceTerm.Powered = true
-			restored++
-		})
-		if restored > 0 {
-			helpText = fmt.Sprintf("Restored power to %d terminal(s)", restored)
-		} else {
-			helpText = "No unpowered terminals in nearby rooms"
-		}
-		return false, helpText
+		return false, restoreItem.Parent.restoreAllAdjacent()
+	}
+	if _, isAdv := item.(*AdvancedPowerMenuItem); isAdv {
+		_, _, doorCount, lightCount := buildRoomDevices(h.g, h.selectedRoomName, h.maintenanceTerm)
+		handler := &AdvancedPowerMenuHandler{parent: h, doorCount: doorCount, lightCount: lightCount}
+		RunMenuDynamic(h.g, handler)
+		return false, ""
 	}
 	if _, isPing := item.(*PingTerminalsMenuItem); isPing {
-		centerRow, centerCol := h.cell.Row, h.cell.Col
-		radiusSq := pingRadius * pingRadius
-		var results []pingResult
-
-		h.g.Grid.ForEachCell(func(row, col int, c *world.Cell) {
-			if c == nil {
-				return
-			}
-			dr := row - centerRow
-			dc := col - centerCol
-			if dr*dr+dc*dc > radiusSq {
-				return
-			}
-			if !gameworld.HasTerminal(c) && !gameworld.HasPuzzle(c) {
-				return
-			}
-			if c.Discovered {
-				return
-			}
-			c.Discovered = true
-			data := gameworld.GetGameData(c)
-			if gameworld.HasTerminal(c) && data.Terminal != nil {
-				results = append(results, pingResult{Name: data.Terminal.Name, Type: "CCTV"})
-			}
-			if gameworld.HasPuzzle(c) && data.Puzzle != nil {
-				results = append(results, pingResult{Name: data.Puzzle.Name, Type: "Puzzle"})
-			}
-		})
-
-		// Build ping results menu items and open sub-menu
-		resultItems := []MenuItem{
-			&InfoMenuItem{Label: "Ping results"},
-			&InfoMenuItem{Label: ""},
-		}
-		if len(results) == 0 {
-			resultItems = append(resultItems, &InfoMenuItem{Label: "No terminals within range."})
-		} else {
-			resultItems = append(resultItems, &InfoMenuItem{Label: fmt.Sprintf("Discovered %d terminal(s):", len(results))})
-			for _, r := range results {
-				resultItems = append(resultItems, &InfoMenuItem{Label: fmt.Sprintf("  %s (%s)", r.Name, r.Type)})
-			}
-		}
-		resultItems = append(resultItems, &InfoMenuItem{Label: ""}, &CloseMenuItem{Label: "Close"})
-
-		resultsHandler := &PingResultsMenuHandler{items: resultItems}
-		RunMenu(h.g, resultItems, resultsHandler)
-		return false, ""
+		return false, h.pingNearbyInline()
 	}
 	// Other items (info/devices) are read-only; any other activation closes the menu
 	return true, ""
@@ -745,7 +698,7 @@ func (h *MaintenanceMenuHandler) OnActivate(item MenuItem, index int) (shouldClo
 
 // OnExit is called when the menu is exited.
 func (h *MaintenanceMenuHandler) OnExit() {
-	// Nothing to do on exit
+	h.clearMaintenanceMenuState()
 }
 
 // ShouldCloseOnAnyAction returns true if the menu should close on any action.
@@ -753,74 +706,10 @@ func (h *MaintenanceMenuHandler) ShouldCloseOnAnyAction() bool {
 	return false // Allow activating "Ping nearby terminals"; close via menu/quit key
 }
 
-// GetMenuItems returns the menu items for the maintenance menu.
-// Labels use tab (\t) so the renderer can align values in a column (maintenance terminal style).
-// First line is a deck-depth flavour message (Phase 5.2; GDD §6), followed by Story 5.4 read-only diagnostic strata.
+// GetMenuItems returns the menu items for the maintenance menu (Controls or Diagnostics mode).
 func (h *MaintenanceMenuHandler) GetMenuItems() []MenuItem {
-	devices, roomConsumption, doorCount, lightCount := buildRoomDevices(h.g, h.selectedRoomName, h.maintenanceTerm)
-
-	flavourLine := deck.TerminalFlavourText(h.g.CurrentDeckID)
-	instrLines := maintenanceInstrumentMenuLines(h.g, h.selectedRoomName)
-	items := []MenuItem{
-		&InfoMenuItem{Label: "SUBTLE{" + flavourLine + "}"},
-		&InfoMenuItem{Label: ""},
+	if h.mode == maintModeDiagnostics {
+		return h.getDiagnosticsMenuItems()
 	}
-	for _, line := range instrLines {
-		items = append(items, &InfoMenuItem{Label: line})
-	}
-	if len(instrLines) > 0 {
-		items = append(items, &InfoMenuItem{Label: ""})
-	}
-	items = append(items,
-		&RoomSelectorMenuItem{Parent: h},
-		&InfoMenuItem{Label: ""},
-		&InfoMenuItem{Label: fmt.Sprintf("Power Supply:\t%s", renderer.FormatPowerWatts(h.g.PowerSupply, false))},
-		&InfoMenuItem{Label: fmt.Sprintf("Power Consumption:\t%s", renderer.FormatPowerWatts(h.g.PowerConsumption, false))},
-		&InfoMenuItem{Label: fmt.Sprintf("Available Power:\t%s", renderer.FormatPowerWatts(h.g.GetAvailablePower(), false))},
-		&InfoMenuItem{Label: ""}, // Empty line
-		&InfoMenuItem{Label: fmt.Sprintf("Room (%d devices):", len(devices))},
-	)
-
-	if len(devices) == 0 {
-		items = append(items, &InfoMenuItem{Label: "No active devices in this room."})
-	} else {
-		for _, device := range devices {
-			items = append(items, &DeviceMenuItem{Device: device})
-		}
-	}
-
-	// Consumption total below the device list
-	items = append(items,
-		&InfoMenuItem{Label: fmt.Sprintf("Consumption:\t%s", renderer.FormatPowerWatts(roomConsumption, false))},
-		&InfoMenuItem{Label: ""},
-		&InfoMenuItem{Label: "Room power (doors/CCTV 10w when on; lights 0w):"},
-	)
-
-	// Add maintenance terminal power toggles first (for other terminals in this room; exclude the one we're using)
-	h.g.Grid.ForEachCell(func(row, col int, c *world.Cell) {
-		if c == nil || !c.Room || c.Name != h.selectedRoomName {
-			return
-		}
-		data := gameworld.GetGameData(c)
-		if data.MaintenanceTerm == nil || data.MaintenanceTerm == h.maintenanceTerm {
-			return
-		}
-		items = append(items, &MaintenanceTerminalPowerMenuItem{G: h.g, Term: data.MaintenanceTerm})
-	})
-
-	// Doors, Lights (above CCTV), CCTV
-	items = append(items,
-		&RoomPowerToggleMenuItem{G: h.g, RoomName: h.selectedRoomName, PowerType: "doors", Count: doorCount, CountSuffix: ""},
-		&RoomPowerToggleMenuItem{G: h.g, RoomName: h.selectedRoomName, PowerType: "lights", Count: lightCount, CountSuffix: " cells"},
-		&RoomPowerToggleMenuItem{G: h.g, RoomName: h.selectedRoomName, PowerType: "cctv"},
-	)
-
-	items = append(items,
-		&InfoMenuItem{Label: ""}, // Empty line
-		&RestorePowerNearbyTerminalsMenuItem{Parent: h},
-		&PingTerminalsMenuItem{}, // Ping discovers nearby terminals on the map
-		&InfoMenuItem{Label: ""}, // Empty line
-		&CloseMenuItem{Label: "Close"},
-	)
-	return items
+	return h.getControlsMenuItems()
 }

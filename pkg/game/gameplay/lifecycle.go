@@ -87,6 +87,9 @@ func SetupLevel(g *state.Game) {
 	setup.ApplyObservationLedPuzzleCues(g)
 	setup.ApplyMultiHopLinkage(g)
 
+	// Corridor power relays for routing mesh (power-routing Phase 3).
+	setup.ApplyPowerRelays(g)
+
 	// Move player to start cell (setup package sets current cell to center)
 	MoveCell(g, g.Grid.StartCell())
 }

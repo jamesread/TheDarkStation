@@ -147,6 +147,10 @@ Room power is **per room name** (e.g. "Depressurized Bridge", "Emergency Lab"). 
   - All **adjacent rooms** (same definition as above).
 - So the player does not need to visit every room to power its doors/CCTV; they can do it from any powered terminal that is in or adjacent to that room.
 
+### 5.5 Maintenance UI (routing UX)
+
+Player-facing maintenance flow (Controls vs Diagnostics modes, circuit presets OFF/ESSENTIAL/FULL, short-out preview, targeted restore, map overlay) is specified in [`power-routing-ux.md`](power-routing-ux.md). Underlying watt rules in this document are unchanged.
+
 ---
 
 ## 6. Lighting and Exploration

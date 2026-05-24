@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/state"
@@ -286,6 +287,8 @@ func TestRestorePowerNearbyTerminals_PowersAdjacentRoom(t *testing.T) {
 	g, termCell := makeMenuTestGame(t)
 	termA := gameworld.GetGameData(termCell).MaintenanceTerm
 	termA.Powered = true // We're at RoomA's terminal
+	g.RoomDoorsPowered["RoomA"] = true
+	g.RoomDoorsPowered["RoomB"] = true
 
 	termBCell := g.Grid.GetCell(2, 1)
 	termB := gameworld.GetGameData(termBCell).MaintenanceTerm
@@ -299,8 +302,8 @@ func TestRestorePowerNearbyTerminals_PowersAdjacentRoom(t *testing.T) {
 	if !termB.Powered {
 		t.Error("RoomB terminal should be powered after restore")
 	}
-	if helpText != "Restored power to 1 terminal(s)" {
-		t.Errorf("helpText = %q, want 'Restored power to 1 terminal(s)'", helpText)
+	if !strings.Contains(helpText, "1 terminal") {
+		t.Errorf("helpText = %q, want message mentioning 1 terminal", helpText)
 	}
 }
 
@@ -313,8 +316,8 @@ func TestRestorePowerNearbyTerminals_NoUnpoweredShowsMessage(t *testing.T) {
 	// Both terminals already powered in makeMenuTestGame
 	_, helpText := h.OnActivate(restoreItem, 0)
 
-	if helpText != "No unpowered terminals in nearby rooms" {
-		t.Errorf("helpText = %q, want 'No unpowered terminals in nearby rooms'", helpText)
+	if !strings.Contains(helpText, "No unpowered") {
+		t.Errorf("helpText = %q, want no-unpowered message", helpText)
 	}
 }
 
@@ -353,8 +356,8 @@ func TestRestorePowerNearbyTerminals_PowersOwnRoomUnpoweredTerminal(t *testing.T
 	if !term2.Powered {
 		t.Error("MT-2 in own room should be powered after restore")
 	}
-	if helpText != "Restored power to 1 terminal(s)" {
-		t.Errorf("helpText = %q, want 'Restored power to 1 terminal(s)'", helpText)
+	if !strings.Contains(helpText, "1 terminal") {
+		t.Errorf("helpText = %q, want message mentioning 1 terminal", helpText)
 	}
 }
 
@@ -416,8 +419,12 @@ func TestMaintenanceInstrumentMenuLines_localCorrelates(t *testing.T) {
 
 func TestMaintenanceMenuItems_includeInstrumentStrata(t *testing.T) {
 	g, termCell := makeMenuTestGame(t)
+	g.Level = 5
+	g.CurrentDeckID = 4
+	g.LevelSeed = 424242
 	term := gameworld.GetGameData(termCell).MaintenanceTerm
 	h := NewMaintenanceMenuHandler(g, termCell, term)
+	h.mode = maintModeDiagnostics
 	var joined strings.Builder
 	for _, it := range h.GetMenuItems() {
 		joined.WriteString(it.GetLabel())
@@ -425,6 +432,42 @@ func TestMaintenanceMenuItems_includeInstrumentStrata(t *testing.T) {
 	}
 	s := joined.String()
 	if !strings.Contains(s, "LOG\tT+") || !strings.Contains(s, "SUBSYS-\tBUS-") {
-		t.Fatalf("menu should include instrument trace lines:\n%s", s)
+		t.Fatalf("diagnostics menu should include instrument trace lines:\n%s", s)
+	}
+}
+
+func TestRestoreSelectedRoom_OnlySelected(t *testing.T) {
+	g, termCell := makeMenuTestGame(t)
+	termA := gameworld.GetGameData(termCell).MaintenanceTerm
+	g.RoomDoorsPowered["RoomA"] = true
+	g.RoomDoorsPowered["RoomB"] = true
+	termBCell := g.Grid.GetCell(2, 1)
+	termB := gameworld.GetGameData(termBCell).MaintenanceTerm
+	termB.Powered = false
+
+	h := NewMaintenanceMenuHandler(g, termCell, termA)
+	h.selectedRoomName = "RoomB"
+	_, helpText := h.OnActivate(&RestoreSelectedRoomMenuItem{Parent: h}, 0)
+
+	if !termB.Powered {
+		t.Error("RoomB terminal should be powered")
+	}
+	if !strings.Contains(helpText, "1 terminal") {
+		t.Errorf("helpText = %q", helpText)
+	}
+}
+
+func TestHandleMaintenanceIntent_cycleRoom(t *testing.T) {
+	g, termCell := makeMenuTestGame(t)
+	term := gameworld.GetGameData(termCell).MaintenanceTerm
+	h := NewMaintenanceMenuHandler(g, termCell, term)
+	h.selectedRoomName = "RoomA"
+
+	consumed, _ := h.HandleMaintenanceIntent(engineinput.Intent{Action: engineinput.ActionMoveEast})
+	if !consumed {
+		t.Fatal("east should consume intent in maintenance menu")
+	}
+	if h.selectedRoomName != "RoomB" {
+		t.Fatalf("expected RoomB, got %s", h.selectedRoomName)
 	}
 }

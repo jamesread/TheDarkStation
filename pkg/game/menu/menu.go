@@ -102,6 +102,15 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 			return
 		}
 
+		if extra, ok := handler.(MaintenanceMenuExtraInput); ok {
+			if consumed, ht := extra.HandleMaintenanceIntent(intent); consumed {
+				if ht != "" {
+					helpText = ht
+				}
+				continue
+			}
+		}
+
 		switch intent.Action {
 		case engineinput.ActionMoveNorth:
 			// Move selection up to previous selectable item (with wrap-around)
@@ -228,6 +237,15 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 			}
 			handler.OnExit()
 			return
+		}
+
+		if extra, ok := handler.(MaintenanceMenuExtraInput); ok {
+			if consumed, ht := extra.HandleMaintenanceIntent(intent); consumed {
+				if ht != "" {
+					helpText = ht
+				}
+				continue
+			}
 		}
 
 		switch intent.Action {

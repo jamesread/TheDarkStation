@@ -87,6 +87,12 @@ type Game struct {
 	// MaintenanceMenuRoom is set while the maintenance menu is open; the room whose
 	// maintenance view is displayed. Used to highlight that room's wall cells on the map.
 	MaintenanceMenuRoom string
+
+	// MaintenanceMenuMode is "controls" or "diagnostics" while the maintenance menu is open.
+	MaintenanceMenuMode string
+
+	// MaintenanceSelectableRooms lists rooms the player can target from the open terminal (for map overlay).
+	MaintenanceSelectableRooms []string
 }
 
 // MessageEntry represents a message with a timestamp
@@ -471,6 +477,102 @@ func (g *Game) ShortOutIfOverload(protectedRoomName string) bool {
 		g.PowerConsumption = consumption
 	}
 	return shortOut
+}
+
+// PowerShedEntry describes one consumer that would be unpowered during short-out preview or apply.
+type PowerShedEntry struct {
+	Room string
+	Kind string // "doors" or "cctv"
+}
+
+// PreviewShortOutIfOverload simulates applying doorsOn/cctvOn for protectedRoomName on a copy of
+// room power maps and returns consumers that would be shed (same order as ShortOutIfOverload).
+func (g *Game) PreviewShortOutIfOverload(protectedRoomName string, doorsOn, cctvOn bool) []PowerShedEntry {
+	if g == nil {
+		return nil
+	}
+	doors := make(map[string]bool, len(g.RoomDoorsPowered))
+	cctv := make(map[string]bool, len(g.RoomCCTVPowered))
+	for k, v := range g.RoomDoorsPowered {
+		doors[k] = v
+	}
+	for k, v := range g.RoomCCTVPowered {
+		cctv[k] = v
+	}
+	doors[protectedRoomName] = doorsOn
+	cctv[protectedRoomName] = cctvOn
+
+	g.UpdatePowerSupply()
+	supply := g.PowerSupply
+
+	consumption := calculateConsumptionFromMaps(g, doors, cctv)
+	if consumption <= supply {
+		return nil
+	}
+
+	type consumer struct{ room, kind string }
+	var list []consumer
+	for roomName, on := range doors {
+		if roomName == protectedRoomName || !on {
+			continue
+		}
+		list = append(list, consumer{roomName, "doors"})
+	}
+	for roomName, on := range cctv {
+		if roomName == protectedRoomName || !on {
+			continue
+		}
+		list = append(list, consumer{roomName, "cctv"})
+	}
+	for i := 0; i < len(list); i++ {
+		for j := i + 1; j < len(list); j++ {
+			if list[j].room < list[i].room || (list[j].room == list[i].room && list[j].kind == "doors" && list[i].kind == "cctv") {
+				list[i], list[j] = list[j], list[i]
+			}
+		}
+	}
+
+	var shed []PowerShedEntry
+	for _, c := range list {
+		if consumption <= supply {
+			break
+		}
+		if c.kind == "doors" && doors[c.room] {
+			doors[c.room] = false
+			shed = append(shed, PowerShedEntry{Room: c.room, Kind: "doors"})
+		} else if c.kind == "cctv" && cctv[c.room] {
+			cctv[c.room] = false
+			shed = append(shed, PowerShedEntry{Room: c.room, Kind: "cctv"})
+		}
+		consumption = calculateConsumptionFromMaps(g, doors, cctv)
+	}
+	return shed
+}
+
+func calculateConsumptionFromMaps(g *Game, doors, cctv map[string]bool) int {
+	if g == nil || g.Grid == nil {
+		return 0
+	}
+	rawConsumption := 0
+	doorRoomCounted := make(map[string]bool)
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.Terminal != nil && cctv[cell.Name] {
+			rawConsumption += 10
+		}
+		if data.Door != nil && doors[data.Door.RoomName] && !doorRoomCounted[data.Door.RoomName] {
+			rawConsumption += 10
+			doorRoomCounted[data.Door.RoomName] = true
+		}
+		if data.Puzzle != nil && data.Puzzle.IsSolved() {
+			rawConsumption += 3
+		}
+	})
+	params := deck.DecayParamsForDeck(g.CurrentDeckID)
+	return int(float64(rawConsumption) * params.PowerCostMultiplier)
 }
 
 // AddFoundCode records that the player has found a puzzle code

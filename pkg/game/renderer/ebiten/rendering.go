@@ -146,9 +146,10 @@ func (e *EbitenRenderer) drawFPSCounter(screen *ebiten.Image, screenWidth, scree
 }
 
 // advanceMaintenanceCamera sets the map camera center. With the maintenance room list open,
-// the camera eases toward the selected room center (~1s smootherstep). Jitter fixes are in the
-// overlay (vector AA off, stable panel height) and in drawMap: fractional blit only while the
-// camera is still moving; when idle the blit snaps to whole pixels to avoid static LCD shimmer.
+// the camera eases toward the selected room center (~1s smootherstep). Jitter fixes: drive pan
+// duration off menuAnimTimeNano (avoid UnixMilli stalls during consecutive Updates); stabilize the
+// menu overlay during pan (menu.go); and in drawMap use a rounded integer screen translation —
+// fractional GeoM Translate + nearest filtering is glitchy on Ebitengine (~#1171).
 // Normal play follows the player with no animation.
 func (e *EbitenRenderer) advanceMaintenanceCamera() {
 	const maintCameraPanMs = 1000
@@ -175,18 +176,32 @@ func (e *EbitenRenderer) advanceMaintenanceCamera() {
 			e.cameraFromCol = e.cameraCenterCol
 			e.cameraTargetRow = targetRow
 			e.cameraTargetCol = targetCol
-			e.cameraTransitionStart = e.menuAnimClockMilli
+			e.cameraTransitionStartNano = e.menuAnimTimeNano
+			e.maintPanCameraTweenActive = true
+			maintPanLogf(
+				"tween TRIGGER from=(%.6f,%.6f) target=(%.6f,%.6f) room=%q transition_start_ns=%d dur_ms=%d",
+				e.cameraFromRow, e.cameraFromCol,
+				e.cameraTargetRow, e.cameraTargetCol,
+				g.MaintenanceMenuRoom, e.cameraTransitionStartNano, maintCameraPanMs)
 		}
 
-		elapsed := e.menuAnimClockMilli - e.cameraTransitionStart
-		if elapsed < 0 {
-			elapsed = 0
+		elapsedNano := e.menuAnimTimeNano - e.cameraTransitionStartNano
+		if elapsedNano < 0 {
+			elapsedNano = 0
 		}
-		progress := float64(elapsed) / float64(maintCameraPanMs)
+		elapsedMs := float64(elapsedNano) / 1e6
+		progress := elapsedMs / float64(maintCameraPanMs)
 		if progress >= 1.0 {
 			e.cameraCenterRow = e.cameraTargetRow
 			e.cameraCenterCol = e.cameraTargetCol
 			progress = 1.0
+			if e.maintPanCameraTweenActive {
+				maintPanLogf(
+					"tween COMPLETE cam=(%.6f,%.6f) tgt=(%.6f,%.6f) room=%q elapsed_ms=%.2f",
+					e.cameraCenterRow, e.cameraCenterCol,
+					e.cameraTargetRow, e.cameraTargetCol, g.MaintenanceMenuRoom, elapsedMs)
+				e.maintPanCameraTweenActive = false
+			}
 		} else {
 			t := smootherstep(progress)
 			e.cameraCenterRow = e.cameraFromRow + (e.cameraTargetRow-e.cameraFromRow)*t
@@ -198,6 +213,7 @@ func (e *EbitenRenderer) advanceMaintenanceCamera() {
 		return
 	}
 
+	e.maintPanCameraTweenActive = false
 	e.cameraCenterRow = targetRow
 	e.cameraCenterCol = targetCol
 	e.cameraTargetRow = targetRow
@@ -213,6 +229,17 @@ func smootherstep(t float64) float64 {
 		return 1
 	}
 	return t * t * t * (t*(t*6-15) + 10)
+}
+
+// maintCameraPanTweening is true while the maintenance map camera ease has not snapped to its room target.
+// Used for fractional map blits and to trim expensive overlay draws during the pan — frame pacing, not lerping,
+// tends to dominate perceived stutter: progress is sampled on missed frames from wall-clock elapsed.
+func maintCameraPanTweening(g *state.Game, camRow, camCol, tgtRow, tgtCol float64) bool {
+	if g == nil || g.MaintenanceMenuRoom == "" {
+		return false
+	}
+	const posEps = 1e-5
+	return math.Abs(camRow-tgtRow) > posEps || math.Abs(camCol-tgtCol) > posEps
 }
 
 // drawMap renders the game map
@@ -234,9 +261,7 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, mapX, mapY
 
 	// Maintenance menu at rest: integer blit offsets reduce static shimmer. While the camera is
 	// easing to a new room, keep fractional offsets so the pan stays visually smooth.
-	const posEps = 1e-5
-	panningMaint := g.MaintenanceMenuRoom != "" && (math.Abs(e.cameraCenterRow-e.cameraTargetRow) > posEps ||
-		math.Abs(e.cameraCenterCol-e.cameraTargetCol) > posEps)
+	panningMaint := maintCameraPanTweening(g, e.cameraCenterRow, e.cameraCenterCol, e.cameraTargetRow, e.cameraTargetCol)
 	blitX := offsetX
 	blitY := offsetY
 	if g.MaintenanceMenuRoom != "" && !panningMaint {
@@ -244,11 +269,19 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, mapX, mapY
 		blitY = math.Round(offsetY)
 	}
 
+	// Integer destination on screen: nearest-neighbour sampling plus fractional Geometry matrix
+	// translation is an Ebitengine footgun (#1171) — sharp edges crawl and jitter. Linear filter
+	// reduced that slightly but traded constant softness/shimmer during one-second pans. Rounding the
+	// final blit position keeps glyphs on the screen pixel lattice while fractional topLeft Row/Col
+	// still selects sub-tile content inside the buffer.
+	mapScrX := math.Round(float64(mapX) + blitX)
+	mapScrY := math.Round(float64(mapY) + blitY)
+
 	if maintPanDebugOn() && g.MaintenanceMenuRoom != "" {
 		e.maintPanDrawCount++
 		if e.maintPanDrawCount == 2 {
-			maintPanLogf("second Draw() in same Update tick animClockMs=%d offX=%.4f offY=%.4f cam=%.4f,%.4f",
-				e.menuAnimClockMilli, offsetX, offsetY, e.cameraCenterRow, e.cameraCenterCol)
+			maintPanLogf("second Draw() in same Update tick animClockMs=%d offX=%.4f offY=%.4f mapScr=%.0f,%.0f cam=%.4f,%.4f",
+				e.menuAnimClockMilli, offsetX, offsetY, mapScrX, mapScrY, e.cameraCenterRow, e.cameraCenterCol)
 		}
 	}
 	// Ensure map buffer exists and is correctly sized
@@ -272,14 +305,14 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, mapX, mapY
 		}
 	}
 
-	// Blit map buffer to screen with fractional offset (one draw = smooth, no jitter)
+	// Blit map buffer on an integer pixel grid (see mapScrX/Y above).
 	op := &ebiten.DrawImageOptions{}
-	op.GeoM.Translate(float64(mapX)+blitX, float64(mapY)+blitY)
+	op.GeoM.Translate(mapScrX, mapScrY)
 	screen.DrawImage(e.mapBuffer, op)
 
-	// Draw overlays on top (labels, callouts, player) - they use screen-space positions
-	mapXF := float64(mapX) + blitX
-	mapYF := float64(mapY) + blitY
+	// Draw overlays using the same screen origin so labels/callouts match the quantized blit.
+	mapXF := mapScrX
+	mapYF := mapScrY
 	e.drawRoomLabels(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawEnvironmentalPlaques(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawCallouts(screen, snap, mapXF, mapYF, startRow, startCol)
@@ -356,6 +389,11 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 		if customBg == nil && opts != nil && opts.Icon == IconWall && g.MaintenanceMenuRoom != "" &&
 			hasAdjacentRoomNamed(cell, g.MaintenanceMenuRoom) {
 			customBg = colorWallHighlight
+		}
+		if customBg == nil && opts != nil && opts.Icon == IconWall {
+			if adjBg := maintSelectableRoomWallBg(g, cell); adjBg != nil {
+				customBg = adjBg
+			}
 		}
 		if customBg == nil && opts != nil && opts.BackgroundColor != nil {
 			customBg = opts.BackgroundColor

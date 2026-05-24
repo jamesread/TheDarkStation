@@ -264,9 +264,15 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		return
 	}
 
+	e.gameMutex.RLock()
+	pg := e.game
+	e.gameMutex.RUnlock()
+
 	screenWidth, screenHeight := screen.Bounds().Dx(), screen.Bounds().Dy()
 
 	maintOverlayStable := strings.Contains(title, "Maintenance Terminal") || title == "Select room"
+	skipMenuDropShadow := maintOverlayStable &&
+		maintCameraPanTweening(pg, e.cameraCenterRow, e.cameraCenterCol, e.cameraTargetRow, e.cameraTargetCol)
 	// Default true so callouts/main menu stay soft; maint/room picker uses crisp vector edges (less LCD shimmer).
 	useVectorAA := !maintOverlayStable
 
@@ -365,6 +371,8 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 
 	// Drop shadow: drawn FIRST (behind panel), like CSS box-shadow. Ring only (never overlaps panel).
 	// 0 offset, 8px spread, fade from outer (darker) to inner (lighter). Shadow derived from border color.
+	// While the maintenance map ease runs, omit these rings — they add many vector fills on top of a
+	// full viewport repaint and worsen uneven frame pacing (missed draws read as hitch).
 	const shadowSpread = 8
 	bor, bog, bob, _ := border.RGBA()
 	shadowR := uint8((bor >> 8) * 15 / 255)
@@ -379,23 +387,25 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	if shadowB < 8 {
 		shadowB = 8
 	}
-	for i := shadowSpread; i >= 1; i-- {
-		alpha := uint8(12 + i*8)
-		if alpha > 55 {
-			alpha = 55
+	if !skipMenuDropShadow {
+		for i := shadowSpread; i >= 1; i-- {
+			alpha := uint8(12 + i*8)
+			if alpha > 55 {
+				alpha = 55
+			}
+			path.Reset()
+			appendRoundedRect(&path,
+				float32(panelX-i), float32(panelY-i),
+				panelWFloat+float32(i*2), panelHFloat+float32(i*2),
+				menuCornerRadius+float32(i))
+			appendRoundedRectDir(&path,
+				float32(panelX-(i-1)), float32(panelY-(i-1)),
+				panelWFloat+float32((i-1)*2), panelHFloat+float32((i-1)*2),
+				menuCornerRadius+float32(i-1), vector.CounterClockwise)
+			drawOpts := &vector.DrawPathOptions{AntiAlias: useVectorAA}
+			drawOpts.ColorScale.ScaleWithColor(color.RGBA{shadowR, shadowG, shadowB, alpha})
+			vector.FillPath(screen, &path, nil, drawOpts)
 		}
-		path.Reset()
-		appendRoundedRect(&path,
-			float32(panelX-i), float32(panelY-i),
-			panelWFloat+float32(i*2), panelHFloat+float32(i*2),
-			menuCornerRadius+float32(i))
-		appendRoundedRectDir(&path,
-			float32(panelX-(i-1)), float32(panelY-(i-1)),
-			panelWFloat+float32((i-1)*2), panelHFloat+float32((i-1)*2),
-			menuCornerRadius+float32(i-1), vector.CounterClockwise)
-		drawOpts := &vector.DrawPathOptions{AntiAlias: useVectorAA}
-		drawOpts.ColorScale.ScaleWithColor(color.RGBA{shadowR, shadowG, shadowB, alpha})
-		vector.FillPath(screen, &path, nil, drawOpts)
 	}
 
 	// Panel background and border (drawn on top of shadow, fully covering center)
@@ -439,8 +449,10 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 
 	// Title (bold font, 2pt larger than body text)
 	if title != "" {
-		e.drawColoredTextWithFace(screen, title, x, y-int(fontSize), titleColor, e.getSansBoldTitleFontFace())
-		y += titleToContentSpacing
+		titleFace := e.getSansBoldTitleFontFace()
+		e.drawColoredTextWithFace(screen, title, x, y-int(fontSize), titleColor, titleFace)
+		// Advance by full title line height (not just titleToContentSpacing) so help text does not overlap.
+		y += int(titleFace.Size) + titleToContentSpacing
 	}
 
 	// Show help text if provided (parse markup for proper colors)

@@ -26,7 +26,7 @@ var cvarMutex sync.RWMutex
 // initCvars initializes configuration variables on startup
 func initCvars() {
 	cvarMutex.Lock()
-	cvarMap["debug.maint_pan"] = "0" // 1 = log maintenance menu pan/overlay diagnostics to stderr
+	cvarMap["debug.maint_pan"] = "0" // 1 = log maint camera pan tween TRIGGER/COMPLETE + throttled Update samples to stderr
 	cvarMap["version"] = renderer.Version
 	if renderer.Commit != "unknown" && len(renderer.Commit) > 0 {
 		cvarMap["commit"] = renderer.Commit
@@ -469,6 +469,15 @@ func (e *EbitenRenderer) executeCommandUnlocked(cmd string) {
 		loadColorsFromCvars()
 		e.addConsoleOutputUnlocked("Colors reloaded from cvars")
 
+	case "maint_pan_test", "maintpantest":
+		// Deliver via inputChan so ProcessIntent owns game mutation (consistent with gameplay intents).
+		select {
+		case e.inputChan <- engineinput.Intent{Action: engineinput.ActionMaintPanTestMap}:
+			e.addConsoleOutputUnlocked("Maintenance pan test map loaded.")
+		default:
+			e.addConsoleOutputUnlocked("Input queue full; try again.")
+		}
+
 	case "list":
 		// List all cvars in alphabetical order
 		cvarMutex.RLock()
@@ -496,6 +505,7 @@ func (e *EbitenRenderer) executeCommandUnlocked(cmd string) {
 		e.addConsoleOutputUnlocked("  bind <key> <action>  - Bind a key to an action")
 		e.addConsoleOutputUnlocked("  get <cvar>          - Get a configuration variable")
 		e.addConsoleOutputUnlocked("  set <cvar> <value>  - Set a configuration variable")
+		e.addConsoleOutputUnlocked("  maint_pan_test      - Load static maint room-picker camera test map")
 		e.addConsoleOutputUnlocked("  list                - List all cvars")
 		e.addConsoleOutputUnlocked("  color_update        - Reload colors from cvars")
 		e.addConsoleOutputUnlocked("  clear               - Clear console output")
@@ -540,6 +550,8 @@ func (e *EbitenRenderer) handleBindCommandUnlocked(key, actionName string) {
 		action = engineinput.ActionOpenMenu
 	case "devmap":
 		action = engineinput.ActionDevMap
+	case "maintpantest", "maint_pan_test", "maintpantestmap":
+		action = engineinput.ActionMaintPanTestMap
 	case "action", "interact":
 		action = engineinput.ActionInteract
 	case "resetlevel":

@@ -174,9 +174,17 @@ type EbitenRenderer struct {
 	// time.Now() inside Draw() — Ebiten may call Draw multiple times per Update, which caused
 	// visible jitter on the maintenance terminal / room picker overlay.
 	menuAnimClockMilli int64
+	// menuAnimTimeNano is the same instant as menuAnimClockMilli (nanoseconds since Unix epoch).
+	// Maintenance camera tween uses nanoseconds — UnixMilli quantization can stall progress for several
+	// consecutive Updates → visible map hitch while FPS still averages ~60.
+	menuAnimTimeNano int64
 
 	// maintPanDrawCount resets each Update; used only when cvar debug.maint_pan is on
 	maintPanDrawCount int
+
+	// maintPanCameraTweenActive tracks an in-flight maintenance-camera ease so debug.maint_pan can
+	// emit a single COMPLETE line when smootherstep finishes (or clears when exiting maintenance UI).
+	maintPanCameraTweenActive bool
 
 	// Analog stick state tracking (for edge detection)
 	// Maps gamepad ID to previous stick state (x, y values)
@@ -194,13 +202,13 @@ type EbitenRenderer struct {
 	debounceMutex     sync.RWMutex
 
 	// Camera transition state (smooth pan when focusing on room in select room dialog)
-	cameraCenterRow       float64
-	cameraCenterCol       float64
-	cameraTargetRow       float64
-	cameraTargetCol       float64
-	cameraFromRow         float64
-	cameraFromCol         float64
-	cameraTransitionStart int64 // Unix ms when maintenance room pan started (see menuAnimClockMilli)
+	cameraCenterRow           float64
+	cameraCenterCol           float64
+	cameraTargetRow           float64
+	cameraTargetCol           float64
+	cameraFromRow             float64
+	cameraFromCol             float64
+	cameraTransitionStartNano int64 // Unix ns when maintenance room pan started (with menuAnimTimeNano source)
 
 	// Offscreen map buffer - render tiles here at integer coords, then blit with fractional
 	// offset. Eliminates per-tile sub-pixel jitter during camera transitions.
