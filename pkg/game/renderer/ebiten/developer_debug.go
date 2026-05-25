@@ -70,6 +70,21 @@ func (e *EbitenRenderer) ToggleShowFPSCounter() bool {
 	return toggleCvarBool("draw.fps")
 }
 
+// SetShowPlayerPosition sets the draw.player_pos cvar.
+func (e *EbitenRenderer) SetShowPlayerPosition(on bool) {
+	setCvarBool("draw.player_pos", on)
+}
+
+// ShowPlayerPositionEnabled reports whether draw.player_pos enables the player X/Y overlay.
+func (e *EbitenRenderer) ShowPlayerPositionEnabled() bool {
+	return cvarEnabled("draw.player_pos")
+}
+
+// ToggleShowPlayerPosition flips draw.player_pos and returns the new state.
+func (e *EbitenRenderer) ToggleShowPlayerPosition() bool {
+	return toggleCvarBool("draw.player_pos")
+}
+
 func (e *EbitenRenderer) drawMapAreaBorderOutline(screen *ebiten.Image, x, y, w, h int) {
 	if w <= 0 || h <= 0 {
 		return

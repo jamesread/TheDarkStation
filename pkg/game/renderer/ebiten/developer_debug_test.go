@@ -37,6 +37,24 @@ func TestToggleShowFPSCounter(t *testing.T) {
 	}
 }
 
+func TestToggleShowPlayerPosition(t *testing.T) {
+	initCvars()
+	e := &EbitenRenderer{}
+	if e.ShowPlayerPositionEnabled() {
+		t.Fatal("player position overlay should start off (draw.player_pos=0)")
+	}
+	if !e.ToggleShowPlayerPosition() {
+		t.Fatal("first toggle should enable player position overlay")
+	}
+	if !e.ShowPlayerPositionEnabled() {
+		t.Fatal("player position overlay should be on")
+	}
+	e.SetShowPlayerPosition(false)
+	if e.ShowPlayerPositionEnabled() {
+		t.Fatal("SetShowPlayerPosition(false) should disable overlay")
+	}
+}
+
 func TestToggleDrawMapAreaBorder(t *testing.T) {
 	e := &EbitenRenderer{}
 	if e.DrawMapAreaBorderEnabled() {

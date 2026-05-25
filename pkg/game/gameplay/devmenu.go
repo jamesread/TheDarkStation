@@ -18,6 +18,7 @@ const (
 	DevMenuActionToggleMapAreaBorder
 	DevMenuActionToggleFOVRays
 	DevMenuActionToggleFPSDisplay
+	DevMenuActionTogglePlayerPosition
 )
 
 // DevMenuItem is a selectable row in the developer menu.
@@ -43,6 +44,8 @@ func (d *DevMenuItem) GetHelpText() string {
 		return "Toggle FOV ray-cast debug lines from the player"
 	case DevMenuActionToggleFPSDisplay:
 		return "Toggle draw.fps cvar (FPS counter in top-right corner)"
+	case DevMenuActionTogglePlayerPosition:
+		return "Toggle draw.player_pos cvar (player X/Y below FPS counter)"
 	default:
 		return ""
 	}
@@ -106,6 +109,12 @@ func (h *DevMenuHandler) OnActivate(item gamemenu.MenuItem, index int) (bool, st
 			return false, "FPS display: ON"
 		}
 		return false, "FPS display: OFF"
+	case DevMenuActionTogglePlayerPosition:
+		on := renderer.ToggleShowPlayerPosition()
+		if on {
+			return false, "Player position: ON"
+		}
+		return false, "Player position: OFF"
 	default:
 		return false, ""
 	}
@@ -138,6 +147,13 @@ func fpsDisplayMenuLabel() string {
 	return "FPS display: OFF"
 }
 
+func playerPositionMenuLabel() string {
+	if renderer.ShowPlayerPositionEnabled() {
+		return "Player position: ON"
+	}
+	return "Player position: OFF"
+}
+
 func zoomMenuLabel() string {
 	tileSize := renderer.GetTileSize()
 	rows, cols := renderer.GetViewportSize()
@@ -153,6 +169,7 @@ func (h *DevMenuHandler) GetMenuItems() []gamemenu.MenuItem {
 		&DevMenuItem{Label: mapAreaBorderMenuLabel(), Action: DevMenuActionToggleMapAreaBorder, G: h.g},
 		&DevMenuItem{Label: fovRaysMenuLabel(), Action: DevMenuActionToggleFOVRays, G: h.g},
 		&DevMenuItem{Label: fpsDisplayMenuLabel(), Action: DevMenuActionToggleFPSDisplay, G: h.g},
+		&DevMenuItem{Label: playerPositionMenuLabel(), Action: DevMenuActionTogglePlayerPosition, G: h.g},
 		&gamemenu.CloseMenuItem{Label: "Close"},
 	}
 }

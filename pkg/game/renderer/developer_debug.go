@@ -11,6 +11,9 @@ type DeveloperDebugRenderer interface {
 	SetShowFPSCounter(on bool)
 	ShowFPSCounterEnabled() bool
 	ToggleShowFPSCounter() bool
+	SetShowPlayerPosition(on bool)
+	ShowPlayerPositionEnabled() bool
+	ToggleShowPlayerPosition() bool
 }
 
 // SetDrawMapAreaBorder enables or disables the red map viewport border overlay.
@@ -80,4 +83,27 @@ func ToggleShowFPSCounter() bool {
 		return dr.ToggleShowFPSCounter()
 	}
 	return true
+}
+
+// SetShowPlayerPosition enables or disables the player X/Y overlay via draw.player_pos cvar.
+func SetShowPlayerPosition(on bool) {
+	if dr, ok := Current.(DeveloperDebugRenderer); ok {
+		dr.SetShowPlayerPosition(on)
+	}
+}
+
+// ShowPlayerPositionEnabled reports whether draw.player_pos enables the player X/Y overlay.
+func ShowPlayerPositionEnabled() bool {
+	if dr, ok := Current.(DeveloperDebugRenderer); ok {
+		return dr.ShowPlayerPositionEnabled()
+	}
+	return false // draw.player_pos default is 0
+}
+
+// ToggleShowPlayerPosition flips draw.player_pos and returns the new state.
+func ToggleShowPlayerPosition() bool {
+	if dr, ok := Current.(DeveloperDebugRenderer); ok {
+		return dr.ToggleShowPlayerPosition()
+	}
+	return false
 }

@@ -29,6 +29,7 @@ func initCvars() {
 	cvarMap["debug.maint_pan"] = "0"  // 1 = log maint camera pan tween TRIGGER/COMPLETE + throttled Update samples to stderr
 	cvarMap["gameplay.visited"] = "0" // 1 = track visited cells (walked-on floor style, room labels, linkage cues)
 	cvarMap["draw.fps"] = "1"         // 1 = show FPS counter in top-right corner
+	cvarMap["draw.player_pos"] = "0"  // 1 = show player X/Y below FPS counter (top-right)
 	cvarMap["version"] = renderer.Version
 	if renderer.Commit != "unknown" && len(renderer.Commit) > 0 {
 		cvarMap["commit"] = renderer.Commit

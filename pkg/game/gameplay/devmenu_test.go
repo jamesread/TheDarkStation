@@ -10,8 +10,8 @@ import (
 func TestDevMenuHandler_GetMenuItems(t *testing.T) {
 	h := NewDevMenuHandler(state.NewGame())
 	items := h.GetMenuItems()
-	if len(items) != 8 {
-		t.Fatalf("expected 8 items, got %d", len(items))
+	if len(items) != 9 {
+		t.Fatalf("expected 9 items, got %d", len(items))
 	}
 	if items[0].GetLabel() != "Zoom: 24px (30×15 tiles)" {
 		t.Fatalf("item 0 label = %q", items[0].GetLabel())
@@ -31,8 +31,11 @@ func TestDevMenuHandler_GetMenuItems(t *testing.T) {
 	if items[6].GetLabel() != "FPS display: ON" {
 		t.Fatalf("item 6 label = %q", items[6].GetLabel())
 	}
-	if items[7].GetLabel() != "Close" {
+	if items[7].GetLabel() != "Player position: OFF" {
 		t.Fatalf("item 7 label = %q", items[7].GetLabel())
+	}
+	if items[8].GetLabel() != "Close" {
+		t.Fatalf("item 8 label = %q", items[8].GetLabel())
 	}
 }
 
@@ -81,10 +84,25 @@ func TestDevMenuHandler_ToggleFPSDisplay(t *testing.T) {
 	}
 }
 
+func TestDevMenuHandler_TogglePlayerPosition(t *testing.T) {
+	h := NewDevMenuHandler(state.NewGame())
+	toggle := &DevMenuItem{Label: "Player position: OFF", Action: DevMenuActionTogglePlayerPosition}
+	shouldClose, help := h.OnActivate(toggle, 5)
+	if shouldClose {
+		t.Fatal("toggle should keep menu open")
+	}
+	if help != "Player position: OFF" {
+		t.Fatalf("help = %q", help)
+	}
+	if h.GetMenuItems()[7].GetLabel() != "Player position: OFF" {
+		t.Fatalf("label after toggle without renderer = %q", h.GetMenuItems()[7].GetLabel())
+	}
+}
+
 func TestDevMenuHandler_CloseItem(t *testing.T) {
 	h := NewDevMenuHandler(state.NewGame())
 	closeItem := &gamemenu.CloseMenuItem{Label: "Close"}
-	shouldClose, help := h.OnActivate(closeItem, 7)
+	shouldClose, help := h.OnActivate(closeItem, 8)
 	if !shouldClose {
 		t.Fatal("Close should close menu")
 	}

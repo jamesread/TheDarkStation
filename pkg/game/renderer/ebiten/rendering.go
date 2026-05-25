@@ -58,11 +58,9 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 		// Draw console overlay
 		e.drawConsole(screen)
 
-		// FPS counter (top right)
+		// Debug overlays (top right): FPS, player X/Y
 		sw, sh := screen.Bounds().Dx(), screen.Bounds().Dy()
-		if e.ShowFPSCounterEnabled() {
-			e.drawFPSCounter(screen, sw, sh)
-		}
+		e.drawDebugTopRight(screen, sw, sh, g)
 		return
 	}
 
@@ -129,10 +127,8 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	// Developer message (bottom-left; map dump, etc.)
 	e.drawDeveloperMessage(screen, screenWidth, screenHeight)
 
-	// FPS counter (top right)
-	if e.ShowFPSCounterEnabled() {
-		e.drawFPSCounter(screen, screenWidth, screenHeight)
-	}
+	// Debug overlays (top right): FPS, player X/Y
+	e.drawDebugTopRight(screen, screenWidth, screenHeight, g)
 
 	// Completion screen (GDD §10.2, §11): lift has no destination; game complete
 	if g.GameComplete {
@@ -145,15 +141,32 @@ func (e *EbitenRenderer) drawHeaderFromSnapshot(screen *ebiten.Image, snap *rend
 	// Header is now empty - deck number has been moved to objectives panel
 }
 
-// drawFPSCounter draws the current FPS in the top right corner.
-func (e *EbitenRenderer) drawFPSCounter(screen *ebiten.Image, screenWidth, screenHeight int) {
-	fps := ebiten.ActualFPS()
-	fpsText := fmt.Sprintf("%.0f FPS", fps)
+// drawDebugTopRight draws FPS and/or player grid position in the top-right corner.
+func (e *EbitenRenderer) drawDebugTopRight(screen *ebiten.Image, screenWidth, screenHeight int, g *state.Game) {
 	fontSize := e.getUIFontSize()
 	margin := 12
-	x := screenWidth - int(e.getTextWidth(fpsText)) - margin
 	y := margin + int(fontSize)
-	e.drawColoredText(screen, fpsText, x, y, colorSubtle)
+
+	if e.ShowFPSCounterEnabled() {
+		fpsText := fmt.Sprintf("%.0f FPS", ebiten.ActualFPS())
+		x := screenWidth - int(e.getTextWidth(fpsText)) - margin
+		e.drawColoredText(screen, fpsText, x, y, colorSubtle)
+		y += int(fontSize)
+	}
+
+	if e.ShowPlayerPositionEnabled() {
+		if posText := e.playerPositionDebugText(g); posText != "" {
+			x := screenWidth - int(e.getTextWidth(posText)) - margin
+			e.drawColoredText(screen, posText, x, y, colorSubtle)
+		}
+	}
+}
+
+func (e *EbitenRenderer) playerPositionDebugText(g *state.Game) string {
+	if g == nil || g.CurrentCell == nil {
+		return ""
+	}
+	return fmt.Sprintf("X: %d Y: %d", g.CurrentCell.Col, g.CurrentCell.Row)
 }
 
 // advanceMaintenanceCamera sets the map camera center. With the maintenance room list open,
