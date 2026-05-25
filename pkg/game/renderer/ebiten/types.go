@@ -220,6 +220,16 @@ type EbitenRenderer struct {
 	floatingTiles      []floatingTile
 	floatingTilesMutex sync.RWMutex
 
+	// Developer message (bottom-left overlay; e.g. map dump confirmation)
+	developerMessage      string
+	developerMessageAt    int64
+	developerMessageMutex sync.RWMutex
+
+	// Developer debug overlays (map area border, FOV rays, etc.)
+	drawMapAreaBorder  bool
+	fovRayDebugEnabled bool
+	devDebugMutex      sync.RWMutex
+
 	// Console state
 	consoleActive        bool
 	consoleText          string   // Current input text

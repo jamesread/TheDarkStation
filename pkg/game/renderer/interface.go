@@ -52,11 +52,14 @@ type Renderer interface {
 	// FormatText formats a message with the renderer's markup system
 	FormatText(msg string, args ...any) string
 
-	// ShowMessage optional hook (Ebiten: no-op; use callouts). Used by PrintString compatibility.
-	ShowMessage(msg string)
+	// ShowDeveloperMessage displays a short developer message (e.g. map dump confirmation).
+	ShowDeveloperMessage(msg string)
 
 	// GetViewportSize returns the current viewport dimensions (rows, cols)
 	GetViewportSize() (rows, cols int)
+
+	// GetTileSize returns the map tile size in pixels (zoom level; default 24).
+	GetTileSize() int
 }
 
 // Current holds the active renderer instance
@@ -153,6 +156,14 @@ func GetViewportSize() (rows, cols int) {
 		return Current.GetViewportSize()
 	}
 	return 15, 30 // sensible defaults
+}
+
+// GetTileSize returns the map tile size in pixels (zoom level).
+func GetTileSize() int {
+	if Current != nil {
+		return Current.GetTileSize()
+	}
+	return 24
 }
 
 // CalloutRenderer is an optional interface for renderers that support floating callouts

@@ -97,6 +97,9 @@ func PlaceFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 				if !isRoomStillConnected(g, roomName, entryCells, cell) {
 					continue
 				}
+				if !setup.CanPlaceBlockingEntity(g, cell) {
+					continue
+				}
 				chosen = cell
 				break
 			}

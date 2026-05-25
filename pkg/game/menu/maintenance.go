@@ -235,33 +235,27 @@ func (h *PingResultsMenuHandler) GetMenuItems() []MenuItem {
 
 // RoomPowerToggleMenuItem is a selectable menu item that toggles room doors, CCTV, or lights.
 type RoomPowerToggleMenuItem struct {
-	G           *state.Game
-	RoomName    string
-	PowerType   string // "doors", "cctv", or "lights"
-	Count       int    // optional count for label, e.g. "Doors (5)", "Lights (12 cells)"
-	CountSuffix string // e.g. " cells" for lights, "" for doors
+	G              *state.Game
+	RoomName       string
+	ControllerRoom string // room where the player is using a maintenance terminal (for remote control)
+	PowerType      string // "doors", "cctv", or "lights"
+	Count          int    // optional count for label, e.g. "Doors (5)", "Lights (12 cells)"
+	CountSuffix    string // e.g. " cells" for lights, "" for doors
 }
 
 // Room power draw in watts when on (per specs).
 const roomPowerWattsWhenOn = 10
 
 // roomMaintenanceTerminalPowered returns true if the given room's maintenance terminal is powered.
-// Doors and CCTV in a room can only be toggled when the room's maint terminal is activated first.
 func roomMaintenanceTerminalPowered(g *state.Game, roomName string) bool {
-	if g == nil || g.Grid == nil {
-		return false
+	return setup.RoomMaintenanceTerminalPowered(g, roomName)
+}
+
+func canToggleRoomPower(g *state.Game, controllerRoom, targetRoom string) bool {
+	if controllerRoom != "" {
+		return setup.CanControlRoomPower(g, controllerRoom, targetRoom)
 	}
-	var powered bool
-	g.Grid.ForEachCell(func(row, col int, c *world.Cell) {
-		if c == nil || !c.Room || c.Name != roomName {
-			return
-		}
-		data := gameworld.GetGameData(c)
-		if data.MaintenanceTerm != nil {
-			powered = data.MaintenanceTerm.Powered
-		}
-	})
-	return powered
+	return roomMaintenanceTerminalPowered(g, targetRoom)
 }
 
 // GetLabel returns the current power state and watts for this room/system.
@@ -281,7 +275,7 @@ func (r *RoomPowerToggleMenuItem) GetLabel() string {
 	default:
 		on = false
 	}
-	maintPowered := roomMaintenanceTerminalPowered(r.G, r.RoomName)
+	canControl := canToggleRoomPower(r.G, r.ControllerRoom, r.RoomName)
 	watts := 0
 	if on && r.PowerType != "lights" {
 		watts = roomPowerWattsWhenOn
@@ -294,7 +288,7 @@ func (r *RoomPowerToggleMenuItem) GetLabel() string {
 			powerLabel = "UNPOWERED{0w}"
 		}
 	} else {
-		powerLabel = renderer.FormatPowerWatts(watts, !maintPowered)
+		powerLabel = renderer.FormatPowerWatts(watts, !canControl)
 	}
 	name := "Doors"
 	if r.PowerType == "cctv" {
@@ -308,16 +302,18 @@ func (r *RoomPowerToggleMenuItem) GetLabel() string {
 	return fmt.Sprintf("%s:\t%s", name, powerLabel)
 }
 
-// IsSelectable returns true only when the room's maintenance terminal is powered.
-// Doors and CCTV require the room's maint terminal to be activated first.
+// IsSelectable returns true when door/CCTV/lights may be toggled locally or from an adjacent terminal.
 func (r *RoomPowerToggleMenuItem) IsSelectable() bool {
-	return roomMaintenanceTerminalPowered(r.G, r.RoomName)
+	return canToggleRoomPower(r.G, r.ControllerRoom, r.RoomName)
 }
 
-// GetHelpText returns help text; explains dependency when maint terminal is not powered.
+// GetHelpText returns help text; explains dependency when control is unavailable.
 func (r *RoomPowerToggleMenuItem) GetHelpText() string {
-	if roomMaintenanceTerminalPowered(r.G, r.RoomName) {
+	if canToggleRoomPower(r.G, r.ControllerRoom, r.RoomName) {
 		return "Press Enter to toggle power"
+	}
+	if r.ControllerRoom != "" && r.ControllerRoom != r.RoomName {
+		return "No control path to this room from here"
 	}
 	return "Activate this room's maintenance terminal first"
 }
@@ -336,7 +332,7 @@ func (m *MaintenanceTerminalPowerMenuItem) GetLabel() string {
 	if m.Term.Powered {
 		powerLabel = "POWERED{0w}"
 	}
-	return fmt.Sprintf("Terminal:\t%s", powerLabel)
+	return fmt.Sprintf("Maint terminal:\t%s", powerLabel)
 }
 
 // IsSelectable returns true.
@@ -505,7 +501,7 @@ type MaintenanceMenuHandler struct {
 	maintenanceTerm  *entities.MaintenanceTerminal
 	terminalRoomName string   // room where the terminal is
 	selectedRoomName string   // room currently being viewed (mutable)
-	selectableRooms  []string // current + adjacent rooms
+	selectableRooms  []string // mesh-reachable and adjacent rooms from this terminal
 	mode             string   // maintModeControls or maintModeDiagnostics
 }
 
@@ -599,7 +595,7 @@ func (h *MaintenanceMenuHandler) GetMaintenanceRoom(selectedIndex int, items []M
 
 // GetInstructions returns the menu instructions.
 func (h *MaintenanceMenuHandler) GetInstructions(selected MenuItem) string {
-	base := "Up/Down: select | Enter: activate | A/D: switch room | 1/2/3: OFF/ESSENTIAL/FULL | Tab: mode | Esc: close"
+	base := "Up/Down: select | Enter: activate | A/D: cycle option | 1/2/3: circuit preset | Tab: mode | Esc: close"
 	if selected != nil {
 		if ht := selected.GetHelpText(); ht != "" {
 			return ht + " — " + base
@@ -619,7 +615,10 @@ func (h *MaintenanceMenuHandler) OnActivate(item MenuItem, index int) (shouldClo
 		return true, ""
 	}
 	if toggle, isToggle := item.(*RoomPowerToggleMenuItem); isToggle {
-		if !roomMaintenanceTerminalPowered(h.g, toggle.RoomName) {
+		if !canToggleRoomPower(h.g, toggle.ControllerRoom, toggle.RoomName) {
+			if toggle.ControllerRoom != "" && toggle.ControllerRoom != toggle.RoomName {
+				return false, "No control path to this room from here"
+			}
 			return false, "Activate this room's maintenance terminal first"
 		}
 		helpText := ""
@@ -691,6 +690,12 @@ func (h *MaintenanceMenuHandler) OnActivate(item MenuItem, index int) (shouldClo
 	}
 	if _, isPing := item.(*PingTerminalsMenuItem); isPing {
 		return false, h.pingNearbyInline()
+	}
+	if _, isView := item.(*ViewingRoomMenuItem); isView {
+		if msg, ok := h.cycleRoomMessage(1); ok {
+			return false, msg
+		}
+		return false, "Only this room is on the routing mesh"
 	}
 	// Other items (info/devices) are read-only; any other activation closes the menu
 	return true, ""

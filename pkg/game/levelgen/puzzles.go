@@ -59,6 +59,9 @@ func PlacePuzzles(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		if placeCell != nil && !setup.RoomStillConnectedIfBlock(g, puzzleRoom.Name, entryCells, placeCell) {
 			placeCell = puzzleRoom
 		}
+		if placeCell != nil && !setup.CanPlaceBlockingEntity(g, placeCell) {
+			continue
+		}
 
 		solution := puzzleSolutions[i]
 		puzzleType := entities.PuzzleSequence

@@ -27,7 +27,7 @@ const (
 // maintenance room-picker map camera tween: three wide rooms separated by 1-cell corridors,
 // with room centers far apart on the same row band.
 //
-// Open the developer map (F9), then run the console command maint_pan_test (grave/` then type it).
+// Open the developer menu (F9), then choose Developer test map; or use console maint_pan_test.
 func SwitchToMaintPanTestMap(g *state.Game) {
 	if g == nil {
 		return

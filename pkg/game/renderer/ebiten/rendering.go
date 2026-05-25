@@ -60,7 +60,9 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 
 		// FPS counter (top right)
 		sw, sh := screen.Bounds().Dx(), screen.Bounds().Dy()
-		e.drawFPSCounter(screen, sw, sh)
+		if e.ShowFPSCounterEnabled() {
+			e.drawFPSCounter(screen, sw, sh)
+		}
 		return
 	}
 
@@ -80,32 +82,36 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	uiFontSize := e.getUIFontSize()
 
 	// Calculate layout dimensions with dynamic spacing based on font size
-	headerHeight := int(uiFontSize) + 20
 	statusBarHeight := int(uiFontSize)*2 + 20
 
-	const mapMargin = 20
 	// Objectives/deck/inventory panel hugs the window top-left; outer rounded rect is drawn at (x-10, y-5).
 	const objectivesWindowMargin = 12
 
-	// Use viewport from Layout/recalculateViewport/zoom only. Do NOT syncViewportForMap from
-	// screen.Bounds() here — Bounds() can disagree slightly with WindowSize() (HiDPI / backing
-	// store), toggling viewportCols/Rows between draws and causing violent pan jitter during
-	// maintenance room navigation even when camera lerp is smooth.
+	// Expand the viewport when the framebuffer is larger than the logical window (HiDPI).
+	if screenWidth > 0 && screenHeight > 0 {
+		if neededCols := viewportTilesForAxis(screenWidth, e.tileSize); neededCols > e.viewportCols {
+			e.viewportCols = neededCols
+		}
+		if neededRows := viewportTilesForAxis(screenHeight, e.tileSize); neededRows > e.viewportRows {
+			e.viewportRows = neededRows
+		}
+	}
 
-	// Calculate map dimensions to fill available space
-	mapAreaWidth := e.viewportCols * e.tileSize
-
-	// Center the map horizontally and vertically with consistent 20px margins
-	mapX := (screenWidth - mapAreaWidth) / 2
-	mapY := headerHeight + mapMargin
+	// Map draw area is the full window; tile grid is anchored on the player at screen center.
+	mapAreaWidth := screenWidth
+	mapAreaHeight := screenHeight
 
 	// Draw header (empty now - deck number moved to objectives panel)
-	e.drawHeaderFromSnapshot(screen, &snap, screenWidth, headerHeight)
+	e.drawHeaderFromSnapshot(screen, &snap, screenWidth, 0)
 
 	// Map uses full-window background (colorBackground #1a1a2e from initial Fill); no separate darker border.
 
 	// Draw the map using snapshot for player position
-	e.drawMap(screen, g, mapX, mapY, &snap)
+	e.drawMap(screen, g, screenWidth, screenHeight, &snap)
+
+	if e.DrawMapAreaBorderEnabled() {
+		e.drawMapAreaBorderOutline(screen, 0, 0, mapAreaWidth, mapAreaHeight)
+	}
 
 	// Objectives/deck/inventory overlay (snapshot): window top-left with small inset (matches FPS margin style).
 	statusX := objectivesWindowMargin + 10
@@ -120,8 +126,13 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	// Draw console overlay
 	e.drawConsole(screen)
 
+	// Developer message (bottom-left; map dump, etc.)
+	e.drawDeveloperMessage(screen, screenWidth, screenHeight)
+
 	// FPS counter (top right)
-	e.drawFPSCounter(screen, screenWidth, screenHeight)
+	if e.ShowFPSCounterEnabled() {
+		e.drawFPSCounter(screen, screenWidth, screenHeight)
+	}
 
 	// Completion screen (GDD §10.2, §11): lift has no destination; game complete
 	if g.GameComplete {
@@ -242,46 +253,41 @@ func maintCameraPanTweening(g *state.Game, camRow, camCol, tgtRow, tgtCol float6
 	return math.Abs(camRow-tgtRow) > posEps || math.Abs(camCol-tgtCol) > posEps
 }
 
+// mapCameraStart returns the top-left grid cell for the current viewport.
+// At rest the player sits on the center tile with equal rows/cols on each side.
+func (e *EbitenRenderer) mapCameraStart(g *state.Game) (startRow, startCol int) {
+	panningMaint := maintCameraPanTweening(g, e.cameraCenterRow, e.cameraCenterCol, e.cameraTargetRow, e.cameraTargetCol)
+	if !panningMaint {
+		centerRow := int(math.Round(e.cameraCenterRow))
+		centerCol := int(math.Round(e.cameraCenterCol))
+		return centerRow - e.viewportRows/2, centerCol - e.viewportCols/2
+	}
+	topLeftRow := e.cameraCenterRow - float64(e.viewportRows)/2
+	topLeftCol := e.cameraCenterCol - float64(e.viewportCols)/2
+	return int(math.Floor(topLeftRow)), int(math.Floor(topLeftCol))
+}
+
 // drawMap renders the game map
-func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, mapX, mapY int, snap *renderSnapshot) {
+func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidth, screenHeight int, snap *renderSnapshot) {
 	if g.CurrentCell == nil || g.Grid == nil {
 		return
 	}
 
 	// Camera center is advanced in advanceMaintenanceCamera (Update tick) — see comment there.
-	topLeftRow := e.cameraCenterRow - float64(e.viewportRows)/2
-	topLeftCol := e.cameraCenterCol - float64(e.viewportCols)/2
+	startRow, startCol := e.mapCameraStart(g)
 
-	startRow := int(math.Floor(topLeftRow))
-	startCol := int(math.Floor(topLeftCol))
-
-	// Sub-tile pixel offset for smooth scrolling (float64 for sub-tile precision)
-	offsetX := (topLeftCol - math.Floor(topLeftCol)) * float64(e.tileSize)
-	offsetY := (topLeftRow - math.Floor(topLeftRow)) * float64(e.tileSize)
-
-	// Maintenance menu at rest: integer blit offsets reduce static shimmer. While the camera is
-	// easing to a new room, keep fractional offsets so the pan stays visually smooth.
 	panningMaint := maintCameraPanTweening(g, e.cameraCenterRow, e.cameraCenterCol, e.cameraTargetRow, e.cameraTargetCol)
-	blitX := offsetX
-	blitY := offsetY
+	mapScrX, mapScrY := mapCameraScreenOrigin(screenWidth, screenHeight, e.cameraCenterRow, e.cameraCenterCol, startRow, startCol, e.tileSize)
 	if g.MaintenanceMenuRoom != "" && !panningMaint {
-		blitX = math.Round(offsetX)
-		blitY = math.Round(offsetY)
+		mapScrX = math.Round(mapScrX)
+		mapScrY = math.Round(mapScrY)
 	}
-
-	// Integer destination on screen: nearest-neighbour sampling plus fractional Geometry matrix
-	// translation is an Ebitengine footgun (#1171) — sharp edges crawl and jitter. Linear filter
-	// reduced that slightly but traded constant softness/shimmer during one-second pans. Rounding the
-	// final blit position keeps glyphs on the screen pixel lattice while fractional topLeft Row/Col
-	// still selects sub-tile content inside the buffer.
-	mapScrX := math.Round(float64(mapX) + blitX)
-	mapScrY := math.Round(float64(mapY) + blitY)
 
 	if maintPanDebugOn() && g.MaintenanceMenuRoom != "" {
 		e.maintPanDrawCount++
 		if e.maintPanDrawCount == 2 {
-			maintPanLogf("second Draw() in same Update tick animClockMs=%d offX=%.4f offY=%.4f mapScr=%.0f,%.0f cam=%.4f,%.4f",
-				e.menuAnimClockMilli, offsetX, offsetY, mapScrX, mapScrY, e.cameraCenterRow, e.cameraCenterCol)
+			maintPanLogf("second Draw() in same Update tick animClockMs=%d mapScr=%.0f,%.0f cam=%.4f,%.4f",
+				e.menuAnimClockMilli, mapScrX, mapScrY, e.cameraCenterRow, e.cameraCenterCol)
 		}
 	}
 	// Ensure map buffer exists and is correctly sized
@@ -309,6 +315,8 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, mapX, mapY
 	op := &ebiten.DrawImageOptions{}
 	op.GeoM.Translate(mapScrX, mapScrY)
 	screen.DrawImage(e.mapBuffer, op)
+
+	e.drawFOVRays(screen, g, mapScrX, mapScrY, startRow, startCol)
 
 	// Draw overlays using the same screen origin so labels/callouts match the quantized blit.
 	mapXF := mapScrX

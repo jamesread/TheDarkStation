@@ -7,6 +7,7 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/features"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -125,8 +126,8 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 		return CellRenderOptions{Icon: IconItem, Color: colorItem, HasBackground: true}
 	}
 
-	// Visited rooms
-	if cell.Visited {
+	// Visited rooms (when gameplay.visited cvar is enabled)
+	if features.IsVisited(cell) {
 		return CellRenderOptions{Icon: getFloorIcon(cell.Name, true), Color: colorFloorVisited, HasBackground: true, BackgroundColor: colorFloorVisitedBg}
 	}
 
@@ -205,7 +206,7 @@ func cellHasBattery(c *world.Cell) bool {
 func hasAdjacentDiscoveredRoom(c *world.Cell) bool {
 	neighbors := []*world.Cell{c.North, c.East, c.South, c.West}
 	for _, n := range neighbors {
-		if n != nil && n.Room && (n.Discovered || n.Visited) {
+		if n != nil && n.Room && (n.Discovered || features.IsVisited(n)) {
 			return true
 		}
 	}

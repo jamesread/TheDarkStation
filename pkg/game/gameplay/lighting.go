@@ -7,86 +7,34 @@ import (
 	gameworld "darkstation/pkg/game/world"
 )
 
-// UpdateLightingExploration updates cell exploration based on lighting
+// UpdateLightingExploration recalculates power supply/consumption and applies exploration state.
+// Per-room lighting/fog is disabled for now: all room cells are treated as always lit.
 func UpdateLightingExploration(g *state.Game) {
 	if g.Grid == nil || g.CurrentCell == nil {
 		return
 	}
 
-	// Calculate total power consumption
 	totalConsumption := g.CalculatePowerConsumption()
 	g.PowerConsumption = totalConsumption
-
-	// Update power supply from generators
 	g.UpdatePowerSupply()
 
-	availablePower := g.GetAvailablePower()
-
-	// Check if power consumption exceeds supply and warn the player
 	if g.PowerConsumption > g.PowerSupply && !g.PowerOverloadWarned {
 		logMessage(g, "WARNING: Power consumption (%dw) exceeds supply (%dw)!", g.PowerConsumption, g.PowerSupply)
 		g.PowerOverloadWarned = true
 	} else if g.PowerConsumption <= g.PowerSupply {
-		// Reset warning flag when power is sufficient
 		g.PowerOverloadWarned = false
 	}
-	playerRow := g.CurrentCell.Row
-	playerCol := g.CurrentCell.Col
 
-	// If we have power, turn on lights in visited cells.
-	// If no power, turn off lights (cells will fade from explored).
-	// Exception: cells within a 5x5 neighborhood around the player always stay visible.
+	applyAlwaysLit(g)
+}
+
+func applyAlwaysLit(g *state.Game) {
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil || !cell.Room {
 			return
 		}
-
 		data := gameworld.GetGameData(cell)
-
-		// Calculate axis distance from player for a 5x5 neighborhood.
-		rowDist := row - playerRow
-		colDist := col - playerCol
-		if rowDist < 0 {
-			rowDist = -rowDist
-		}
-		if colDist < 0 {
-			colDist = -colDist
-		}
-		// 5x5 radius means max distance of 2 in each direction
-		isNearPlayer := rowDist <= 2 && colDist <= 2
-
-		// If cell was visited, we have power, and room lights are enabled, lights should be on
-		lightsEnabled := true
-		if v, ok := g.RoomLightsPowered[cell.Name]; ok {
-			lightsEnabled = v
-		}
-		if cell.Visited && availablePower > 0 && lightsEnabled {
-			if !data.LightsOn {
-				data.LightsOn = true
-				data.Lighted = true
-				// Ensure cell stays explored when lights are on
-				cell.Discovered = true
-				cell.Visited = true
-			}
-		} else if availablePower <= 0 || !lightsEnabled {
-			// No power or lights toggled off - lights off
-			data.LightsOn = false
-
-			// Cells near player always stay visible (5x5 neighborhood)
-			if isNearPlayer {
-				// Keep nearby cells visible even without power
-				cell.Discovered = true
-				if cell.Visited {
-					// Mark as temporarily visible (not permanently lighted)
-					// This allows exploration without power
-				}
-			} else {
-				// Far cells fade if not permanently lighted
-				if !data.Lighted {
-					cell.Discovered = false
-					cell.Visited = false
-				}
-			}
-		}
+		data.LightsOn = true
+		data.Lighted = true
 	})
 }

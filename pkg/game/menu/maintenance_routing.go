@@ -22,6 +22,37 @@ type MaintenanceMenuExtraInput interface {
 	HandleMaintenanceIntent(intent engineinput.Intent) (consumed bool, helpText string)
 }
 
+// ViewingRoomMenuItem is the selectable row showing which room is targeted; A/D cycles when multiple rooms exist.
+type ViewingRoomMenuItem struct {
+	Parent *MaintenanceMenuHandler
+}
+
+func (v *ViewingRoomMenuItem) GetLabel() string {
+	label := fmt.Sprintf("Viewing:\tACTION{%s}", v.Parent.selectedRoomName)
+	if v.Parent.canCycleRooms() {
+		return label + "\tSUBTLE{◀ A/D ▶}"
+	}
+	return label + "\tSUBTLE{(only room)}"
+}
+
+func (v *ViewingRoomMenuItem) IsSelectable() bool { return true }
+
+func (v *ViewingRoomMenuItem) GetHelpText() string {
+	if !v.Parent.canCycleRooms() {
+		return "Only this room is selectable from here"
+	}
+	return "A/D or Enter: switch viewed room"
+}
+
+func (v *ViewingRoomMenuItem) CanCycle() bool {
+	return v.Parent.canCycleRooms()
+}
+
+func (v *ViewingRoomMenuItem) HandleCycle(delta int) (bool, string) {
+	msg, ok := v.Parent.cycleRoomMessage(delta)
+	return ok, msg
+}
+
 // ModeToggleMenuItem switches Controls / Diagnostics.
 type ModeToggleMenuItem struct {
 	Parent *MaintenanceMenuHandler
@@ -47,19 +78,42 @@ type RoomCircuitPresetMenuItem struct {
 
 func (r *RoomCircuitPresetMenuItem) GetLabel() string {
 	preset := CurrentCircuitPreset(r.Parent.g, r.Parent.selectedRoomName)
-	return fmt.Sprintf("Circuit preset:\tACTION{%s}\t(Enter=cycle, 1/2/3=apply)", preset)
+	if r.IsSelectable() {
+		return fmt.Sprintf("Circuit preset:\tACTION{%s}\tSUBTLE{◀ A/D ▶}\t(Enter=cycle, 1/2/3=apply)", preset)
+	}
+	return fmt.Sprintf("Circuit preset:\tACTION{%s}\t(1/2/3=apply)", preset)
 }
 
 func (r *RoomCircuitPresetMenuItem) IsSelectable() bool {
-	return roomMaintenanceTerminalPowered(r.Parent.g, r.Parent.selectedRoomName)
+	return canToggleRoomPower(r.Parent.g, r.Parent.terminalRoomName, r.Parent.selectedRoomName)
 }
 
 func (r *RoomCircuitPresetMenuItem) GetHelpText() string {
-	if !roomMaintenanceTerminalPowered(r.Parent.g, r.Parent.selectedRoomName) {
+	if !canToggleRoomPower(r.Parent.g, r.Parent.terminalRoomName, r.Parent.selectedRoomName) {
+		if r.Parent.terminalRoomName != "" && r.Parent.terminalRoomName != r.Parent.selectedRoomName {
+			return "No control path to this room from here"
+		}
 		return "Activate this room's maintenance terminal first"
 	}
 	next := CurrentCircuitPreset(r.Parent.g, r.Parent.selectedRoomName).NextPreset()
 	return PreviewCircuitShed(r.Parent.g, r.Parent.selectedRoomName, next)
+}
+
+func (r *RoomCircuitPresetMenuItem) CanCycle() bool {
+	return r.IsSelectable()
+}
+
+func (r *RoomCircuitPresetMenuItem) HandleCycle(delta int) (bool, string) {
+	if !r.IsSelectable() {
+		return false, ""
+	}
+	preset := CurrentCircuitPreset(r.Parent.g, r.Parent.selectedRoomName)
+	if delta < 0 {
+		preset = preset.PrevPreset()
+	} else {
+		preset = preset.NextPreset()
+	}
+	return true, r.Parent.applyCircuitPreset(preset)
 }
 
 // RestoreAllAdjacentMenuItem powers terminals in all adjacent rooms (legacy bulk restore).
@@ -148,15 +202,15 @@ func (h *AdvancedPowerMenuHandler) GetMenuItems() []MenuItem {
 			return
 		}
 		data := gameworld.GetGameData(c)
-		if data.MaintenanceTerm == nil || data.MaintenanceTerm == h.parent.maintenanceTerm {
+		if data.MaintenanceTerm == nil {
 			return
 		}
 		items = append(items, &MaintenanceTerminalPowerMenuItem{G: g, Term: data.MaintenanceTerm})
 	})
 	items = append(items,
-		&RoomPowerToggleMenuItem{G: g, RoomName: room, PowerType: "doors", Count: h.doorCount},
-		&RoomPowerToggleMenuItem{G: g, RoomName: room, PowerType: "lights", Count: h.lightCount, CountSuffix: " cells"},
-		&RoomPowerToggleMenuItem{G: g, RoomName: room, PowerType: "cctv"},
+		&RoomPowerToggleMenuItem{G: g, RoomName: room, ControllerRoom: h.parent.terminalRoomName, PowerType: "doors", Count: h.doorCount},
+		&RoomPowerToggleMenuItem{G: g, RoomName: room, ControllerRoom: h.parent.terminalRoomName, PowerType: "lights", Count: h.lightCount, CountSuffix: " cells"},
+		&RoomPowerToggleMenuItem{G: g, RoomName: room, ControllerRoom: h.parent.terminalRoomName, PowerType: "cctv"},
 		&InfoMenuItem{Label: ""},
 		&CloseMenuItem{Label: "Back"},
 	)
@@ -183,6 +237,10 @@ func (h *MaintenanceMenuHandler) toggleMode() {
 	h.g.MaintenanceMenuMode = h.mode
 }
 
+func (h *MaintenanceMenuHandler) canCycleRooms() bool {
+	return len(h.selectableRooms) > 1
+}
+
 func (h *MaintenanceMenuHandler) cycleRoom(delta int) {
 	if len(h.selectableRooms) == 0 {
 		return
@@ -200,8 +258,20 @@ func (h *MaintenanceMenuHandler) cycleRoom(delta int) {
 	h.selectedRoomName = h.selectableRooms[idx]
 }
 
+// cycleRoomMessage advances the viewed room when possible and returns feedback text.
+func (h *MaintenanceMenuHandler) cycleRoomMessage(delta int) (string, bool) {
+	if !h.canCycleRooms() {
+		return "", false
+	}
+	h.cycleRoom(delta)
+	return fmt.Sprintf("Viewing: %s", h.selectedRoomName), true
+}
+
 func (h *MaintenanceMenuHandler) applyCircuitPreset(preset CircuitPreset) string {
-	if !roomMaintenanceTerminalPowered(h.g, h.selectedRoomName) {
+	if !canToggleRoomPower(h.g, h.terminalRoomName, h.selectedRoomName) {
+		if h.terminalRoomName != "" && h.terminalRoomName != h.selectedRoomName {
+			return "No control path to this room from here"
+		}
 		return "Activate this room's maintenance terminal first"
 	}
 	return ApplyCircuitPreset(h.g, h.selectedRoomName, preset)
@@ -266,15 +336,9 @@ func (h *MaintenanceMenuHandler) pingNearbyInline() string {
 	return fmt.Sprintf("Ping: discovered %d — %s", len(names), strings.Join(names, "; "))
 }
 
-// HandleMaintenanceIntent handles A/D room cycle, Tab mode toggle, and 1/2/3 circuit presets.
+// HandleMaintenanceIntent handles Tab mode toggle and 1/2/3 circuit preset shortcuts.
 func (h *MaintenanceMenuHandler) HandleMaintenanceIntent(intent engineinput.Intent) (bool, string) {
 	switch intent.Action {
-	case engineinput.ActionMoveWest:
-		h.cycleRoom(-1)
-		return true, fmt.Sprintf("Viewing: %s (A/D or arrows to switch)", h.selectedRoomName)
-	case engineinput.ActionMoveEast:
-		h.cycleRoom(1)
-		return true, fmt.Sprintf("Viewing: %s (A/D or arrows to switch)", h.selectedRoomName)
 	case engineinput.ActionMaintModeToggle:
 		h.toggleMode()
 		if h.mode == maintModeDiagnostics {
@@ -298,7 +362,7 @@ func (h *MaintenanceMenuHandler) getControlsMenuItems() []MenuItem {
 
 	items := []MenuItem{
 		&InfoMenuItem{Label: "SUBTLE{" + flavourLine + "}"},
-		&InfoMenuItem{Label: fmt.Sprintf("Viewing:\tACTION{%s}\t(A/D switch room)", h.selectedRoomName)},
+		&ViewingRoomMenuItem{Parent: h},
 		&InfoMenuItem{Label: ""},
 		&InfoMenuItem{Label: fmt.Sprintf("Supply:\t%s", renderer.FormatPowerWatts(h.g.PowerSupply, false))},
 		&InfoMenuItem{Label: fmt.Sprintf("Used:\t%s", renderer.FormatPowerWatts(h.g.PowerConsumption, false))},
@@ -323,7 +387,7 @@ func (h *MaintenanceMenuHandler) getDiagnosticsMenuItems() []MenuItem {
 
 	items := []MenuItem{
 		&InfoMenuItem{Label: "SUBTLE{" + flavourLine + "}"},
-		&InfoMenuItem{Label: fmt.Sprintf("Viewing:\t%s", h.selectedRoomName)},
+		&ViewingRoomMenuItem{Parent: h},
 		&InfoMenuItem{Label: ""},
 	}
 	for _, line := range instrLines {
@@ -351,4 +415,12 @@ func (h *MaintenanceMenuHandler) getDiagnosticsMenuItems() []MenuItem {
 		&CloseMenuItem{Label: "Close"},
 	)
 	return items
+}
+
+// HandleMaintenanceIntent delegates room cycling to the parent maintenance handler (advanced sub-menu).
+func (h *AdvancedPowerMenuHandler) HandleMaintenanceIntent(intent engineinput.Intent) (bool, string) {
+	if h.parent == nil {
+		return false, ""
+	}
+	return h.parent.HandleMaintenanceIntent(intent)
 }

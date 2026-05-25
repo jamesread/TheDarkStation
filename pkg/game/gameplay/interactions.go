@@ -9,6 +9,7 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/features"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
@@ -310,7 +311,7 @@ func furnitureCalloutHeading(name string) string {
 }
 
 func furnitureCalloutBody(text string) string {
-	return fmt.Sprintf("FURNITURE_CHECKED{%s}", text)
+	return text
 }
 
 func furnitureCalloutFoundWithItem(itemName string) string {
@@ -606,11 +607,15 @@ func revealRoomByName(grid *world.Grid, roomName string) bool {
 
 	grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell.Name == roomName {
-			if !cell.Visited {
+			if features.VisitedSystemEnabled() {
+				if !cell.Visited {
+					alreadyRevealed = false
+				}
+			} else if !cell.Discovered {
 				alreadyRevealed = false
 			}
 			cell.Discovered = true
-			cell.Visited = true
+			features.MarkVisited(cell)
 			revealed = true
 		}
 	})
@@ -622,19 +627,23 @@ func revealRoomByName(grid *world.Grid, roomName string) bool {
 	return revealed
 }
 
-// isRoomFullyRevealed checks if all cells with the given room name are visited
+// isRoomFullyRevealed checks if all cells with the given room name are visited (or discovered when visited system is off).
 func isRoomFullyRevealed(grid *world.Grid, roomName string) bool {
-	allVisited := true
+	allRevealed := true
 	found := false
 
 	grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell.Name == roomName {
 			found = true
-			if !cell.Visited {
-				allVisited = false
+			if features.VisitedSystemEnabled() {
+				if !cell.Visited {
+					allRevealed = false
+				}
+			} else if !cell.Discovered {
+				allRevealed = false
 			}
 		}
 	})
 
-	return found && allVisited
+	return found && allRevealed
 }

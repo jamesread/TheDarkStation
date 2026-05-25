@@ -19,6 +19,13 @@ type MenuItem interface {
 	GetHelpText() string
 }
 
+// CycleMenuItem is a selectable row whose value can be changed with A/D (or Enter).
+type CycleMenuItem interface {
+	MenuItem
+	CanCycle() bool
+	HandleCycle(delta int) (consumed bool, helpText string)
+}
+
 // MenuHandler handles menu item selection and activation.
 type MenuHandler interface {
 	// OnSelect is called when an item is selected (navigated to).
@@ -100,6 +107,13 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 			}
 			handler.OnExit()
 			return
+		}
+
+		if consumed, ht := handleCycleIntent(items, selected, intent); consumed {
+			if ht != "" {
+				helpText = ht
+			}
+			continue
 		}
 
 		if extra, ok := handler.(MaintenanceMenuExtraInput); ok {
@@ -239,6 +253,13 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 			return
 		}
 
+		if consumed, ht := handleCycleIntent(items, selected, intent); consumed {
+			if ht != "" {
+				helpText = ht
+			}
+			continue
+		}
+
 		if extra, ok := handler.(MaintenanceMenuExtraInput); ok {
 			if consumed, ht := extra.HandleMaintenanceIntent(intent); consumed {
 				if ht != "" {
@@ -363,6 +384,27 @@ func renderMenuFallback(g *state.Game, items []MenuItem, selected int, helpText 
 
 	// Re-render frame with updated messages
 	renderer.RenderFrame(g)
+}
+
+// handleCycleIntent runs A/D on the selected row when it implements CycleMenuItem.
+func handleCycleIntent(items []MenuItem, selected int, intent engineinput.Intent) (consumed bool, helpText string) {
+	var delta int
+	switch intent.Action {
+	case engineinput.ActionMoveWest:
+		delta = -1
+	case engineinput.ActionMoveEast:
+		delta = 1
+	default:
+		return false, ""
+	}
+	if selected < 0 || selected >= len(items) {
+		return false, ""
+	}
+	cycler, ok := items[selected].(CycleMenuItem)
+	if !ok || !cycler.CanCycle() {
+		return false, ""
+	}
+	return cycler.HandleCycle(delta)
 }
 
 // Helper function to match logMessage signature

@@ -14,6 +14,7 @@ import (
 	"darkstation/pkg/game/devtools"
 	"darkstation/pkg/game/entities"
 	gamemenu "darkstation/pkg/game/menu"
+	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/state"
 )
 
@@ -49,6 +50,10 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		logMessage(g, "Screenshot saved to ITEM{%s}", filename)
 		return
 
+	case engineinput.ActionDevMenu:
+		RunDeveloperMenu(g)
+		return
+
 	case engineinput.ActionDevMap:
 		devtools.SwitchToDevMap(g)
 		return
@@ -62,7 +67,7 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		if err != nil {
 			logMessage(g, "Map dump failed: %v", err)
 		} else {
-			logMessage(g, "Map dumped to ITEM{%s}", path)
+			renderer.ShowDeveloperMessage(renderer.FormatText("Map dumped to ITEM{%s}", path))
 		}
 		return
 

@@ -147,39 +147,55 @@ func (e *EbitenRenderer) recalculateViewport() {
 	// Invalidate font cache since sizes may have changed
 	e.invalidateFontCache()
 
-	// Get current window size
-	w, h := ebiten.WindowSize()
-	if w == 0 || h == 0 {
-		w, h = e.windowWidth, e.windowHeight
+	w, h := e.windowWidth, e.windowHeight
+	if w <= 0 || h <= 0 {
+		w, h = ebiten.WindowSize()
 	}
 	e.syncViewportForMap(w, h)
 }
 
-// syncViewportForMap sets e.viewportCols/Rows from pixel dimensions using the same margins as Draw()
-// for the map (header + mapMargin). Single source of truth avoids pan jitter when Layout vs Draw disagree.
-func (e *EbitenRenderer) syncViewportForMap(screenWidth, screenHeight int) {
-	uiFontSize := e.getUIFontSize()
-	headerHeight := int(uiFontSize) + 20
-	const mapMargin = 20
-	availableHeight := screenHeight - headerHeight - mapMargin*2
-	availableWidth := screenWidth - mapMargin*2
-	viewportCols := availableWidth / e.tileSize
-	viewportRows := availableHeight / e.tileSize
+// viewportTilesForAxis returns how many tile columns or rows are needed so a player-centered
+// viewport covers the screen axis edge-to-edge (partial tiles at the border included).
+func viewportTilesForAxis(screenPx, tileSize int) int {
+	if tileSize <= 0 || screenPx <= 0 {
+		return 1
+	}
+	if screenPx <= tileSize {
+		return 1
+	}
+	half := screenPx / 2
+	span := (half + tileSize - 1) / tileSize // tiles from screen center to nearest edge
+	n := span*2 + 1
+	if n%2 == 0 {
+		n++
+	}
+	return n
+}
 
-	if viewportCols < 15 {
-		viewportCols = 15
+// syncViewportForMap sets e.viewportCols/Rows from the full window size and tile size.
+// Odd dimensions keep the player on a center tile; Layout() calls this via recalculateViewport.
+func (e *EbitenRenderer) syncViewportForMap(screenWidth, screenHeight int) {
+	if e.tileSize <= 0 {
+		return
 	}
-	if viewportRows < 11 {
-		viewportRows = 11
-	}
-	if viewportCols%2 == 0 {
-		viewportCols--
-	}
-	if viewportRows%2 == 0 {
-		viewportRows--
-	}
-	e.viewportCols = viewportCols
-	e.viewportRows = viewportRows
+	e.viewportCols = viewportTilesForAxis(screenWidth, e.tileSize)
+	e.viewportRows = viewportTilesForAxis(screenHeight, e.tileSize)
+}
+
+// mapTileGridOrigin returns the top-left pixel where the tile grid is blitted so the player
+// (viewport center) aligns with the window center. The map draw area is the full window.
+func mapTileGridOrigin(screenWidth, screenHeight, contentWidth, contentHeight int) (int, int) {
+	return (screenWidth - contentWidth) / 2, (screenHeight - contentHeight) / 2
+}
+
+// mapCameraScreenOrigin places the map so the camera center sits on the screen center.
+func mapCameraScreenOrigin(screenWidth, screenHeight int, cameraRow, cameraCol float64, startRow, startCol, tileSize int) (float64, float64) {
+	subCol := cameraCol - float64(startCol)
+	subRow := cameraRow - float64(startRow)
+	half := float64(tileSize) / 2
+	mapScrX := float64(screenWidth)/2 - subCol*float64(tileSize) - half
+	mapScrY := float64(screenHeight)/2 - subRow*float64(tileSize) - half
+	return mapScrX, mapScrY
 }
 
 // shouldRepeatKey checks if a key/button should trigger (initial press or repeat)

@@ -82,6 +82,12 @@ func SetupLevel(g *state.Game) {
 	// Only the start room's maintenance terminal(s) start powered; others can be restored from nearby.
 	setup.InitMaintenanceTerminalPower(g)
 
+	// Power doors for rooms blocking start-pocket egress when remote control from start is impossible.
+	setup.EnsureSolvabilityStartRoomEgress(g)
+
+	// Remove or avoid blockers that would make the exit permanently unreachable (R7).
+	setup.EnsureExitReachability(g)
+
 	// Diegetic corridor signage tied to functional deck layer (Story 5.1).
 	setup.ApplyEnvironmentalSignage(g)
 	setup.ApplyObservationLedPuzzleCues(g)

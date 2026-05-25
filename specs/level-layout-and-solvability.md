@@ -142,6 +142,11 @@ For every **blocking hazard**:
 ### I6. Start room doors powered
 
 - The **start room** always has its **doors powered** at init, so the player can leave the start room.
+- **Start-pocket egress**: Every room **R** reachable only by crossing an unlocked door from the initial start pocket must either:
+  - have its doors **remotely controllable** from a powered maintenance terminal in an initially reachable adjacent room, or
+  - have its doors **initially powered** by `EnsureSolvabilityStartRoomEgress` when remote control is impossible (e.g. start room has no maintenance terminal).
+
+**Remote control**: A powered maintenance terminal in room **Q** may toggle door/CCTV power for **Q** and for rooms **adjacent** to **Q** (spec §2.2), even when the target room's own terminal is still unpowered.
 
 ### I7. Room connectivity (no internal disconnection)
 

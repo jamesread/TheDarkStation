@@ -9,6 +9,7 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/features"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
@@ -190,21 +191,13 @@ func MoveCell(g *state.Game, requestedCell *world.Cell) {
 	}
 
 	if res, _ := CanEnter(g, requestedCell, true); res {
-		// Check if lights are on - if not, cells won't stay explored
+		features.MarkVisited(requestedCell)
 		cellData := gameworld.GetGameData(requestedCell)
-		if cellData.LightsOn {
-			requestedCell.Visited = true
-			cellData.Lighted = true
-		} else {
-			// If lights are off, only mark as visited temporarily
-			requestedCell.Visited = true
-		}
+		cellData.LightsOn = true
+		cellData.Lighted = true
 
-		// Reveal cells within field of view (radius 3, with line-of-sight blocking)
-		world.RevealFOVDefault(g.Grid, requestedCell)
-
-		// Ensure 3x3 radius cells are always visible (even without power)
-		ensureNearbyCellsVisible(g, requestedCell)
+		// Reveal cells within field of view (ray-cast; walls block sight).
+		world.RevealFOVDefault(g.Grid, requestedCell, unpoweredDoorSightBlocker(g))
 
 		// Update lighting-based exploration
 		UpdateLightingExploration(g)
@@ -224,35 +217,13 @@ func MoveCell(g *state.Game, requestedCell *world.Cell) {
 		g.CurrentCell = requestedCell
 		maybeAnnounceObservationCueOnMove(g, requestedCell)
 		maybeAnnounceLinkageCueOnMove(g, requestedCell)
-		noteLinkageTagFromVisitedCell(g, requestedCell)
+		if features.VisitedSystemEnabled() {
+			noteLinkageTagFromVisitedCell(g, requestedCell)
+		}
 	} else {
 		// Movement failed - trigger debounce animation
 		if direction != "" {
 			renderer.SetDebounceAnimation(direction)
-		}
-	}
-}
-
-// ensureNearbyCellsVisible ensures cells within 5x5 radius of player are always visible
-func ensureNearbyCellsVisible(g *state.Game, centerCell *world.Cell) {
-	if g.Grid == nil || centerCell == nil {
-		return
-	}
-
-	centerRow := centerCell.Row
-	centerCol := centerCell.Col
-
-	// Ensure all cells within 5x5 radius (2 cells in each direction) are visible
-	for row := centerRow - 2; row <= centerRow+2; row++ {
-		for col := centerCol - 2; col <= centerCol+2; col++ {
-			cell := g.Grid.GetCell(row, col)
-			if cell != nil && cell.Room {
-				// Always keep nearby cells visible for exploration
-				cell.Discovered = true
-				if cell.Visited {
-					// Keep visited state
-				}
-			}
 		}
 	}
 }

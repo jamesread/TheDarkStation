@@ -29,6 +29,18 @@ func (p CircuitPreset) String() string {
 	}
 }
 
+// PrevPreset cycles FULL → ESSENTIAL → OFF → FULL.
+func (p CircuitPreset) PrevPreset() CircuitPreset {
+	switch p {
+	case CircuitFull:
+		return CircuitEssential
+	case CircuitEssential:
+		return CircuitOff
+	default:
+		return CircuitFull
+	}
+}
+
 // NextPreset cycles OFF → ESSENTIAL → FULL → OFF.
 func (p CircuitPreset) NextPreset() CircuitPreset {
 	switch p {

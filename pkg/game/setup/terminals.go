@@ -95,7 +95,7 @@ func placeTerminalInRoom(g *state.Game, terminal *entities.CCTVTerminal, termina
 	}
 	var connectedCandidates []*world.Cell
 	for _, cell := range validCells {
-		if RoomStillConnectedIfBlock(g, roomName, entryCells, cell) {
+		if RoomStillConnectedIfBlock(g, roomName, entryCells, cell) && CanPlaceBlockingEntity(g, cell) {
 			connectedCandidates = append(connectedCandidates, cell)
 		}
 	}

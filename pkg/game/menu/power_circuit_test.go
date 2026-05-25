@@ -29,6 +29,21 @@ func TestApplyCircuitPreset_EssentialAndFull(t *testing.T) {
 	}
 }
 
+func TestCircuitPreset_PrevAndNext(t *testing.T) {
+	if CircuitOff.PrevPreset() != CircuitFull {
+		t.Fatalf("OFF prev = %s", CircuitOff.PrevPreset())
+	}
+	if CircuitEssential.PrevPreset() != CircuitOff {
+		t.Fatalf("ESSENTIAL prev = %s", CircuitEssential.PrevPreset())
+	}
+	if CircuitFull.PrevPreset() != CircuitEssential {
+		t.Fatalf("FULL prev = %s", CircuitFull.PrevPreset())
+	}
+	if CircuitOff.NextPreset() != CircuitEssential {
+		t.Fatalf("OFF next = %s", CircuitOff.NextPreset())
+	}
+}
+
 func TestPreviewCircuitShed_matchesShortOut(t *testing.T) {
 	g := state.NewGame()
 	g.PowerSupply = 100
@@ -58,6 +73,9 @@ func TestMaintenanceMenuItems_controlsVsDiagnostics(t *testing.T) {
 	}
 	if !strings.Contains(controls, "Circuit preset") {
 		t.Fatal("controls should include circuit preset")
+	}
+	if !strings.Contains(controls, "A/D") {
+		t.Fatal("circuit preset row should show A/D hint when selectable")
 	}
 
 	h.mode = maintModeDiagnostics

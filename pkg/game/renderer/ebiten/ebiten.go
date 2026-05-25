@@ -127,14 +127,14 @@ func (e *EbitenRenderer) FormatText(msg string, args ...any) string {
 	return fmt.Sprintf(msg, args...)
 }
 
-// ShowMessage is a no-op; gameplay feedback uses callouts/tooltips. Kept for PrintString compatibility.
-func (e *EbitenRenderer) ShowMessage(msg string) {
-	_ = msg
-}
-
 // GetViewportSize returns the current viewport dimensions
 func (e *EbitenRenderer) GetViewportSize() (rows, cols int) {
 	return e.viewportRows, e.viewportCols
+}
+
+// GetTileSize returns the map tile size in pixels (zoom level).
+func (e *EbitenRenderer) GetTileSize() int {
+	return e.tileSize
 }
 
 // Run starts the Ebiten game loop

@@ -29,11 +29,17 @@ func ApplyMarkup(msg string, a ...any) string {
 	return FormatText(msg, a...)
 }
 
-// PrintString prints a formatted string (kept for backwards compatibility)
-// For new code, prefer using RenderFrame or the renderer interface directly.
+// PrintString prints a formatted string (kept for backwards compatibility).
+// On-screen display is not used; prefer ShowDeveloperMessage for dev feedback.
 func PrintString(msg string, a ...any) {
+	_ = msg
+	_ = a
+}
+
+// ShowDeveloperMessage displays a developer message on the active renderer.
+func ShowDeveloperMessage(msg string) {
 	if Current != nil {
-		Current.ShowMessage(Current.FormatText(msg, a...))
+		Current.ShowDeveloperMessage(msg)
 	}
 }
 

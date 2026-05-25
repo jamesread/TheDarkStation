@@ -116,7 +116,7 @@ func PlaceMaintenanceTerminals(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		}
 		var connectedCandidates []*world.Cell
 		for _, cell := range validCells {
-			if isRoomStillConnected(g, roomName, entryCells, cell) {
+			if isRoomStillConnected(g, roomName, entryCells, cell) && setup.CanPlaceBlockingEntity(g, cell) {
 				connectedCandidates = append(connectedCandidates, cell)
 			}
 		}

@@ -2,6 +2,7 @@
 package gameplay
 
 import (
+	"strings"
 	"testing"
 
 	"darkstation/pkg/engine/world"
@@ -228,9 +229,7 @@ func TestBuildGame_StartRoomMaintenanceTerminalPowered(t *testing.T) {
 }
 
 func TestBuildGame_SetupOrderIncludesSolvability(t *testing.T) {
-	// BuildGame → SetupLevel runs EnsureSolvabilityDoorPower (after terminal placement).
-	// Verify that the setup pipeline completed: start room doors powered and at least
-	// one room has power. Full path solvability is covered by solvability_test.go.
+	// BuildGame → SetupLevel runs solvability passes after terminal placement.
 	g := BuildGame(1)
 	if g == nil || g.Grid == nil {
 		t.Fatal("BuildGame(1) setup failed")
@@ -241,6 +240,23 @@ func TestBuildGame_SetupOrderIncludesSolvability(t *testing.T) {
 	}
 	if len(g.RoomDoorsPowered) == 0 {
 		t.Error("RoomDoorsPowered should be populated after setup")
+	}
+}
+
+func TestBuildGame_NoStartEgressDeadlock(t *testing.T) {
+	seeds := []int64{1, 42, 424242, 1779651561562416055, 999_999_999}
+	for level := 1; level <= 3; level++ {
+		for _, seed := range seeds {
+			g := BuildGame(level)
+			g.LevelSeed = seed
+			ResetLevel(g)
+			report := setup.AnalyzeSolvability(g)
+			for _, w := range report.Warnings {
+				if strings.Contains(w, "egress blocked") || strings.Contains(w, "start room doors not powered") {
+					t.Errorf("level %d seed %d: solvability warning: %s", level, seed, w)
+				}
+			}
+		}
 	}
 }
 

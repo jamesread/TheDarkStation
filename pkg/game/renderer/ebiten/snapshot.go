@@ -10,6 +10,7 @@ import (
 	"github.com/leonelquinteros/gotext"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/features"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -207,7 +208,9 @@ func (e *EbitenRenderer) computeRoomLabels(g *state.Game) []roomLabel {
 			if strings.Contains(strings.ToLower(cell.Name), "corridor") {
 				continue
 			}
-			if cell.Visited {
+			if cell.Visited && features.VisitedSystemEnabled() {
+				roomVisited[cell.Name] = true
+			} else if cell.Discovered {
 				roomVisited[cell.Name] = true
 			}
 		}

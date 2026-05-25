@@ -77,6 +77,21 @@ func hasTitleMarkup(s string) bool {
 		strings.Contains(s, "FURNITURE{") || strings.Contains(s, "FURNITURE_CHECKED{")
 }
 
+// normalizeCalloutBodySegments forces title-accent colors on body lines to regular text (colorText).
+// Title row keeps semantic markup; lines below use body font and should read as normal prose unless
+// they carry item/keycard/action markup (KEYCARD{}, ITEM{}, ACTION{}, etc.).
+func normalizeCalloutBodySegments(segments []textSegment) []textSegment {
+	out := make([]textSegment, len(segments))
+	for i, seg := range segments {
+		out[i] = seg
+		switch seg.color {
+		case colorSubtle, renderer.CalloutColorFurniture, renderer.CalloutColorFurnitureChecked:
+			out[i].color = colorText
+		}
+	}
+	return out
+}
+
 // getTitleColorFromLine returns the accent color from the first marked-up segment in the line, or colorAction as fallback.
 // Used to derive tooltip border color from the title's markup (e.g. UNPOWERED{} -> red, TITLE{} -> colorAction).
 func (e *EbitenRenderer) getTitleColorFromLine(line string) color.Color {

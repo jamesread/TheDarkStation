@@ -2,15 +2,11 @@ package ebiten
 
 import (
 	"log"
-	"strings"
 	"time"
 )
 
 func maintPanDebugOn() bool {
-	cvarMutex.RLock()
-	v := strings.ToLower(strings.TrimSpace(cvarMap["debug.maint_pan"]))
-	cvarMutex.RUnlock()
-	return v == "1" || v == "true" || v == "yes"
+	return cvarEnabled("debug.maint_pan")
 }
 
 func maintPanLogf(format string, args ...any) {

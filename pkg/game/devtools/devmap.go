@@ -218,7 +218,7 @@ func SwitchToDevMap(g *state.Game) {
 		startCell.Visited = true
 		grid.SetStartCell(startCell)
 		g.CurrentCell = startCell
-		world.RevealFOVDefault(grid, startCell)
+		world.RevealFOVDefault(grid, startCell, nil)
 	}
 
 	// Set exit cell

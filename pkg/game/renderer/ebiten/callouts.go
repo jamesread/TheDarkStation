@@ -301,6 +301,9 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 
 		for i, line := range lines {
 			lineSegments := e.parseMarkup(line)
+			if i > 0 && hasTitle {
+				lineSegments = normalizeCalloutBodySegments(lineSegments)
+			}
 			fadedSegments := make([]textSegment, len(lineSegments))
 			for j, seg := range lineSegments {
 				fadedSegments[j] = textSegment{

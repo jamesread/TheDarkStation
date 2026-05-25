@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/state"
@@ -417,6 +416,27 @@ func TestMaintenanceInstrumentMenuLines_localCorrelates(t *testing.T) {
 	}
 }
 
+func TestAdvancedPowerMenuItems_includeCurrentMaintTerminal(t *testing.T) {
+	g, termCell := makeMenuTestGame(t)
+	term := gameworld.GetGameData(termCell).MaintenanceTerm
+	h := NewMaintenanceMenuHandler(g, termCell, term)
+	adv := &AdvancedPowerMenuHandler{parent: h, doorCount: 0, lightCount: 2}
+	items := adv.GetMenuItems()
+	var foundCurrent bool
+	for _, it := range items {
+		if termItem, ok := it.(*MaintenanceTerminalPowerMenuItem); ok && termItem.Term == term {
+			foundCurrent = true
+			if !strings.Contains(termItem.GetLabel(), "POWERED") {
+				t.Fatalf("label = %q, want powered maint terminal", termItem.GetLabel())
+			}
+			break
+		}
+	}
+	if !foundCurrent {
+		t.Fatal("advanced power list should include the maintenance terminal the player is using")
+	}
+}
+
 func TestMaintenanceMenuItems_includeInstrumentStrata(t *testing.T) {
 	g, termCell := makeMenuTestGame(t)
 	g.Level = 5
@@ -457,17 +477,96 @@ func TestRestoreSelectedRoom_OnlySelected(t *testing.T) {
 	}
 }
 
-func TestHandleMaintenanceIntent_cycleRoom(t *testing.T) {
+func TestViewingRoomMenuItem_HandleCycle(t *testing.T) {
 	g, termCell := makeMenuTestGame(t)
 	term := gameworld.GetGameData(termCell).MaintenanceTerm
 	h := NewMaintenanceMenuHandler(g, termCell, term)
 	h.selectedRoomName = "RoomA"
 
-	consumed, _ := h.HandleMaintenanceIntent(engineinput.Intent{Action: engineinput.ActionMoveEast})
+	v := &ViewingRoomMenuItem{Parent: h}
+	consumed, _ := v.HandleCycle(1)
 	if !consumed {
-		t.Fatal("east should consume intent in maintenance menu")
+		t.Fatal("east should cycle viewing room")
 	}
 	if h.selectedRoomName != "RoomB" {
 		t.Fatalf("expected RoomB, got %s", h.selectedRoomName)
+	}
+
+	consumed, _ = v.HandleCycle(-1)
+	if !consumed || h.selectedRoomName != "RoomA" {
+		t.Fatalf("west should cycle back to RoomA, got %s", h.selectedRoomName)
+	}
+}
+
+func TestViewingRoomMenuItem_singleRoomDoesNotCycle(t *testing.T) {
+	g, termCell := makeMenuTestGame(t)
+	term := gameworld.GetGameData(termCell).MaintenanceTerm
+	h := NewMaintenanceMenuHandler(g, termCell, term)
+	h.selectableRooms = []string{"RoomA"}
+	h.selectedRoomName = "RoomA"
+
+	v := &ViewingRoomMenuItem{Parent: h}
+	consumed, _ := v.HandleCycle(-1)
+	if consumed {
+		t.Fatal("should not cycle when only one selectable room")
+	}
+}
+
+func TestRoomCircuitPresetMenuItem_HandleCycle(t *testing.T) {
+	g, termCell := makeMenuTestGame(t)
+	term := gameworld.GetGameData(termCell).MaintenanceTerm
+	h := NewMaintenanceMenuHandler(g, termCell, term)
+	h.selectedRoomName = "RoomA"
+	g.RoomDoorsPowered["RoomA"] = false
+	g.RoomCCTVPowered["RoomA"] = false
+
+	preset := &RoomCircuitPresetMenuItem{Parent: h}
+	consumed, _ := preset.HandleCycle(1)
+	if !consumed {
+		t.Fatal("east should cycle circuit preset")
+	}
+	if CurrentCircuitPreset(g, "RoomA") != CircuitEssential {
+		t.Fatalf("expected ESSENTIAL, got %s", CurrentCircuitPreset(g, "RoomA"))
+	}
+
+	consumed, _ = preset.HandleCycle(1)
+	if !consumed || CurrentCircuitPreset(g, "RoomA") != CircuitFull {
+		t.Fatalf("expected FULL, got %s", CurrentCircuitPreset(g, "RoomA"))
+	}
+
+	consumed, _ = preset.HandleCycle(-1)
+	if !consumed || CurrentCircuitPreset(g, "RoomA") != CircuitEssential {
+		t.Fatalf("west should step back to ESSENTIAL, got %s", CurrentCircuitPreset(g, "RoomA"))
+	}
+}
+
+func TestViewingRoomMenuItem_labelShowsSwitchHint(t *testing.T) {
+	g, termCell := makeMenuTestGame(t)
+	term := gameworld.GetGameData(termCell).MaintenanceTerm
+	h := NewMaintenanceMenuHandler(g, termCell, term)
+
+	v := &ViewingRoomMenuItem{Parent: h}
+	if !strings.Contains(v.GetLabel(), "A/D") {
+		t.Fatalf("multi-room label should show A/D hint: %q", v.GetLabel())
+	}
+
+	h.selectableRooms = []string{"RoomA"}
+	if strings.Contains((&ViewingRoomMenuItem{Parent: h}).GetLabel(), "A/D") {
+		t.Fatal("single-room label should not show A/D hint")
+	}
+}
+
+func TestOnActivate_viewingRoomCycles(t *testing.T) {
+	g, termCell := makeMenuTestGame(t)
+	term := gameworld.GetGameData(termCell).MaintenanceTerm
+	h := NewMaintenanceMenuHandler(g, termCell, term)
+	h.selectedRoomName = "RoomA"
+
+	_, help := h.OnActivate(&ViewingRoomMenuItem{Parent: h}, 0)
+	if h.selectedRoomName != "RoomB" {
+		t.Fatalf("Enter on viewing row should cycle room, got %s", h.selectedRoomName)
+	}
+	if help == "" {
+		t.Fatal("expected help text after cycle")
 	}
 }

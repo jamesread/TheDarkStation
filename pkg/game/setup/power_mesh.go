@@ -156,12 +156,13 @@ func RoomsReachableFromPoweredTerminals(g *state.Game) []string {
 }
 
 // SelectableRoomsForTerminal returns rooms the player may target from a maintenance terminal:
-// mesh-reachable from that terminal's room (via any powered terminal in the same room as seed).
+// union of mesh-reachable rooms and spec-adjacent rooms (§2.2: own room + directly adjacent).
 func SelectableRoomsForTerminal(g *state.Game, grid *world.Grid, terminalRoom string) []string {
 	if g == nil || grid == nil || terminalRoom == "" {
 		return GetAdjacentRoomNames(grid, terminalRoom)
 	}
 	roomSet := make(map[string]bool)
+	hasPoweredTerminal := false
 	grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil || !cell.Room || cell.Name != terminalRoom {
 			return
@@ -170,11 +171,15 @@ func SelectableRoomsForTerminal(g *state.Game, grid *world.Grid, terminalRoom st
 		if data.MaintenanceTerm == nil || !data.MaintenanceTerm.Powered {
 			return
 		}
+		hasPoweredTerminal = true
 		for _, name := range RoomsReachableInPowerMesh(g, cell) {
 			roomSet[name] = true
 		}
 	})
-	if len(roomSet) == 0 {
+	for _, name := range GetAdjacentRoomNames(grid, terminalRoom) {
+		roomSet[name] = true
+	}
+	if !hasPoweredTerminal && len(roomSet) == 0 {
 		return GetAdjacentRoomNames(grid, terminalRoom)
 	}
 	names := make([]string, 0, len(roomSet))

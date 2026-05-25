@@ -9,6 +9,7 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -122,6 +123,9 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 	if startCell != nil && startCell.Name != "" {
 		fmt.Fprintf(f, "start_room: %q\n", startCell.Name)
 	}
+	if g.CurrentCell != nil && g.CurrentCell.Name != "" {
+		fmt.Fprintf(f, "player_room: %q\n", g.CurrentCell.Name)
+	}
 	fmt.Fprintf(f, "has_map: %v\n", g.HasMap)
 	fmt.Fprintf(f, "power_supply: %d\n", g.PowerSupply)
 	fmt.Fprintf(f, "power_consumption: %d\n", g.PowerConsumption)
@@ -144,6 +148,109 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 	writeMapGrid(f, g, rows, cols, false, playerRow, playerCol)
 	fmt.Fprintln(f, "")
 
+	// --- Solvability analysis ---
+	fmt.Fprintln(f, "--- Solvability analysis (initial state) ---")
+	report := setup.AnalyzeSolvability(g)
+	fmt.Fprintf(f, "initial_reachable_cells: %d\n", report.InitialReachableCells)
+	fmt.Fprintf(f, "initial_reachable_rooms: %q\n", report.InitialReachableRooms)
+	fmt.Fprintf(f, "start_room_doors_powered: %v\n", report.StartRoomDoorsPowered)
+	fmt.Fprintf(f, "start_maint_terminal_powered: %v\n", report.StartMaintPowered)
+	fmt.Fprintf(f, "exit_reachable_at_init: %v\n", report.ExitReachableAtInit)
+	if len(report.BlockedEgressDoors) == 0 {
+		fmt.Fprintln(f, "blocked_egress_doors: (none — start pocket opens to all adjacent rooms)")
+	} else {
+		fmt.Fprintln(f, "blocked_egress_doors:")
+		for _, door := range report.BlockedEgressDoors {
+			controllable := setup.CanPowerRoomDoorsFromReachable(g, setup.InitialReachableCells(g), door.TargetRoom)
+			fmt.Fprintf(f, "  row: %d col: %d from_room: %q target_room: %q remote_controllable: %v\n",
+				door.Row, door.Col, door.FromRoom, door.TargetRoom, controllable)
+		}
+	}
+	if len(report.Warnings) == 0 {
+		fmt.Fprintln(f, "solvability_warnings: (none)")
+	} else {
+		fmt.Fprintln(f, "solvability_warnings:")
+		for _, w := range report.Warnings {
+			fmt.Fprintf(f, "  - %s\n", w)
+		}
+	}
+	fmt.Fprintln(f, "")
+
+	// --- Room adjacency (for maintenance control) ---
+	fmt.Fprintln(f, "--- Room adjacency ---")
+	var adjRoomNames []string
+	adjSeen := make(map[string]bool)
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room || cell.Name == "" || cell.Name == "Corridor" || adjSeen[cell.Name] {
+			return
+		}
+		adjSeen[cell.Name] = true
+		adjRoomNames = append(adjRoomNames, cell.Name)
+	})
+	sort.Strings(adjRoomNames)
+	for _, rn := range adjRoomNames {
+		adj := setup.GetAdjacentRoomNames(g.Grid, rn)
+		filtered := make([]string, 0, len(adj))
+		for _, a := range adj {
+			if a != "Corridor" {
+				filtered = append(filtered, a)
+			}
+		}
+		sort.Strings(filtered)
+		fmt.Fprintf(f, "  room: %q adjacent: %q doors_powered: %v\n", rn, filtered, g.RoomDoorsPowered[rn])
+	}
+	fmt.Fprintln(f, "")
+
+	// --- Maintenance terminal selectable rooms ---
+	fmt.Fprintln(f, "--- Maintenance terminal control scope ---")
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.MaintenanceTerm == nil {
+			return
+		}
+		m := data.MaintenanceTerm
+		selectable := setup.SelectableRoomsForTerminal(g, g.Grid, m.RoomName)
+		fmt.Fprintf(f, "  row: %d col: %d room: %q powered: %v selectable_rooms: %q\n",
+			row, col, m.RoomName, m.Powered, selectable)
+	})
+	fmt.Fprintln(f, "")
+
+	// --- Player movement from current cell ---
+	if g.CurrentCell != nil {
+		fmt.Fprintln(f, "--- Player adjacent movement ---")
+		for _, dir := range []struct {
+			name string
+			n    *world.Cell
+		}{
+			{"north", g.CurrentCell.North},
+			{"south", g.CurrentCell.South},
+			{"east", g.CurrentCell.East},
+			{"west", g.CurrentCell.West},
+		} {
+			if dir.n == nil {
+				fmt.Fprintf(f, "  %s: (no cell)\n", dir.name)
+				continue
+			}
+			ok, reason := setup.CanEnterCellAtInit(g, dir.n)
+			extra := ""
+			if gameworld.HasDoor(dir.n) {
+				d := gameworld.GetGameData(dir.n).Door
+				extra = fmt.Sprintf(" door->%q locked=%v", d.RoomName, d.Locked)
+			}
+			if !ok {
+				fmt.Fprintf(f, "  %s: row: %d col: %d room: %q blocked: %s%s\n",
+					dir.name, dir.n.Row, dir.n.Col, dir.n.Name, reason, extra)
+			} else {
+				fmt.Fprintf(f, "  %s: row: %d col: %d room: %q passable%s\n",
+					dir.name, dir.n.Row, dir.n.Col, dir.n.Name, extra)
+			}
+		}
+		fmt.Fprintln(f, "")
+	}
+
 	// --- Entities: collect by type with coordinates and state ---
 	fmt.Fprintln(f, "--- Entities (all with row,col and state) ---")
 
@@ -158,7 +265,12 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 			return
 		}
 		d := data.Door
-		fmt.Fprintf(f, "  row: %d col: %d room_name: %q locked: %v keycard: %q\n", row, col, d.RoomName, d.Locked, d.KeycardName())
+		blockReason := ""
+		if ok, reason := setup.CanEnterCellAtInit(g, cell); !ok {
+			blockReason = string(reason)
+		}
+		fmt.Fprintf(f, "  row: %d col: %d room_name: %q locked: %v keycard: %q doors_powered: %v init_passable: %v block_reason: %q\n",
+			row, col, d.RoomName, d.Locked, d.KeycardName(), g.RoomDoorsPowered[d.RoomName], blockReason == "", blockReason)
 	})
 	fmt.Fprintln(f, "")
 
