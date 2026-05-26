@@ -76,6 +76,7 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		return
 
 	case engineinput.ActionMoveEast:
+		CancelLongUse(g)
 		g.NavStyle = state.NavStyleNSEW
 		if g.CurrentCell == nil {
 			return
@@ -84,6 +85,7 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		return
 
 	case engineinput.ActionMoveWest:
+		CancelLongUse(g)
 		g.NavStyle = state.NavStyleNSEW
 		if g.CurrentCell == nil {
 			return
@@ -92,6 +94,7 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		return
 
 	case engineinput.ActionMoveNorth:
+		CancelLongUse(g)
 		g.NavStyle = state.NavStyleNSEW
 		if g.CurrentCell == nil {
 			return
@@ -100,6 +103,7 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		return
 
 	case engineinput.ActionMoveSouth:
+		CancelLongUse(g)
 		g.NavStyle = state.NavStyleNSEW
 		if g.CurrentCell == nil {
 			return
@@ -109,6 +113,18 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 
 	case engineinput.ActionInteract:
 		log.Printf("[Interact] ProcessIntent: ActionInteract (game loop tick)")
+		if cell, kind, ok := findAdjacentLongUseTarget(g); ok {
+			switch kind {
+			case LongUseGeneratorPowerUp:
+				CheckAdjacentGeneratorAtCell(g, cell)
+			case LongUseDoorManualRelease:
+				showManualDoorReleaseCallout(g, cell)
+			}
+		}
+		if TryBeginLongUseOnAdjacent(g) {
+			log.Printf("[Interact] ProcessIntent: started long-use hold interaction")
+			return
+		}
 		interacted := CheckAdjacentInteractables(g)
 		log.Printf("[Interact] ProcessIntent: CheckAdjacentInteractables returned %v", interacted)
 		if !interacted {

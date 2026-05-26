@@ -41,21 +41,28 @@ func makeStartPocketGrid(t *testing.T) (*state.Game, *world.Cell) {
 	g.Grid = grid
 	InitRoomPower(g)
 	InitMaintenanceTerminalPower(g)
+
+	gen := entities.NewGenerator("Spawn Generator", 1)
+	gen.InsertBatteriesAndStart(1)
+	genCell := grid.GetCell(0, 0)
+	gameworld.GetGameData(genCell).Generator = gen
+	g.AddGenerator(gen)
+	EnsureGeneratorRoomBootstrap(g)
+
 	return g, doorCell
 }
 
-func TestEnsureSolvabilityStartRoomEgress_RemoteControlNoPrePower(t *testing.T) {
+func TestEnsureSolvabilityStartRoomEgress_DoesNotPrePower(t *testing.T) {
 	g, _ := makeStartPocketGrid(t)
 	if !CanPowerRoomDoorsFromReachable(g, InitialReachableCells(g), "Lab") {
 		t.Fatal("precondition: Lab doors should be remotely controllable from Start maint")
 	}
-	EnsureSolvabilityStartRoomEgress(g)
 	if g.RoomDoorsPowered["Lab"] {
-		t.Error("Lab doors should stay unpowered when remotely controllable from start")
+		t.Fatal("precondition: Lab doors should start unpowered")
 	}
 }
 
-func TestEnsureSolvabilityStartRoomEgress_NoStartTerminalPowersEgress(t *testing.T) {
+func TestEnsureSolvabilityStartRoomEgress_NoStartTerminalStaysUnpowered(t *testing.T) {
 	g, _ := makeStartPocketGrid(t)
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil || cell.Name != "Start" {
@@ -67,12 +74,12 @@ func TestEnsureSolvabilityStartRoomEgress_NoStartTerminalPowersEgress(t *testing
 			data.MaintenanceTerm = nil
 		}
 	})
+	gameworld.GetGameData(g.Grid.GetCell(1, 4)).MaintenanceTerm = nil
 	if CanPowerRoomDoorsFromReachable(g, InitialReachableCells(g), "Lab") {
 		t.Fatal("precondition: without start terminal, Lab should not be remotely controllable")
 	}
-	EnsureSolvabilityStartRoomEgress(g)
-	if !g.RoomDoorsPowered["Lab"] {
-		t.Error("Lab doors should be pre-powered when start cannot control them")
+	if g.RoomDoorsPowered["Lab"] {
+		t.Error("Lab doors should stay unpowered without start-room egress pre-power")
 	}
 }
 

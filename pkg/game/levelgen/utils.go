@@ -2,7 +2,7 @@
 package levelgen
 
 import (
-	"math/rand"
+	"darkstation/pkg/game/levelrand"
 	"strings"
 
 	"github.com/zyedidia/generic/mapset"
@@ -103,7 +103,8 @@ func FindRoom(g *state.Game, start *world.Cell, avoid *mapset.Set[*world.Cell]) 
 	}
 
 	// Pick a random room from the candidates
-	return farRooms[rand.Intn(len(farRooms))]
+	setup.SortCellsByPosition(farRooms)
+	return farRooms[levelrand.Intn(len(farRooms))]
 }
 
 // GetReachableCells returns all cells reachable from start without passing through locked doors
@@ -200,7 +201,8 @@ func FindNonArticulationCellInReachable(grid *world.Grid, start *world.Cell, loc
 		}
 	}
 
-	return candidates[rand.Intn(len(candidates))]
+	setup.SortCellsByPosition(candidates)
+	return candidates[levelrand.Intn(len(candidates))]
 }
 
 // FindNonArticulationCellInRoom finds a cell in the same room as roomCell that is NOT an articulation point,
@@ -229,7 +231,8 @@ func FindNonArticulationCellInRoom(grid *world.Grid, start *world.Cell, roomCell
 	if len(safe) == 0 {
 		return nil
 	}
-	return safe[rand.Intn(len(safe))]
+	setup.SortCellsByPosition(safe)
+	return safe[levelrand.Intn(len(safe))]
 }
 
 // ContainsSubstring checks if s contains substr

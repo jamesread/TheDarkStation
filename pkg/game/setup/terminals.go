@@ -2,8 +2,9 @@
 package setup
 
 import (
+	"darkstation/pkg/game/levelrand"
 	"fmt"
-	"math/rand"
+	"sort"
 
 	"github.com/zyedidia/generic/mapset"
 
@@ -26,6 +27,7 @@ func collectUniqueRoomNames(grid *world.Grid) []string {
 	namesSet.Each(func(name string) {
 		names = append(names, name)
 	})
+	sort.Strings(names)
 	return names
 }
 
@@ -49,7 +51,7 @@ func placeCCTVTerminals(g *state.Game, avoid *mapset.Set[*world.Cell], roomEntri
 		terminal := entities.NewCCTVTerminal(fmt.Sprintf("CCTV Terminal #%d", i+1))
 
 		// Assign a random room for this terminal to reveal
-		targetIdx := rand.Intn(len(roomNames))
+		targetIdx := levelrand.Intn(len(roomNames))
 		terminal.TargetRoom = roomNames[targetIdx]
 		// Remove this room from the list so each terminal reveals a different room
 		roomNames = append(roomNames[:targetIdx], roomNames[targetIdx+1:]...)
@@ -104,7 +106,8 @@ func placeTerminalInRoom(g *state.Game, terminal *entities.CCTVTerminal, termina
 		return
 	}
 
-	selectedCell := connectedCandidates[rand.Intn(len(connectedCandidates))]
+	SortCellsByPosition(connectedCandidates)
+	selectedCell := connectedCandidates[levelrand.Intn(len(connectedCandidates))]
 	gameworld.GetGameData(selectedCell).Terminal = terminal
 	avoid.Put(selectedCell)
 }

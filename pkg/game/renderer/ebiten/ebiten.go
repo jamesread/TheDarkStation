@@ -47,6 +47,11 @@ func New() *EbitenRenderer {
 	}
 }
 
+// SetLongUseAdvancer registers the gameplay hook that advances hold-to-use sessions each Update tick.
+func (e *EbitenRenderer) SetLongUseAdvancer(fn LongUseAdvanceFunc) {
+	e.longUseAdvancer = fn
+}
+
 // Init initializes the Ebiten renderer
 func (e *EbitenRenderer) Init() {
 	ebiten.SetWindowSize(e.windowWidth, e.windowHeight)

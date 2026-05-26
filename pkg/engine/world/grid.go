@@ -2,7 +2,6 @@ package world
 
 import (
 	"fmt"
-	"math/rand"
 )
 
 var roomDescriptions = []string{
@@ -185,10 +184,9 @@ func (g *Grid) MarkAsRoomWithName(row, col int, name, description string) bool {
 	return true
 }
 
-// GenerateCellDescription returns a random room description
+// GenerateCellDescription returns a room description (deterministic default for test grids).
 func GenerateCellDescription() string {
-	i := rand.Intn(len(roomDescriptions))
-	return roomDescriptions[i]
+	return roomDescriptions[0]
 }
 
 // Build initializes the grid with the given dimensions

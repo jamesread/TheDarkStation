@@ -5,7 +5,7 @@ type MaintenanceTerminal struct {
 	Name     string
 	RoomName string // Name of the room this terminal controls
 	Used     bool   // Whether the terminal has been accessed
-	Powered  bool   // Whether this terminal has power (only the first, e.g. start room, starts true; others can be restored from nearby)
+	Powered  bool   // Whether this terminal receives conductive feed from a powered generator power grid
 }
 
 // NewMaintenanceTerminal creates a new maintenance terminal

@@ -39,7 +39,7 @@ func TestSwitchToMaintPanTestMap_topologyAndMaintenance(t *testing.T) {
 	}
 	mt := gameworld.GetGameData(term).MaintenanceTerm
 	if mt == nil || !mt.Powered {
-		t.Fatal("maintenance terminal should exist and start powered from InitMaintenanceTerminalPower")
+		t.Fatal("maintenance terminal should exist and be powered via generator conductive power grid")
 	}
 	if mt.RoomName != RoomPanTestCenter {
 		t.Fatalf("terminal room %q, want %q", mt.RoomName, RoomPanTestCenter)

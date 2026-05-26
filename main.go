@@ -61,6 +61,7 @@ func main() {
 
 	// Initialize the Ebiten renderer
 	ebitRenderer := ebitenRenderer.New()
+	ebitRenderer.SetLongUseAdvancer(gameplay.AdvanceLongUseIfActive)
 	renderer.SetRenderer(ebitRenderer)
 	renderer.Init()
 
@@ -193,4 +194,7 @@ func mainLoop(g *state.Game) {
 
 	// Get and process input (tiered input system -> Intent -> game logic)
 	gameplay.ProcessIntent(g, renderer.Current.GetInput())
+	if gameplay.IsLongUseActive(g) {
+		gameplay.WaitForLongUseComplete(g)
+	}
 }

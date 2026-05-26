@@ -2,6 +2,7 @@ package gameplay
 
 import (
 	engworld "darkstation/pkg/engine/world"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -15,7 +16,6 @@ func unpoweredDoorSightBlocker(g *state.Game) engworld.SightBlocker {
 		if !gameworld.HasDoor(cell) {
 			return false
 		}
-		roomName := gameworld.GetGameData(cell).Door.RoomName
-		return !g.RoomDoorsPowered[roomName]
+		return !setup.CellHasLivePower(g, cell)
 	}
 }

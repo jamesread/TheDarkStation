@@ -200,8 +200,8 @@ func HasPowerRelay(cell *world.Cell) bool {
 	return data != nil && data.PowerRelay != nil
 }
 
-// RelayBlocksMesh returns true when a relay on this cell blocks terminal-mesh propagation.
-func RelayBlocksMesh(cell *world.Cell) bool {
+// RelayBlocksGrid returns true when a relay on this cell blocks terminal power grid propagation.
+func RelayBlocksGrid(cell *world.Cell) bool {
 	data := GetGameData(cell)
 	return data != nil && data.PowerRelay != nil && !data.PowerRelay.Closed
 }

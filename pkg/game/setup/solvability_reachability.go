@@ -64,9 +64,11 @@ func InitialReachableCells(g *state.Game) *mapset.Set[*world.Cell] {
 		if cur == nil || !cur.Room || reachable.Has(cur) {
 			continue
 		}
-		ok, _ := CanEnterCellAtInit(g, cur)
-		if !ok {
-			continue
+		if cur != start {
+			ok, _ := CanEnterCellAtInit(g, cur)
+			if !ok {
+				continue
+			}
 		}
 		reachable.Put(cur)
 		for _, n := range cur.GetNeighbors() {
@@ -203,25 +205,12 @@ func InitialEgressDoors(g *state.Game) []EgressDoor {
 	return out
 }
 
-// EnsureSolvabilityStartRoomEgress powers doors for rooms that block leaving the start pocket when
-// the player cannot toggle those doors from any initially reachable powered terminal (I6 extension).
-func EnsureSolvabilityStartRoomEgress(g *state.Game) {
-	if g == nil || g.Grid == nil {
-		return
-	}
-	reachable := InitialReachableCells(g)
-	for _, door := range InitialEgressDoors(g) {
-		if CanPowerRoomDoorsFromReachable(g, reachable, door.TargetRoom) {
-			continue
-		}
-		g.RoomDoorsPowered[door.TargetRoom] = true
-	}
-}
-
 // EnsureSolvability applies all post-generation solvability fixes.
 func EnsureSolvability(g *state.Game) {
 	EnsureSolvabilityDoorPower(g)
-	EnsureSolvabilityStartRoomEgress(g)
+	EnsureGeneratorRoomBootstrap(g)
+	EnsureInitProgressReachability(g)
+	EnsureInteractableNavAccess(g)
 	EnsureExitReachability(g)
 }
 
@@ -236,6 +225,8 @@ type SolvabilityReport struct {
 	ExitReachableAtInit   bool
 	StartRoomDoorsPowered bool
 	StartMaintPowered     bool
+	PoweredMaintTerminals int
+	MaintBootstrapOK      bool
 }
 
 // AnalyzeSolvability computes reachability and solvability warnings for the current game state.
@@ -273,11 +264,11 @@ func AnalyzeSolvability(g *state.Game) SolvabilityReport {
 		report.ExitReachableAtInit = reachable.Has(exit)
 	}
 
-	if !report.StartRoomDoorsPowered {
-		report.Warnings = append(report.Warnings, "start room doors not powered at init (I6 violation)")
-	}
-	if !report.StartMaintPowered {
-		report.Warnings = append(report.Warnings, "start room has no powered maintenance terminal")
+	report.PoweredMaintTerminals = CountPoweredMaintenanceTerminals(g)
+	report.MaintBootstrapOK = MaintBootstrapOK(g)
+
+	if !report.MaintBootstrapOK {
+		report.Warnings = append(report.Warnings, "no powered maintenance terminal on conductive generator power grid while generators are online")
 	}
 	for _, door := range report.BlockedEgressDoors {
 		if !CanPowerRoomDoorsFromReachable(g, reachable, door.TargetRoom) {
@@ -291,6 +282,12 @@ func AnalyzeSolvability(g *state.Game) SolvabilityReport {
 	}
 	if !ExitReachableWhenCompletable(g, nil) {
 		report.Warnings = append(report.Warnings, "exit not reachable when level completable (R7 violation)")
+	}
+	if !keycardsAccessible(g, reachable) {
+		report.Warnings = append(report.Warnings, "keycard not reachable at init (I3 violation)")
+	}
+	if !generatorsAccessible(g, reachable) {
+		report.Warnings = append(report.Warnings, "generator not reachable at init (I5 violation)")
 	}
 	return report
 }

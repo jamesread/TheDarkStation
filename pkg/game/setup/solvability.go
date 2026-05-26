@@ -79,11 +79,6 @@ func EnsureSolvabilityDoorPower(g *state.Game) {
 	if start == nil || exit == nil {
 		return
 	}
-	startRoomName := start.Name
-	if startRoomName == "" {
-		return
-	}
-
 	// Which rooms have at least one maintenance terminal (only those can control other rooms' power)
 	roomsWithTerminal := make(map[string]bool)
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
@@ -95,11 +90,7 @@ func EnsureSolvabilityDoorPower(g *state.Game) {
 		}
 	})
 
-	for roomName := range roomsWithDoors(g.Grid) {
-		// Start room is already powered; nothing to fix
-		if roomName == startRoomName {
-			continue
-		}
+	for _, roomName := range sortedRoomNames(roomsWithDoors(g.Grid)) {
 		if g.RoomDoorsPowered[roomName] {
 			// Already powered; no deadlock possible
 			continue
@@ -113,21 +104,24 @@ func EnsureSolvabilityDoorPower(g *state.Game) {
 			continue
 		}
 
-		// R is a gatekeeper: check if any terminal room adjacent to R is on the power routing mesh
-		// from start without entering R (powered doors + closed relays).
-		meshWithoutR := RoomsReachableInPowerMeshExcluding(g, start, roomName)
+		// R is a gatekeeper: check if any terminal room adjacent to R is reachable
+		// from start without entering R (player movement; locked doors still block the player).
 		hasReachableAdjacent := false
 		for _, q := range GetAdjacentRoomNames(g.Grid, roomName) {
 			if q == roomName || !roomsWithTerminal[q] {
 				continue
 			}
-			for _, reached := range meshWithoutR {
-				if reached == q {
-					hasReachableAdjacent = true
-					break
+			found := false
+			g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+				if found || cell == nil || cell.Name != q {
+					return
 				}
-			}
-			if hasReachableAdjacent {
+				if reachableWithoutR.Has(cell) {
+					found = true
+				}
+			})
+			if found {
+				hasReachableAdjacent = true
 				break
 			}
 		}

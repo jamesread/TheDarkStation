@@ -2,8 +2,8 @@
 package setup
 
 import (
+	"darkstation/pkg/game/levelrand"
 	"fmt"
-	"math/rand"
 
 	"github.com/zyedidia/generic/mapset"
 
@@ -97,7 +97,7 @@ func placeLockedRooms(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorC
 	candidates := buildRoomCandidates(roomEntries)
 
 	// Shuffle candidates for variety
-	rand.Shuffle(len(candidates), func(i, j int) {
+	levelrand.Shuffle(len(candidates), func(i, j int) {
 		candidates[i], candidates[j] = candidates[j], candidates[i]
 	})
 
@@ -130,7 +130,8 @@ type roomCandidate struct {
 // buildRoomCandidates builds a list of candidate rooms for locking
 func buildRoomCandidates(roomEntries map[string]*RoomEntryPoints) []roomCandidate {
 	var candidates []roomCandidate
-	for roomName, entries := range roomEntries {
+	for _, roomName := range sortedRoomNames(roomEntries) {
+		entries := roomEntries[roomName]
 		// Only consider rooms with 1-3 entry points (manageable to door)
 		if len(entries.EntryCells) >= 1 && len(entries.EntryCells) <= 3 {
 			candidates = append(candidates, roomCandidate{
@@ -229,7 +230,8 @@ func EnsureEveryRoomHasDoor(g *state.Game, avoid *mapset.Set[*world.Cell], locke
 		}
 	})
 
-	for roomName, entries := range roomEntries {
+	for _, roomName := range sortedRoomNames(roomEntries) {
+		entries := roomEntries[roomName]
 		if roomsWithDoors.Has(roomName) || len(entries.EntryCells) == 0 {
 			continue
 		}

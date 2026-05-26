@@ -22,12 +22,16 @@ const (
 
 // DeckState holds generated state for one deck (GDD §4.2). Used for generation on first entry and revisit.
 type DeckState struct {
-	Grid              *world.Grid
-	LevelSeed         int64
-	RoomDoorsPowered  map[string]bool
-	RoomCCTVPowered   map[string]bool
-	RoomLightsPowered map[string]bool
-	Generators        []*entities.Generator
+	Grid                 *world.Grid
+	LevelSeed            int64
+	RoomDoorsPowered     map[string]bool
+	RoomCCTVPowered      map[string]bool
+	RoomLightsPowered    map[string]bool
+	RoomPowerOnline      map[string]bool
+	PowerPropPending     []PowerPropEntry
+	Generators           []*entities.Generator
+	ManualEgressReleased map[string]bool // room name -> manual door release active (no grid power)
+	OwnedItems           world.ItemSet   // keycards and other deck-local pickup inventory
 }
 
 // Game represents the game state for Abandoned Station
@@ -71,9 +75,14 @@ type Game struct {
 
 	// Room power: doors and CCTV/hazard controls are unpowered by default.
 	// Start room's doors are powered so the player can leave.
-	RoomDoorsPowered  map[string]bool // room name -> doors powered
-	RoomCCTVPowered   map[string]bool // room name -> CCTV terminals and hazard controls powered
-	RoomLightsPowered map[string]bool // room name -> lights enabled (0w; toggled at maintenance terminal)
+	RoomDoorsPowered     map[string]bool // room name -> power grid armed (player enabled circuit at maint terminal)
+	RoomCCTVPowered      map[string]bool // room name -> CCTV requested when room is online
+	RoomLightsPowered    map[string]bool // room name -> lights enabled (0w; toggled at maintenance terminal)
+	RoomPowerOnline      map[string]bool // room name -> propagated power has reached the room
+	ManualEgressReleased map[string]bool // room name -> hold-to-release bypass active (routing still offline)
+
+	// PowerPropPending schedules room activations when propagation is staggered (unused at 0 delay).
+	PowerPropPending []PowerPropEntry
 
 	// ObservationCueVisited prevents duplicate corridor-stamp callouts per cell (Story 5.2).
 	ObservationCueVisited map[string]struct{}
@@ -93,12 +102,41 @@ type Game struct {
 
 	// MaintenanceSelectableRooms lists rooms the player can target from the open terminal (for map overlay).
 	MaintenanceSelectableRooms []string
+
+	// MaintenanceMenuTerminalRow/Col identify the active maintenance terminal while its menu is open (-1 when unset).
+	MaintenanceMenuTerminalRow int
+	MaintenanceMenuTerminalCol int
+
+	// PowerGridOverlayActive shows the power grid from the seed cell (generator use-key toggle).
+	PowerGridOverlayActive  bool
+	PowerGridOverlaySeedRow int
+	PowerGridOverlaySeedCol int
+
+	// LongUse holds an in-progress hold-to-use interaction (nil when inactive).
+	LongUse *LongUseSession
+}
+
+// LongUseSession tracks a hold-to-use interaction in progress.
+type LongUseSession struct {
+	Kind          string
+	TargetRow     int
+	TargetCol     int
+	DurationMs    int64
+	StartedAtMs   int64
+	AccumulatedMs int64 // Milliseconds USE was held (progress only advances while held)
+	LastAdvanceMs int64 // Last Update tick while held (0 until first held frame)
 }
 
 // MessageEntry represents a message with a timestamp
 type MessageEntry struct {
 	Text      string
 	Timestamp int64 // Unix timestamp in milliseconds when message was added
+}
+
+// PowerPropEntry schedules when an armed room should receive propagated power.
+type PowerPropEntry struct {
+	RoomName   string
+	ActivateAt int64
 }
 
 // NewGame creates a new game instance
@@ -123,6 +161,8 @@ func NewGame() *Game {
 		RoomDoorsPowered:      make(map[string]bool),
 		RoomCCTVPowered:       make(map[string]bool),
 		RoomLightsPowered:     make(map[string]bool),
+		RoomPowerOnline:       make(map[string]bool),
+		ManualEgressReleased:  make(map[string]bool),
 		ObservationCueVisited: make(map[string]struct{}),
 		LinkageTokensSeen:     make(map[string]struct{}),
 		LinkageCueVisited:     make(map[string]struct{}),
@@ -183,6 +223,43 @@ func (g *Game) UseBatteries(count int) int {
 // AddGenerator registers a generator for this level
 func (g *Game) AddGenerator(gen *entities.Generator) {
 	g.Generators = append(g.Generators, gen)
+}
+
+// RebuildGeneratorsFromGrid repopulates g.Generators from generator entities on the grid.
+// Grid cells are the source of truth for per-deck generator fuel/power state.
+func (g *Game) RebuildGeneratorsFromGrid() {
+	if g == nil || g.Grid == nil {
+		g.Generators = nil
+		return
+	}
+	g.Generators = g.generatorsOnGrid()
+}
+
+// syncGeneratorsFromGrid updates g.Generators from the grid when generators are placed on cells.
+func (g *Game) syncGeneratorsFromGrid() {
+	if g == nil || g.Grid == nil {
+		return
+	}
+	if gens := g.generatorsOnGrid(); len(gens) > 0 {
+		g.Generators = gens
+	}
+}
+
+func (g *Game) generatorsOnGrid() []*entities.Generator {
+	if g == nil || g.Grid == nil {
+		return nil
+	}
+	var gens []*entities.Generator
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil {
+			return
+		}
+		gen := gameworld.GetGameData(cell).Generator
+		if gen != nil {
+			gens = append(gens, gen)
+		}
+	})
+	return gens
 }
 
 // AllGeneratorsPowered returns true if all generators are powered
@@ -300,6 +377,8 @@ func (g *Game) AdvanceLevel() {
 	g.RoomDoorsPowered = make(map[string]bool)
 	g.RoomCCTVPowered = make(map[string]bool)
 	g.RoomLightsPowered = make(map[string]bool)
+	g.RoomPowerOnline = make(map[string]bool)
+	g.PowerPropPending = nil
 }
 
 // copyPowerMaps returns copies of the given power maps (for per-deck state).
@@ -322,28 +401,59 @@ func copyPowerMaps(doors, cctv, lights map[string]bool) (doorsCopy, cctvCopy, li
 	return doorsCopy, cctvCopy, lightsCopy
 }
 
+func copyBoolMap(m map[string]bool) map[string]bool {
+	if m == nil {
+		return make(map[string]bool)
+	}
+	out := make(map[string]bool, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+func copyOwnedItems(items world.ItemSet) world.ItemSet {
+	out := mapset.New[*world.Item]()
+	items.Each(func(item *world.Item) {
+		if item != nil {
+			out.Put(world.NewItem(item.Name))
+		}
+	})
+	return out
+}
+
 // SaveCurrentDeckState stores the current deck's grid and power state into DeckStates (Phase 3.4).
 // Call before switching to another deck so the current deck can be restored on revisit.
 func (g *Game) SaveCurrentDeckState() {
 	if g.Grid == nil {
 		return
 	}
+	g.syncGeneratorsFromGrid()
 	doorsCopy, cctvCopy, lightsCopy := copyPowerMaps(g.RoomDoorsPowered, g.RoomCCTVPowered, g.RoomLightsPowered)
+	onlineCopy := copyBoolMap(g.RoomPowerOnline)
+	manualEgressCopy := copyBoolMap(g.ManualEgressReleased)
+	pendingCopy := append([]PowerPropEntry(nil), g.PowerPropPending...)
 	genCopy := make([]*entities.Generator, len(g.Generators))
 	for i, gen := range g.Generators {
 		genCopy[i] = &entities.Generator{
 			Name:              gen.Name,
 			BatteriesRequired: gen.BatteriesRequired,
 			BatteriesInserted: gen.BatteriesInserted,
+			Online:            gen.Online,
+			Tripped:           gen.Tripped,
 		}
 	}
 	g.DeckStates[g.CurrentDeckID] = &DeckState{
-		Grid:              g.Grid,
-		LevelSeed:         g.LevelSeed,
-		RoomDoorsPowered:  doorsCopy,
-		RoomCCTVPowered:   cctvCopy,
-		RoomLightsPowered: lightsCopy,
-		Generators:        genCopy,
+		Grid:                 g.Grid,
+		LevelSeed:            g.LevelSeed,
+		RoomDoorsPowered:     doorsCopy,
+		RoomCCTVPowered:      cctvCopy,
+		RoomLightsPowered:    lightsCopy,
+		RoomPowerOnline:      onlineCopy,
+		PowerPropPending:     pendingCopy,
+		ManualEgressReleased: manualEgressCopy,
+		Generators:           genCopy,
+		OwnedItems:           copyOwnedItems(g.OwnedItems),
 	}
 }
 
@@ -359,14 +469,19 @@ func (g *Game) LoadDeckState(deckID int) {
 	g.Grid = ds.Grid
 	g.LevelSeed = ds.LevelSeed
 	g.RoomDoorsPowered, g.RoomCCTVPowered, g.RoomLightsPowered = copyPowerMaps(ds.RoomDoorsPowered, ds.RoomCCTVPowered, ds.RoomLightsPowered)
-	g.Generators = make([]*entities.Generator, len(ds.Generators))
-	for i, gen := range ds.Generators {
-		g.Generators[i] = &entities.Generator{
-			Name:              gen.Name,
-			BatteriesRequired: gen.BatteriesRequired,
-			BatteriesInserted: gen.BatteriesInserted,
-		}
+	if ds.RoomPowerOnline != nil {
+		g.RoomPowerOnline = copyBoolMap(ds.RoomPowerOnline)
+	} else {
+		g.RoomPowerOnline = make(map[string]bool)
 	}
+	if ds.ManualEgressReleased != nil {
+		g.ManualEgressReleased = copyBoolMap(ds.ManualEgressReleased)
+	} else {
+		g.ManualEgressReleased = make(map[string]bool)
+	}
+	g.PowerPropPending = append([]PowerPropEntry(nil), ds.PowerPropPending...)
+	g.OwnedItems = copyOwnedItems(ds.OwnedItems)
+	g.RebuildGeneratorsFromGrid()
 	g.HasMap = false
 	g.Hints = nil
 	g.FoundCodes = make(map[string]bool)
@@ -383,173 +498,30 @@ func (g *Game) GetAvailablePower() int {
 	return g.PowerSupply - g.PowerConsumption
 }
 
-// UpdatePowerSupply recalculates power supply from powered generators.
-// Uses per-deck decay: generator output is 100 W × deck's output multiplier (Phase 4.3).
+// UpdatePowerSupply recalculates total deck power generation from all powered generators.
 func (g *Game) UpdatePowerSupply() {
-	params := deck.DecayParamsForDeck(g.CurrentDeckID)
-	wattsPerGenerator := 100
 	totalPower := 0
 	for _, gen := range g.Generators {
 		if gen.IsPowered() {
-			totalPower += int(float64(wattsPerGenerator) * params.GeneratorOutputMultiplier)
+			totalPower += 100
 		}
 	}
 	g.PowerSupply = totalPower
 }
 
-// CalculatePowerConsumption returns total power consumption from all active devices
-// (doors, CCTV, solved puzzles), scaled by per-deck cost multiplier (Phase 4.3).
+// CalculatePowerConsumption returns total power draw from online rooms (propagated power).
 func (g *Game) CalculatePowerConsumption() int {
-	if g.Grid == nil {
+	if g == nil || g.RoomPowerOnline == nil {
 		return 0
 	}
-	rawConsumption := 0
-	doorRoomCounted := make(map[string]bool)
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if cell == nil || !cell.Room {
-			return
-		}
-		data := gameworld.GetGameData(cell)
-		if data.Terminal != nil && g.RoomCCTVPowered[cell.Name] {
-			rawConsumption += 10
-		}
-		if data.Door != nil && g.RoomDoorsPowered[data.Door.RoomName] && !doorRoomCounted[data.Door.RoomName] {
-			rawConsumption += 10
-			doorRoomCounted[data.Door.RoomName] = true
-		}
-		if data.Puzzle != nil && data.Puzzle.IsSolved() {
-			rawConsumption += 3
-		}
-	})
-	params := deck.DecayParamsForDeck(g.CurrentDeckID)
-	return int(float64(rawConsumption) * params.PowerCostMultiplier)
-}
-
-// ShortOutIfOverload runs after a room power toggle to ON: if consumption exceeds supply,
-// "shorts out" by unpowering other rooms' doors and CCTV (never protectedRoomName)
-// until consumption <= supply. Caller must have already applied the toggle.
-// Updates g.PowerConsumption. Returns true if any systems were unpowered.
-func (g *Game) ShortOutIfOverload(protectedRoomName string) bool {
-	g.UpdatePowerSupply()
-	consumption := g.CalculatePowerConsumption()
-	g.PowerConsumption = consumption
-	if consumption <= g.PowerSupply {
-		return false
-	}
-	type consumer struct{ room, kind string }
-	var list []consumer
-	for roomName := range g.RoomDoorsPowered {
-		if roomName == protectedRoomName {
-			continue
-		}
-		if g.RoomDoorsPowered[roomName] {
-			list = append(list, consumer{roomName, "doors"})
-		}
-	}
-	for roomName := range g.RoomCCTVPowered {
-		if roomName == protectedRoomName {
-			continue
-		}
-		if g.RoomCCTVPowered[roomName] {
-			list = append(list, consumer{roomName, "cctv"})
-		}
-	}
-	for i := 0; i < len(list); i++ {
-		for j := i + 1; j < len(list); j++ {
-			if list[j].room < list[i].room || (list[j].room == list[i].room && list[j].kind == "doors" && list[i].kind == "cctv") {
-				list[i], list[j] = list[j], list[i]
-			}
-		}
-	}
-	shortOut := false
-	for _, c := range list {
-		if consumption <= g.PowerSupply {
-			break
-		}
-		if c.kind == "doors" && g.RoomDoorsPowered[c.room] {
-			g.RoomDoorsPowered[c.room] = false
-			shortOut = true
-		} else if c.kind == "cctv" && g.RoomCCTVPowered[c.room] {
-			g.RoomCCTVPowered[c.room] = false
-			shortOut = true
-		}
-		consumption = g.CalculatePowerConsumption()
-		g.PowerConsumption = consumption
-	}
-	return shortOut
-}
-
-// PowerShedEntry describes one consumer that would be unpowered during short-out preview or apply.
-type PowerShedEntry struct {
-	Room string
-	Kind string // "doors" or "cctv"
-}
-
-// PreviewShortOutIfOverload simulates applying doorsOn/cctvOn for protectedRoomName on a copy of
-// room power maps and returns consumers that would be shed (same order as ShortOutIfOverload).
-func (g *Game) PreviewShortOutIfOverload(protectedRoomName string, doorsOn, cctvOn bool) []PowerShedEntry {
-	if g == nil {
-		return nil
-	}
-	doors := make(map[string]bool, len(g.RoomDoorsPowered))
 	cctv := make(map[string]bool, len(g.RoomCCTVPowered))
-	for k, v := range g.RoomDoorsPowered {
-		doors[k] = v
-	}
 	for k, v := range g.RoomCCTVPowered {
 		cctv[k] = v
 	}
-	doors[protectedRoomName] = doorsOn
-	cctv[protectedRoomName] = cctvOn
-
-	g.UpdatePowerSupply()
-	supply := g.PowerSupply
-
-	consumption := calculateConsumptionFromMaps(g, doors, cctv)
-	if consumption <= supply {
-		return nil
-	}
-
-	type consumer struct{ room, kind string }
-	var list []consumer
-	for roomName, on := range doors {
-		if roomName == protectedRoomName || !on {
-			continue
-		}
-		list = append(list, consumer{roomName, "doors"})
-	}
-	for roomName, on := range cctv {
-		if roomName == protectedRoomName || !on {
-			continue
-		}
-		list = append(list, consumer{roomName, "cctv"})
-	}
-	for i := 0; i < len(list); i++ {
-		for j := i + 1; j < len(list); j++ {
-			if list[j].room < list[i].room || (list[j].room == list[i].room && list[j].kind == "doors" && list[i].kind == "cctv") {
-				list[i], list[j] = list[j], list[i]
-			}
-		}
-	}
-
-	var shed []PowerShedEntry
-	for _, c := range list {
-		if consumption <= supply {
-			break
-		}
-		if c.kind == "doors" && doors[c.room] {
-			doors[c.room] = false
-			shed = append(shed, PowerShedEntry{Room: c.room, Kind: "doors"})
-		} else if c.kind == "cctv" && cctv[c.room] {
-			cctv[c.room] = false
-			shed = append(shed, PowerShedEntry{Room: c.room, Kind: "cctv"})
-		}
-		consumption = calculateConsumptionFromMaps(g, doors, cctv)
-	}
-	return shed
+	return calculateConsumptionFromMaps(g, g.RoomPowerOnline, cctv)
 }
 
-func calculateConsumptionFromMaps(g *Game, doors, cctv map[string]bool) int {
+func calculateConsumptionFromMaps(g *Game, online, cctv map[string]bool) int {
 	if g == nil || g.Grid == nil {
 		return 0
 	}
@@ -560,10 +532,10 @@ func calculateConsumptionFromMaps(g *Game, doors, cctv map[string]bool) int {
 			return
 		}
 		data := gameworld.GetGameData(cell)
-		if data.Terminal != nil && cctv[cell.Name] {
+		if data.Terminal != nil && cctv[cell.Name] && online[cell.Name] {
 			rawConsumption += 10
 		}
-		if data.Door != nil && doors[data.Door.RoomName] && !doorRoomCounted[data.Door.RoomName] {
+		if data.Door != nil && online[data.Door.RoomName] && !doorRoomCounted[data.Door.RoomName] {
 			rawConsumption += 10
 			doorRoomCounted[data.Door.RoomName] = true
 		}

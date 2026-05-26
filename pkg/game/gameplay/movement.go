@@ -11,6 +11,7 @@ import (
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/features"
 	"darkstation/pkg/game/renderer"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -27,9 +28,13 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 	if gameworld.HasDoor(r) {
 		rData := gameworld.GetGameData(r)
 		roomName := rData.Door.RoomName
-		if !g.RoomDoorsPowered[roomName] {
+		if !setup.CellHasLivePower(g, r) && !manualEgressReleased(g, roomName) {
 			if logReason {
-				renderer.AddCallout(r.Row, r.Col, fmt.Sprintf("UNPOWERED{Unpowered door}\n%s", rData.Door.DoorName()), renderer.CalloutColorDoor, 0)
+				msg := "UNPOWERED{Unpowered door}"
+				if g.RoomDoorsPowered[roomName] {
+					msg = "UNPOWERED{Door — power routing}"
+				}
+				renderer.AddCallout(r.Row, r.Col, fmt.Sprintf("%s\n%s\nSUBTLE{Hold USE — manual egress release}", msg, rData.Door.DoorName()), renderer.CalloutColorDoor, 0)
 			}
 			return false, &missingItems
 		}
@@ -208,6 +213,7 @@ func MoveCell(g *state.Game, requestedCell *world.Cell) {
 			g.LastInteractedCol = -1
 			g.InteractionPlayerRow = requestedCell.Row
 			g.InteractionPlayerCol = requestedCell.Col
+			ClearGeneratorPowerGridOverlay(g)
 			// Increment movement count for hint system (only if player actually moved from a previous position)
 			if g.CurrentCell != nil {
 				g.MovementCount++

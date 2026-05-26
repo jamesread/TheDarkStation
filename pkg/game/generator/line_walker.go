@@ -1,7 +1,7 @@
 package generator
 
 import (
-	"math/rand"
+	"darkstation/pkg/game/levelrand"
 
 	"darkstation/pkg/engine/world"
 )
@@ -55,8 +55,8 @@ func (g *LineWalkerGenerator) Generate(level int) *world.Grid {
 	extraCorridors := level / 2
 	for i := 0; i < extraCorridors; i++ {
 		// Start from a random position near center
-		randRow := row + rand.Intn(5) - 2
-		randCol := col + rand.Intn(5) - 2
+		randRow := row + levelrand.Intn(5) - 2
+		randCol := col + levelrand.Intn(5) - 2
 		if grid.IsPlayablePosition(randRow, randCol) {
 			g.buildLineOfRoomsRandom(grid, randRow, randCol, branchProb, minDist, maxDist)
 		}
@@ -76,7 +76,7 @@ func (g *LineWalkerGenerator) Generate(level int) *world.Grid {
 
 // randomDirection returns a random cardinal direction
 func (g *LineWalkerGenerator) randomDirection() world.Direction {
-	return world.Direction(rand.Intn(4))
+	return world.Direction(levelrand.Intn(4))
 }
 
 // buildLineOfRoomsRandom creates a line of rooms in a random direction
@@ -93,7 +93,7 @@ func (g *LineWalkerGenerator) buildLineOfRooms(grid *world.Grid, row, col int, d
 
 	rowDelta, colDelta := dir.Delta()
 
-	distance := minDist + rand.Intn(maxDist-minDist+1)
+	distance := minDist + levelrand.Intn(maxDist-minDist+1)
 
 	for segment := 0; segment < distance; segment++ {
 		// Only mark as room if within playable area (not on perimeter)
@@ -106,7 +106,7 @@ func (g *LineWalkerGenerator) buildLineOfRooms(grid *world.Grid, row, col int, d
 			return row, col
 		}
 
-		if rand.Float32() < branchProbability {
+		if levelrand.Float32() < branchProbability {
 			g.buildLineOfRoomsRandom(grid, row, col, branchProbability-.1, minDist, maxDist)
 		}
 

@@ -19,18 +19,9 @@ func roomPowerSummary(g *state.Game, roomName string) (supply, consumption int) 
 		return 0, 0
 	}
 	params := deck.DecayParamsForDeck(g.CurrentDeckID)
-	wattsPerGenerator := 100
 
-	// Supply from generators in this room
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if cell == nil || !cell.Room || cell.Name != roomName {
-			return
-		}
-		data := gameworld.GetGameData(cell)
-		if data.Generator != nil && data.Generator.IsPowered() {
-			supply += int(float64(wattsPerGenerator) * params.GeneratorOutputMultiplier)
-		}
-	})
+	// Supply from generators on the same armed routing grid as this room.
+	supply = setup.ArmedGridSupplyForRoom(g, roomName)
 
 	// Consumption from doors (10w per powered room), CCTV and puzzles (in this room)
 	var rawConsumption int
@@ -39,7 +30,7 @@ func roomPowerSummary(g *state.Game, roomName string) (supply, consumption int) 
 			return
 		}
 		data := gameworld.GetGameData(cell)
-		if data.Door != nil && data.Door.RoomName == roomName && g.RoomDoorsPowered[roomName] {
+		if data.Door != nil && data.Door.RoomName == roomName && setup.RoomIsOnline(g, roomName) {
 			rawConsumption += 10
 		}
 		if cell.Room && cell.Name == roomName {
@@ -53,6 +44,15 @@ func roomPowerSummary(g *state.Game, roomName string) (supply, consumption int) 
 	})
 	consumption = int(float64(rawConsumption) * params.PowerCostMultiplier)
 	return supply, consumption
+}
+
+// RoomLabelWithPowerDraw returns the room name with current draw appended (e.g. "Station Spine: 6w").
+func RoomLabelWithPowerDraw(g *state.Game, roomName string) string {
+	if roomName == "" {
+		return ""
+	}
+	_, consumption, _, _ := buildRoomDevices(g, roomName, nil)
+	return fmt.Sprintf("%s: %dw", roomName, consumption)
 }
 
 // Ping radius in cells (Euclidean distance).
@@ -81,26 +81,6 @@ func (d *DeviceMenuItem) IsSelectable() bool {
 // GetHelpText returns help text for this device.
 func (d *DeviceMenuItem) GetHelpText() string {
 	return ""
-}
-
-// RestorePowerNearbyTerminalsMenuItem powers all maintenance terminals in adjacent rooms (including own).
-type RestorePowerNearbyTerminalsMenuItem struct {
-	Parent *MaintenanceMenuHandler
-}
-
-// GetLabel returns the display label.
-func (r *RestorePowerNearbyTerminalsMenuItem) GetLabel() string {
-	return "Restore power to nearby terminals"
-}
-
-// IsSelectable returns true (menu is only open at powered terminals).
-func (r *RestorePowerNearbyTerminalsMenuItem) IsSelectable() bool {
-	return true
-}
-
-// GetHelpText returns help text.
-func (r *RestorePowerNearbyTerminalsMenuItem) GetHelpText() string {
-	return "Press Enter to restore power to terminals in adjacent rooms"
 }
 
 // PingTerminalsMenuItem is a selectable menu item that discovers nearby terminals in the room.
@@ -319,7 +299,7 @@ func (r *RoomPowerToggleMenuItem) GetHelpText() string {
 }
 
 // MaintenanceTerminalPowerMenuItem is a selectable menu item that toggles power for one maintenance terminal.
-// Power is restored only via "Restore power to nearby terminals"; this toggle allows turning a terminal
+// Terminal feed normally follows the conductive grid; this toggle allows turning a terminal
 // off for player convenience (e.g. testing or deliberate shutdown).
 type MaintenanceTerminalPowerMenuItem struct {
 	G    *state.Game
@@ -352,7 +332,7 @@ type RoomSelectorMenuItem struct {
 
 // GetLabel returns the menu entry label showing current selection.
 func (r *RoomSelectorMenuItem) GetLabel() string {
-	return fmt.Sprintf("Viewing room:\tACTION{%s}\t(select to change)", r.Parent.selectedRoomName)
+	return fmt.Sprintf("Viewing room:\tACTION{%s}\t(select to change)", RoomLabelWithPowerDraw(r.Parent.g, r.Parent.selectedRoomName))
 }
 
 // IsSelectable returns true.
@@ -468,10 +448,7 @@ func (h *RoomSelectorMenuHandler) roomToItem(name string) *roomSelectItem {
 	} else if name == h.parent.selectedRoomName {
 		hint = "(current selection)"
 	}
-	supply, consumption := roomPowerSummary(h.parent.g, name)
-	net := supply - consumption
-	powerSummary := renderer.FormatPowerWatts(net, false)
-	return &roomSelectItem{roomName: name, hint: hint, powerSummary: powerSummary}
+	return &roomSelectItem{roomName: RoomLabelWithPowerDraw(h.parent.g, name), hint: hint}
 }
 
 // InfoMenuItem represents a menu item for displaying information (non-selectable).
@@ -501,7 +478,7 @@ type MaintenanceMenuHandler struct {
 	maintenanceTerm  *entities.MaintenanceTerminal
 	terminalRoomName string   // room where the terminal is
 	selectedRoomName string   // room currently being viewed (mutable)
-	selectableRooms  []string // mesh-reachable and adjacent rooms from this terminal
+	selectableRooms  []string // power grid-reachable and adjacent rooms from this terminal
 	mode             string   // maintModeControls or maintModeDiagnostics
 }
 
@@ -554,7 +531,7 @@ func buildRoomDevices(g *state.Game, roomName string, maintenanceTerm *entities.
 	})
 
 	// Consumption: doors (10w each when powered) + device power
-	if doorCount > 0 && g.RoomDoorsPowered[roomName] {
+	if doorCount > 0 && setup.RoomIsOnline(g, roomName) {
 		roomConsumption += 10
 	}
 	for _, d := range devices {
@@ -585,7 +562,7 @@ func NewMaintenanceMenuHandler(g *state.Game, cell *world.Cell, maintenanceTerm 
 
 // GetTitle returns the menu title.
 func (h *MaintenanceMenuHandler) GetTitle() string {
-	return fmt.Sprintf("Maintenance Terminal: %s", h.selectedRoomName)
+	return fmt.Sprintf("Maintenance Terminal: %s", RoomLabelWithPowerDraw(h.g, h.selectedRoomName))
 }
 
 // GetMaintenanceRoom implements MaintenanceRoomProvider.
@@ -625,27 +602,27 @@ func (h *MaintenanceMenuHandler) OnActivate(item MenuItem, index int) (shouldClo
 		switch toggle.PowerType {
 		case "doors":
 			h.g.RoomDoorsPowered[toggle.RoomName] = !h.g.RoomDoorsPowered[toggle.RoomName]
-			if h.g.RoomDoorsPowered[toggle.RoomName] {
-				if h.g.ShortOutIfOverload(toggle.RoomName) {
-					helpText = "Power overload! Other systems shorted out."
-				} else if h.g.PowerConsumption > h.g.PowerSupply {
+			if !h.g.RoomDoorsPowered[toggle.RoomName] {
+				setup.ClearRoomPropagatedPower(h.g, toggle.RoomName)
+			}
+			setup.NotifyPowerGridChanged(h.g)
+			if h.g.RoomDoorsPowered[toggle.RoomName] && setup.RoomIsOnline(h.g, toggle.RoomName) {
+				if setup.ResolvePowerOverloadAfterToggle(h.g, toggle.RoomName) {
+					helpText = "Power overload! Generators tripped — other systems shorted out."
+				} else if setup.ConsumptionOnArmedGrid(h.g, setup.ArmedGridForRoom(h.g, toggle.RoomName)) > setup.ArmedGridSupplyForRoom(h.g, toggle.RoomName) {
 					helpText = "Power overload persists in this room. Reduce load."
 				}
-			} else {
-				h.g.UpdatePowerSupply()
-				h.g.PowerConsumption = h.g.CalculatePowerConsumption()
 			}
 		case "cctv":
 			h.g.RoomCCTVPowered[toggle.RoomName] = !h.g.RoomCCTVPowered[toggle.RoomName]
-			if h.g.RoomCCTVPowered[toggle.RoomName] {
-				if h.g.ShortOutIfOverload(toggle.RoomName) {
-					helpText = "Power overload! Other systems shorted out."
-				} else if h.g.PowerConsumption > h.g.PowerSupply {
+			if h.g.RoomCCTVPowered[toggle.RoomName] && setup.RoomIsOnline(h.g, toggle.RoomName) {
+				if setup.ResolvePowerOverloadAfterToggle(h.g, toggle.RoomName) {
+					helpText = "Power overload! Generators tripped — other systems shorted out."
+				} else if setup.ConsumptionOnArmedGrid(h.g, setup.ArmedGridForRoom(h.g, toggle.RoomName)) > setup.ArmedGridSupplyForRoom(h.g, toggle.RoomName) {
 					helpText = "Power overload persists in this room. Reduce load."
 				}
-			} else {
-				h.g.UpdatePowerSupply()
-				h.g.PowerConsumption = h.g.CalculatePowerConsumption()
+			} else if !h.g.RoomCCTVPowered[toggle.RoomName] {
+				h.g.PowerConsumption = setup.CalculatePowerConsumption(h.g)
 			}
 		case "lights":
 			current := h.g.RoomLightsPowered[toggle.RoomName]
@@ -655,10 +632,14 @@ func (h *MaintenanceMenuHandler) OnActivate(item MenuItem, index int) (shouldClo
 			h.g.RoomLightsPowered[toggle.RoomName] = !current
 			// Lights use 0w, no consumption change
 		}
+		if helpText == "" {
+			setup.ApplyGridConductivePower(h.g)
+		}
 		return false, helpText // Keep menu open so user can toggle more
 	}
 	if termItem, isTerm := item.(*MaintenanceTerminalPowerMenuItem); isTerm {
 		termItem.Term.Powered = !termItem.Term.Powered
+		setup.ApplyGridConductivePower(h.g)
 		return false, "" // Keep menu open like doors/CCTV
 	}
 	if presetItem, isPreset := item.(*RoomCircuitPresetMenuItem); isPreset {
@@ -672,15 +653,8 @@ func (h *MaintenanceMenuHandler) OnActivate(item MenuItem, index int) (shouldClo
 		}
 		return false, "Controls panel"
 	}
-	if _, isRestoreAll := item.(*RestoreAllAdjacentMenuItem); isRestoreAll {
-		return false, h.restoreAllAdjacent()
-	}
-	if _, isRestoreSel := item.(*RestoreSelectedRoomMenuItem); isRestoreSel {
-		return false, h.restoreSelectedRoom()
-	}
-	// Legacy type used in tests — same as restore all adjacent.
-	if restoreItem, isRestore := item.(*RestorePowerNearbyTerminalsMenuItem); isRestore {
-		return false, restoreItem.Parent.restoreAllAdjacent()
+	if _, isRefresh := item.(*RefreshPowerGridMenuItem); isRefresh {
+		return false, h.refreshPowerGrid()
 	}
 	if _, isAdv := item.(*AdvancedPowerMenuItem); isAdv {
 		_, _, doorCount, lightCount := buildRoomDevices(h.g, h.selectedRoomName, h.maintenanceTerm)
@@ -695,7 +669,7 @@ func (h *MaintenanceMenuHandler) OnActivate(item MenuItem, index int) (shouldClo
 		if msg, ok := h.cycleRoomMessage(1); ok {
 			return false, msg
 		}
-		return false, "Only this room is on the routing mesh"
+		return false, "Only this room is on the power grid"
 	}
 	// Other items (info/devices) are read-only; any other activation closes the menu
 	return true, ""

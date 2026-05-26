@@ -10,11 +10,16 @@ import (
 	"darkstation/pkg/game/state"
 )
 
-// FormatPowerWatts returns markup for power display: POWERED{Xw} when w>0,
-// UNPOWERED{Xw} or UNPOWERED_SUBTLE{Xw} when w<=0. useSubtle for dependency-blocked (e.g. room terminal off).
+// FormatPowerWatts returns markup for power display. Positive watts are always shown as powered.
+// Zero watts use powered=false (legacy callers). Prefer FormatPowerLoad when the circuit state is known.
 func FormatPowerWatts(w int, useSubtle bool) string {
+	return FormatPowerLoad(w, w > 0, useSubtle)
+}
+
+// FormatPowerLoad returns markup for power display. When powered is true, zero draw shows POWERED{0w}.
+func FormatPowerLoad(w int, powered bool, useSubtle bool) string {
 	s := fmt.Sprintf("%dw", w)
-	if w > 0 {
+	if powered {
 		return fmt.Sprintf("POWERED{%s}", s)
 	}
 	if useSubtle {

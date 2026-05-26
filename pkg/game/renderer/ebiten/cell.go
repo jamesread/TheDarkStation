@@ -8,6 +8,7 @@ import (
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/features"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -45,7 +46,10 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 	// Door (show if has map or discovered)
 	if gameworld.HasDoor(cell) && (g.HasMap || cell.Discovered) {
 		roomName := data.Door.RoomName
-		if !g.RoomDoorsPowered[roomName] {
+		if !setup.CellHasLivePower(g, cell) {
+			if setup.RoomManualEgressReleased(g, roomName) {
+				return CellRenderOptions{Icon: IconDoorUnlocked, Color: colorDoorLocked, HasBackground: true}
+			}
 			// Unpowered: use hazard color (matches UNPOWERED{} markup)
 			return CellRenderOptions{Icon: IconDoorUnlocked, Color: colorHazard, HasBackground: true}
 		}

@@ -29,6 +29,11 @@ const (
 	StyleExitOpen
 )
 
+// InteractHoldPoller is implemented by renderers that track whether USE is held between frames.
+type InteractHoldPoller interface {
+	PollInteractHold() (held bool, released bool)
+}
+
 // Renderer defines the interface for game rendering backends
 // Currently only Ebiten is supported.
 type Renderer interface {

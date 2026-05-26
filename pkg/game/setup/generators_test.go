@@ -155,3 +155,71 @@ func TestCalculateBatteriesForGenerator(t *testing.T) {
 		}
 	}
 }
+
+func countGridGenerators(g *state.Game) int {
+	if g == nil || g.Grid == nil {
+		return 0
+	}
+	n := 0
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell != nil && gameworld.GetGameData(cell).Generator != nil {
+			n++
+		}
+	})
+	return n
+}
+
+func TestPlaceAdditionalGenerators_AfterBootstrap_mapTxtSeed(t *testing.T) {
+	// Regression: level 7 map.txt seed previously placed only the spawn generator.
+	g := state.NewGame()
+	g.Level = 7
+	g.CurrentDeckID = 6
+	grid := world.NewGrid(8, 8)
+	for r := 0; r < 8; r++ {
+		for c := 0; c < 8; c++ {
+			name := "Far"
+			if r < 4 && c < 4 {
+				name = "Start"
+			}
+			grid.MarkAsRoomWithName(r, c, name, "desc")
+			gameworld.InitGameData(grid.GetCell(r, c))
+		}
+	}
+	grid.SetStartCellAt(1, 1)
+	grid.SetExitCellAt(6, 6)
+	grid.BuildAllCellConnections()
+	g.Grid = grid
+
+	avoid := mapset.New[*world.Cell]()
+	avoid.Put(g.Grid.StartCell())
+	avoid.Put(g.Grid.ExitCell())
+	InitRoomPower(g)
+	placeSpawnGenerator(g, &avoid)
+	InitMaintenanceTerminalPower(g)
+	EnsureGeneratorRoomBootstrap(g)
+	PlaceAdditionalGenerators(g, &avoid)
+
+	want := 1 + (g.Level - 3)
+	if got := countGridGenerators(g); got != want {
+		t.Fatalf("grid generators = %d, want %d (spawn + level-3 additional)", got, want)
+	}
+	powered := 0
+	unpowered := 0
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		gen := gameworld.GetGameData(cell).Generator
+		if gen == nil {
+			return
+		}
+		if gen.IsPowered() {
+			powered++
+		} else {
+			unpowered++
+		}
+	})
+	if powered != 1 {
+		t.Fatalf("powered generators = %d, want 1 (spawn only)", powered)
+	}
+	if unpowered != g.Level-3 {
+		t.Fatalf("unpowered generators = %d, want %d", unpowered, g.Level-3)
+	}
+}

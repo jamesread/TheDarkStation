@@ -208,8 +208,12 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 	selected := 0
 	helpText := ""
 
-	// Clear maintenance room highlight when menu exits (all return paths)
-	defer func() { g.MaintenanceMenuRoom = "" }()
+	// Clear maintenance map overlay state when menu exits (all return paths)
+	defer func() {
+		g.MaintenanceMenuRoom = ""
+		g.MaintenanceMenuTerminalRow = -1
+		g.MaintenanceMenuTerminalCol = -1
+	}()
 
 	for {
 		items := handler.GetMenuItems()

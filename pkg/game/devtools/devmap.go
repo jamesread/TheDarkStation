@@ -67,6 +67,7 @@ func SwitchToDevMap(g *state.Game) {
 			data := gameworld.InitGameData(cell)
 			gen := entities.NewGenerator(fmt.Sprintf("Generator %d", i+1), 2)
 			gen.BatteriesInserted = gen.BatteriesRequired
+			gen.BringOnline()
 			data.Generator = gen
 			g.AddGenerator(gen)
 		}

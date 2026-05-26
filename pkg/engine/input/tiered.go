@@ -43,10 +43,10 @@ const (
 	ActionZoomOut      // Zoom out (decrease font/tile size)
 
 	// Maintenance menu (only consumed while maintenance menu is open)
-	ActionMaintModeToggle // Tab: switch Controls / Diagnostics
-	ActionCircuitOff      // 1: apply OFF preset to viewed room
-	ActionCircuitEssential
-	ActionCircuitFull // 3: apply FULL preset
+	ActionMaintModeToggle  // Tab: switch Controls / Diagnostics
+	ActionCircuitOff       // 1: apply OFF preset to viewed room
+	ActionCircuitEssential // reserved; not used in menu (essential mode disabled)
+	ActionCircuitFull      // 2: apply ON preset (doors + CCTV)
 )
 
 // Intent is the 4th‑layer, high‑level description of what the player wants to do.
@@ -147,9 +147,9 @@ var bindings = map[string]Action{
 	"1":       ActionCircuitOff,
 	"digit1":  ActionCircuitOff,
 	"numpad1": ActionCircuitOff,
-	"2":       ActionCircuitEssential,
-	"digit2":  ActionCircuitEssential,
-	"numpad2": ActionCircuitEssential,
+	"2":       ActionCircuitFull,
+	"digit2":  ActionCircuitFull,
+	"numpad2": ActionCircuitFull,
 	"3":       ActionCircuitFull,
 	"digit3":  ActionCircuitFull,
 	"numpad3": ActionCircuitFull,

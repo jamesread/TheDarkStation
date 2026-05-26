@@ -2,7 +2,6 @@
 package gameplay
 
 import (
-	"strings"
 	"testing"
 
 	"darkstation/pkg/engine/world"
@@ -189,7 +188,7 @@ func TestIsFinalDeck_MatchesTotalDecks(t *testing.T) {
 	}
 }
 
-func TestBuildGame_StartRoomDoorsPowered(t *testing.T) {
+func TestBuildGame_StartRoomDoorsPoweredViaGeneratorBootstrap(t *testing.T) {
 	g := BuildGame(1)
 	if g == nil || g.Grid == nil {
 		t.Fatal("BuildGame(1) setup failed")
@@ -199,33 +198,56 @@ func TestBuildGame_StartRoomDoorsPowered(t *testing.T) {
 		t.Fatal("no start cell")
 	}
 	startRoom := startCell.Name
-	if !g.RoomDoorsPowered[startRoom] {
-		t.Errorf("start room %q doors should be powered after BuildGame", startRoom)
-	}
-}
-
-func TestBuildGame_StartRoomMaintenanceTerminalPowered(t *testing.T) {
-	g := BuildGame(1)
-	if g == nil || g.Grid == nil {
-		t.Fatal("BuildGame(1) setup failed")
-	}
-	startRoom := g.Grid.StartCell().Name
-	found := false
+	hasSpawnGen := false
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil || cell.Name != startRoom {
 			return
 		}
-		data := gameworld.GetGameData(cell)
-		if data.MaintenanceTerm != nil {
-			found = true
-			if !data.MaintenanceTerm.Powered {
-				t.Errorf("start room %q maintenance terminal at (%d,%d) should be powered", startRoom, row, col)
-			}
+		gen := gameworld.GetGameData(cell).Generator
+		if gen != nil && gen.IsPowered() {
+			hasSpawnGen = true
 		}
 	})
-	if !found {
-		t.Logf("no maintenance terminal found in start room %q (may not have one on level 1)", startRoom)
+	if !hasSpawnGen {
+		t.Fatal("start room should contain the powered spawn generator")
 	}
+	if !g.RoomDoorsPowered[startRoom] {
+		t.Errorf("start room %q doors should be armed via generator bootstrap, not InitRoomPower", startRoom)
+	}
+}
+
+func TestBuildGame_MaintBootstrapOK(t *testing.T) {
+	g := BuildGame(1)
+	if g == nil || g.Grid == nil {
+		t.Fatal("BuildGame(1) setup failed")
+	}
+	if !setup.MaintBootstrapOK(g) {
+		t.Fatal("level 1 should have at least one powered maint terminal on conductive generator power grid")
+	}
+	if setup.CountPoweredMaintenanceTerminals(g) == 0 {
+		t.Fatal("expected a powered maintenance terminal after generator bootstrap")
+	}
+}
+
+func TestBuildGame_GeneratorRoomsArmed(t *testing.T) {
+	g := BuildGame(1)
+	if g == nil || g.Grid == nil {
+		t.Fatal("BuildGame(1) setup failed")
+	}
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room {
+			return
+		}
+		if gameworld.GetGameData(cell).Generator == nil {
+			return
+		}
+		if !g.RoomDoorsPowered[cell.Name] {
+			t.Errorf("generator room %q should have doors armed after bootstrap", cell.Name)
+		}
+		if !setup.RoomIsOnline(g, cell.Name) {
+			t.Errorf("generator room %q should be power-online after bootstrap", cell.Name)
+		}
+	})
 }
 
 func TestBuildGame_SetupOrderIncludesSolvability(t *testing.T) {
@@ -236,10 +258,24 @@ func TestBuildGame_SetupOrderIncludesSolvability(t *testing.T) {
 	}
 	startRoom := g.Grid.StartCell().Name
 	if !g.RoomDoorsPowered[startRoom] {
-		t.Errorf("start room %q doors should be powered (EnsureSolvabilityDoorPower / InitRoomPower)", startRoom)
+		t.Errorf("start room %q doors should be armed via generator bootstrap", startRoom)
 	}
 	if len(g.RoomDoorsPowered) == 0 {
 		t.Error("RoomDoorsPowered should be populated after setup")
+	}
+}
+
+func TestBuildGame_NoMaintBootstrapDeadlock(t *testing.T) {
+	seeds := []int64{1, 42, 424242, 1779651561562416055, 999_999_999}
+	for level := 1; level <= 6; level++ {
+		for _, seed := range seeds {
+			g := BuildGame(level)
+			g.LevelSeed = seed
+			ResetLevel(g)
+			if !setup.MaintBootstrapOK(g) {
+				t.Errorf("level %d seed %d: maint bootstrap failed (no powered terminal on generator power grid)", level, seed)
+			}
+		}
 	}
 }
 
@@ -250,11 +286,8 @@ func TestBuildGame_NoStartEgressDeadlock(t *testing.T) {
 			g := BuildGame(level)
 			g.LevelSeed = seed
 			ResetLevel(g)
-			report := setup.AnalyzeSolvability(g)
-			for _, w := range report.Warnings {
-				if strings.Contains(w, "egress blocked") || strings.Contains(w, "start room doors not powered") {
-					t.Errorf("level %d seed %d: solvability warning: %s", level, seed, w)
-				}
+			if !setup.MaintBootstrapOK(g) {
+				t.Errorf("level %d seed %d: maint bootstrap failed", level, seed)
 			}
 		}
 	}
@@ -268,10 +301,10 @@ func TestResetLevel_ReinitializesRoomPower(t *testing.T) {
 
 	ResetLevel(g)
 
-	// After reset, the new start room's doors should be powered
+	// After reset, the start room's doors should be armed via spawn generator bootstrap
 	newStartRoom := g.Grid.StartCell().Name
 	if !g.RoomDoorsPowered[newStartRoom] {
-		t.Errorf("after reset: start room %q doors should be powered", newStartRoom)
+		t.Errorf("after reset: start room %q doors should be armed via generator bootstrap", newStartRoom)
 	}
 	// Lights should default on for all rooms
 	for room, lightsOn := range g.RoomLightsPowered {
@@ -279,25 +312,10 @@ func TestResetLevel_ReinitializesRoomPower(t *testing.T) {
 			t.Errorf("after reset: room %q lights should default on", room)
 		}
 	}
-	// Maintenance terminal power: start room terminal(s) powered, others unpowered
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if cell == nil || !cell.Room {
-			return
-		}
-		data := gameworld.GetGameData(cell)
-		if data.MaintenanceTerm == nil {
-			return
-		}
-		if cell.Name == newStartRoom {
-			if !data.MaintenanceTerm.Powered {
-				t.Errorf("after reset: start room %q maintenance terminal should be powered", newStartRoom)
-			}
-		} else {
-			if data.MaintenanceTerm.Powered {
-				t.Errorf("after reset: non-start room %q maintenance terminal should be unpowered", cell.Name)
-			}
-		}
-	})
+	// Maintenance terminal power: at least one powered on conductive generator power grid after bootstrap
+	if !setup.MaintBootstrapOK(g) {
+		t.Errorf("after reset: maint bootstrap should be OK (powered terminal on generator power grid)")
+	}
 }
 
 func TestSaveLoadDeckState_RoomPowerMapsPreserved(t *testing.T) {
@@ -373,7 +391,7 @@ func TestSaveLoadDeckState_RoomPowerDeepCopy(t *testing.T) {
 
 func TestBuildGame_MaintenanceTerminalRestoreFlow(t *testing.T) {
 	// BuildGame → start room terminal(s) powered, others unpowered.
-	// From start room terminal, RestorePowerNearbyTerminalsMenuItem should power adjacent room terminals.
+	// From start room terminal, RefreshPowerGridMenuItem should power adjacent room terminals.
 	var g *state.Game
 	var startRoom string
 	var startTermCell *world.Cell
@@ -410,7 +428,7 @@ func TestBuildGame_MaintenanceTerminalRestoreFlow(t *testing.T) {
 		t.Error("start room maintenance terminal should be powered after BuildGame")
 	}
 
-	// Mesh restore requires powered doors along the path — enable doors on adjacent rooms for this integration test.
+	// Power grid restore requires powered doors along the path — enable doors on adjacent rooms for this integration test.
 	adjRooms := setup.GetAdjacentRoomNames(g.Grid, startRoom)
 	if adjRooms == nil {
 		adjRooms = []string{startRoom}
@@ -418,16 +436,17 @@ func TestBuildGame_MaintenanceTerminalRestoreFlow(t *testing.T) {
 	for _, rn := range adjRooms {
 		g.RoomDoorsPowered[rn] = true
 	}
-	meshRooms := setup.RoomsReachableInPowerMesh(g, startTermCell)
-	if len(meshRooms) == 0 {
-		meshRooms = adjRooms
+	setup.EnergizeArmedRoomsForTest(g)
+	gridRooms := setup.RoomsReachableInPowerGrid(g, startTermCell)
+	if len(gridRooms) == 0 {
+		gridRooms = adjRooms
 	}
 	unpoweredBefore := 0
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil || !cell.Room {
 			return
 		}
-		for _, rn := range meshRooms {
+		for _, rn := range gridRooms {
 			if cell.Name == rn {
 				data := gameworld.GetGameData(cell)
 				if data.MaintenanceTerm != nil && !data.MaintenanceTerm.Powered {
@@ -438,9 +457,9 @@ func TestBuildGame_MaintenanceTerminalRestoreFlow(t *testing.T) {
 		}
 	})
 
-	// Simulate "Restore routing mesh" from start room terminal
+	// Simulate "Refresh power grid" from start room terminal
 	h := menu.NewMaintenanceMenuHandler(g, startTermCell, startTerm)
-	restoreItem := &menu.RestorePowerNearbyTerminalsMenuItem{Parent: h}
+	restoreItem := &menu.RefreshPowerGridMenuItem{Parent: h}
 	h.OnActivate(restoreItem, 0)
 
 	// Verify previously unpowered terminals are now powered
@@ -449,7 +468,7 @@ func TestBuildGame_MaintenanceTerminalRestoreFlow(t *testing.T) {
 		if cell == nil || !cell.Room {
 			return
 		}
-		for _, rn := range meshRooms {
+		for _, rn := range gridRooms {
 			if cell.Name == rn {
 				data := gameworld.GetGameData(cell)
 				if data.MaintenanceTerm != nil && !data.MaintenanceTerm.Powered {

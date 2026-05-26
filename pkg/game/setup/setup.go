@@ -32,14 +32,15 @@ func SetupLevel(g *state.Game) *SetupConfig {
 	roomEntries := FindRoomEntryPoints(g.Grid)
 	EnsureEveryRoomHasDoor(g, &avoid, &lockedDoorCells, roomEntries)
 
-	// Initialize room power: unpowered by default, start room doors powered
+	// Initialize room power: unpowered by default; generator bootstrap arms generator rooms
 	InitRoomPower(g)
 
-	// Place generators
-	PlaceGenerators(g, &avoid)
+	// Corridor door cells added above can strand keycards placed before them; relocate before
+	// blocking entities (generators, batteries) are placed.
+	EnsureKeycardReachability(g)
 
-	// Place batteries
-	PlaceBatteries(g, &avoid)
+	// Place generators (spawn only; additional generators and batteries after bootstrap in lifecycle).
+	PlaceGenerators(g, &avoid)
 
 	// Place CCTV terminals (level 2+)
 	PlaceCCTVTerminals(g, &avoid, roomEntries)

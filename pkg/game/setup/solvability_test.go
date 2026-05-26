@@ -143,20 +143,20 @@ func TestEnsureSolvabilityDoorPower_NilGridNoPanic(t *testing.T) {
 	EnsureSolvabilityDoorPower(g) // must not panic
 }
 
-func TestEnsureSolvabilityDoorPower_StartRoomAlreadyPowered(t *testing.T) {
-	// Start room doors are already powered by InitRoomPower; should not be re-evaluated.
+func TestEnsureSolvabilityDoorPower_StartRoomNotAutoPowered(t *testing.T) {
 	g := state.NewGame()
 	grid, _ := makeSolvabilityGrid()
 	g.Grid = grid
 	InitRoomPower(g)
 
-	if !g.RoomDoorsPowered["Start"] {
-		t.Fatal("precondition: Start doors should be powered")
+	if g.RoomDoorsPowered["Start"] {
+		t.Fatal("precondition: Start should not be auto-powered by InitRoomPower")
 	}
 
 	EnsureSolvabilityDoorPower(g)
 
-	if !g.RoomDoorsPowered["Start"] {
-		t.Error("Start room doors should remain powered")
+	// Default solvability grid does not require pre-powering Start.
+	if g.RoomDoorsPowered["Start"] {
+		t.Error("Start room doors should only be powered when gatekeeper solvability requires it")
 	}
 }

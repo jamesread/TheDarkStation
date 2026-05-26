@@ -94,6 +94,13 @@ func SwitchToMaintPanTestMap(g *state.Game) {
 		data := gameworld.InitGameData(termCell)
 		data.MaintenanceTerm = entities.NewMaintenanceTerminal("PanTest Maint", RoomPanTestCenter)
 	}
+	genCell := grid.GetCell(11, 10)
+	if genCell != nil {
+		gen := entities.NewGenerator("PanTest Local Gen", 1)
+		gen.InsertBatteriesAndStart(1)
+		gd := gameworld.InitGameData(genCell)
+		gd.Generator = gen
+	}
 
 	// Player west of the terminal (Interact east).
 	start := grid.GetCell(11, 11)
@@ -125,8 +132,15 @@ func SwitchToMaintPanTestMap(g *state.Game) {
 	for i := 1; i <= 5; i++ {
 		gen := entities.NewGenerator(fmt.Sprintf("PanTest Bench Gen %d", i), 1)
 		gen.BatteriesInserted = gen.BatteriesRequired
+		gen.BringOnline()
 		g.AddGenerator(gen)
 	}
+	if genCell := grid.GetCell(11, 10); genCell != nil {
+		if gd := gameworld.GetGameData(genCell); gd.Generator != nil {
+			g.AddGenerator(gd.Generator)
+		}
+	}
+	setup.EnsureGeneratorRoomBootstrap(g)
 	g.UpdatePowerSupply()
 	g.PowerConsumption = g.CalculatePowerConsumption()
 

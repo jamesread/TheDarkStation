@@ -271,6 +271,7 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	screenWidth, screenHeight := screen.Bounds().Dx(), screen.Bounds().Dy()
 
 	maintOverlayStable := strings.Contains(title, "Maintenance Terminal") || title == "Select room"
+	devMenuRight := title == "Developer Menu"
 	skipMenuDropShadow := maintOverlayStable &&
 		maintCameraPanTweening(pg, e.cameraCenterRow, e.cameraCenterCol, e.cameraTargetRow, e.cameraTargetCol)
 	// Default true so callouts/main menu stay soft; maint/room picker uses crisp vector edges (less LCD shimmer).
@@ -315,13 +316,26 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		panelH = float64(int(math.Round(panelH)))
 	}
 
-	// Panel covers ~70% of screen width, height is dynamic based on content
-	panelW := int(float32(screenWidth) * 0.7)
+	// Panel width/position: maintenance menus are left-aligned at half the default width.
+	const defaultPanelWidthFrac = 0.7
+	const maintPanelWidthFrac = defaultPanelWidthFrac / 2
+	const menuSideMargin = 16
+
+	panelW := int(float32(screenWidth) * defaultPanelWidthFrac)
+	if maintOverlayStable {
+		panelW = int(float32(screenWidth) * maintPanelWidthFrac)
+	}
 	panelHInt := int(panelH)
 	if panelHInt < 1 {
 		panelHInt = 1
 	}
 	panelX := (screenWidth - panelW) / 2
+	switch {
+	case maintOverlayStable:
+		panelX = menuSideMargin
+	case devMenuRight:
+		panelX = screenWidth - panelW - menuSideMargin
+	}
 	panelY := (screenHeight - panelHInt) / 2
 
 	// Determine background transparency based on menu type

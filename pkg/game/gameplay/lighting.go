@@ -2,7 +2,10 @@
 package gameplay
 
 import (
+	"time"
+
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -14,14 +17,20 @@ func UpdateLightingExploration(g *state.Game) {
 		return
 	}
 
+	nowMs := time.Now().UnixMilli()
+	if len(g.Generators) > 0 {
+		setup.AdvancePowerPropagation(g, nowMs)
+	}
+
 	totalConsumption := g.CalculatePowerConsumption()
 	g.PowerConsumption = totalConsumption
 	g.UpdatePowerSupply()
+	setup.ApplyGridConductivePower(g)
 
-	if g.PowerConsumption > g.PowerSupply && !g.PowerOverloadWarned {
-		logMessage(g, "WARNING: Power consumption (%dw) exceeds supply (%dw)!", g.PowerConsumption, g.PowerSupply)
+	if setup.AnyArmedGridOverloaded(g) && !g.PowerOverloadWarned {
+		logMessage(g, "WARNING: Power consumption exceeds supply on a power grid!")
 		g.PowerOverloadWarned = true
-	} else if g.PowerConsumption <= g.PowerSupply {
+	} else if !setup.AnyArmedGridOverloaded(g) {
 		g.PowerOverloadWarned = false
 	}
 

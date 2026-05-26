@@ -9,6 +9,7 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/levelseed"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
@@ -112,7 +113,7 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 	fmt.Fprintln(f, "")
 	fmt.Fprintln(f, "--- Metadata ---")
 	fmt.Fprintf(f, "level: %d\n", g.Level)
-	fmt.Fprintf(f, "level_seed: %d\n", g.LevelSeed)
+	fmt.Fprintf(f, "level_seed: %s\n", levelseed.Format(g.LevelSeed))
 	fmt.Fprintf(f, "grid_rows: %d\n", rows)
 	fmt.Fprintf(f, "grid_cols: %d\n", cols)
 	fmt.Fprintf(f, "coordinate_system: row,col (0-based, row=vertical, col=horizontal)\n")
@@ -149,12 +150,14 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 	fmt.Fprintln(f, "")
 
 	// --- Solvability analysis ---
-	fmt.Fprintln(f, "--- Solvability analysis (initial state) ---")
+	fmt.Fprintln(f, "--- Solvability analysis ---")
 	report := setup.AnalyzeSolvability(g)
 	fmt.Fprintf(f, "initial_reachable_cells: %d\n", report.InitialReachableCells)
 	fmt.Fprintf(f, "initial_reachable_rooms: %q\n", report.InitialReachableRooms)
 	fmt.Fprintf(f, "start_room_doors_powered: %v\n", report.StartRoomDoorsPowered)
 	fmt.Fprintf(f, "start_maint_terminal_powered: %v\n", report.StartMaintPowered)
+	fmt.Fprintf(f, "powered_maint_terminals: %d\n", report.PoweredMaintTerminals)
+	fmt.Fprintf(f, "maint_bootstrap_ok: %v\n", report.MaintBootstrapOK)
 	fmt.Fprintf(f, "exit_reachable_at_init: %v\n", report.ExitReachableAtInit)
 	if len(report.BlockedEgressDoors) == 0 {
 		fmt.Fprintln(f, "blocked_egress_doors: (none — start pocket opens to all adjacent rooms)")
@@ -332,13 +335,14 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 	})
 	fmt.Fprintln(f, "")
 
-	// Maintenance Terminals (powered = only start room initially; accessible = reachable from start without locked doors)
+	// Maintenance Terminals
 	fmt.Fprintln(f, "Maintenance Terminals:")
 	startRoomName := ""
 	if startCell != nil && startCell.Name != "" {
 		startRoomName = startCell.Name
 	}
 	poweredCount := 0
+	conductiveRooms := setup.RoomsOnConductiveGeneratorGrid(g)
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil {
 			return
@@ -352,9 +356,11 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 			poweredCount++
 		}
 		inStartRoom := m.RoomName == startRoomName
-		fmt.Fprintf(f, "  row: %d col: %d name: %q room_name: %q used: %v powered: %v (in_start_room: %v)\n", row, col, m.Name, m.RoomName, m.Used, m.Powered, inStartRoom)
+		onPowerGrid := conductiveRooms[cell.Name]
+		fmt.Fprintf(f, "  row: %d col: %d name: %q room_name: %q used: %v powered: %v on_power_grid: %v (in_start_room: %v)\n",
+			row, col, m.Name, m.RoomName, m.Used, m.Powered, onPowerGrid, inStartRoom)
 	})
-	fmt.Fprintf(f, "  (accessible powered terminals: %d - only start room terminals are powered at init)\n", poweredCount)
+	fmt.Fprintf(f, "  (powered terminals: %d; maint_bootstrap_ok: %v)\n", poweredCount, setup.MaintBootstrapOK(g))
 	fmt.Fprintln(f, "")
 
 	// Furniture
@@ -439,7 +445,7 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 	}
 	fmt.Fprintln(f, "")
 
-	// Room power (doors, CCTV, lights per room)
+	// Room power (doors armed, CCTV, lights, propagated online per room)
 	fmt.Fprintln(f, "Room power state:")
 	var roomNames []string
 	for rn := range g.RoomDoorsPowered {
@@ -453,7 +459,9 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 		if _, ok := g.RoomLightsPowered[rn]; !ok {
 			lightsOn = true // default when not set
 		}
-		fmt.Fprintf(f, "  room: %q doors_powered: %v cctv_powered: %v lights_powered: %v\n", rn, doorsOn, cctvOn, lightsOn)
+		powerOnline := g.RoomPowerOnline != nil && g.RoomPowerOnline[rn]
+		fmt.Fprintf(f, "  room: %q doors_powered: %v power_online: %v cctv_powered: %v lights_powered: %v\n",
+			rn, doorsOn, powerOnline, cctvOn, lightsOn)
 	}
 	fmt.Fprintln(f, "")
 

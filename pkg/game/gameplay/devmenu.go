@@ -4,8 +4,10 @@ import (
 	"fmt"
 
 	"darkstation/pkg/game/devtools"
+	"darkstation/pkg/game/levelseed"
 	gamemenu "darkstation/pkg/game/menu"
 	"darkstation/pkg/game/renderer"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 )
 
@@ -19,6 +21,8 @@ const (
 	DevMenuActionToggleFOVRays
 	DevMenuActionToggleFPSDisplay
 	DevMenuActionTogglePlayerPosition
+	DevMenuActionTriggerOverload
+	DevMenuActionLoadSeed
 )
 
 // DevMenuItem is a selectable row in the developer menu.
@@ -46,6 +50,10 @@ func (d *DevMenuItem) GetHelpText() string {
 		return "Toggle draw.fps cvar (FPS counter in top-right corner)"
 	case DevMenuActionTogglePlayerPosition:
 		return "Toggle draw.player_pos cvar (player X/Y below FPS counter)"
+	case DevMenuActionTriggerOverload:
+		return "Force power overload in the current room (trips generators, shorts other loads)"
+	case DevMenuActionLoadSeed:
+		return "Regenerate the current deck from a hexadecimal seed (for map reproduction)"
 	default:
 		return ""
 	}
@@ -115,6 +123,41 @@ func (h *DevMenuHandler) OnActivate(item gamemenu.MenuItem, index int) (bool, st
 			return false, "Player position: ON"
 		}
 		return false, "Player position: OFF"
+	case DevMenuActionTriggerOverload:
+		if h.g.CurrentCell == nil || h.g.CurrentCell.Name == "" || h.g.CurrentCell.Name == "Corridor" {
+			return false, "Stand in a named room to trigger overload"
+		}
+		room := h.g.CurrentCell.Name
+		if setup.TriggerPowerOverloadForDev(h.g, room) {
+			UpdateLightingExploration(h.g)
+			msg := fmt.Sprintf("Power overload triggered (protected %s)", room)
+			renderer.ShowDeveloperMessage(msg)
+			return true, msg
+		}
+		UpdateLightingExploration(h.g)
+		return false, "No overload applied (consumption already within supply)"
+	case DevMenuActionLoadSeed:
+		initial := ""
+		if h.g.LevelSeed != 0 {
+			initial = levelseed.Format(h.g.LevelSeed)
+		}
+		seedText, ok := gamemenu.RunTextInputDialog(h.g, gamemenu.TextInputOptions{
+			Title:   "Load level seed",
+			Prompt:  fmt.Sprintf("Enter hex seed for deck %d", h.g.Level),
+			Initial: initial,
+			Hex:     true,
+		})
+		if !ok {
+			return false, "Seed entry cancelled"
+		}
+		seed, err := levelseed.Parse(seedText)
+		if err != nil {
+			return false, err.Error()
+		}
+		LoadLevelFromSeed(h.g, seed)
+		msg := fmt.Sprintf("Loaded seed %s on deck %d", levelseed.Format(seed), h.g.Level)
+		renderer.ShowDeveloperMessage(msg)
+		return true, msg
 	default:
 		return false, ""
 	}
@@ -154,6 +197,13 @@ func playerPositionMenuLabel() string {
 	return "Player position: OFF"
 }
 
+func levelSeedMenuLabel(g *state.Game) string {
+	if g != nil && g.LevelSeed != 0 {
+		return fmt.Sprintf("Load level seed (%s)", levelseed.Format(g.LevelSeed))
+	}
+	return "Load level seed"
+}
+
 func zoomMenuLabel() string {
 	tileSize := renderer.GetTileSize()
 	rows, cols := renderer.GetViewportSize()
@@ -170,6 +220,8 @@ func (h *DevMenuHandler) GetMenuItems() []gamemenu.MenuItem {
 		&DevMenuItem{Label: fovRaysMenuLabel(), Action: DevMenuActionToggleFOVRays, G: h.g},
 		&DevMenuItem{Label: fpsDisplayMenuLabel(), Action: DevMenuActionToggleFPSDisplay, G: h.g},
 		&DevMenuItem{Label: playerPositionMenuLabel(), Action: DevMenuActionTogglePlayerPosition, G: h.g},
+		&DevMenuItem{Label: levelSeedMenuLabel(h.g), Action: DevMenuActionLoadSeed, G: h.g},
+		&DevMenuItem{Label: "Trigger overload", Action: DevMenuActionTriggerOverload, G: h.g},
 		&gamemenu.CloseMenuItem{Label: "Close"},
 	}
 }

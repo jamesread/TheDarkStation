@@ -28,7 +28,7 @@ type ViewingRoomMenuItem struct {
 }
 
 func (v *ViewingRoomMenuItem) GetLabel() string {
-	label := fmt.Sprintf("Viewing:\tACTION{%s}", v.Parent.selectedRoomName)
+	label := fmt.Sprintf("Viewing:\tACTION{%s}", RoomLabelWithPowerDraw(v.Parent.g, v.Parent.selectedRoomName))
 	if v.Parent.canCycleRooms() {
 		return label + "\tSUBTLE{◀ A/D ▶}"
 	}
@@ -71,17 +71,24 @@ func (m *ModeToggleMenuItem) GetHelpText() string {
 	return "Press Enter or Tab to switch panel"
 }
 
-// RoomCircuitPresetMenuItem cycles and applies OFF / ESSENTIAL / FULL for the viewed room.
+// RoomCircuitPresetMenuItem cycles and applies OFF / ON for the viewed room.
 type RoomCircuitPresetMenuItem struct {
 	Parent *MaintenanceMenuHandler
 }
 
 func (r *RoomCircuitPresetMenuItem) GetLabel() string {
-	preset := CurrentCircuitPreset(r.Parent.g, r.Parent.selectedRoomName)
-	if r.IsSelectable() {
-		return fmt.Sprintf("Circuit preset:\tACTION{%s}\tSUBTLE{◀ A/D ▶}\t(Enter=cycle, 1/2/3=apply)", preset)
+	room := r.Parent.selectedRoomName
+	preset := CircuitPresetMarkup(CurrentCircuitPreset(r.Parent.g, room))
+	next := CurrentCircuitPreset(r.Parent.g, room).NextPreset()
+	impact := PreviewCircuitToggleImpact(r.Parent.g, room, next)
+	impactPart := ""
+	if impact != "" && impact != "No change to station load" {
+		impactPart = "\tSUBTLE{" + impact + "}"
 	}
-	return fmt.Sprintf("Circuit preset:\tACTION{%s}\t(1/2/3=apply)", preset)
+	if r.IsSelectable() {
+		return fmt.Sprintf("Power Grid:\t%s%s\tSUBTLE{◀ A/D ▶}\t(Enter=cycle, 1/2=apply)", preset, impactPart)
+	}
+	return fmt.Sprintf("Power Grid:\t%s%s\t(1/2=apply)", preset, impactPart)
 }
 
 func (r *RoomCircuitPresetMenuItem) IsSelectable() bool {
@@ -96,7 +103,7 @@ func (r *RoomCircuitPresetMenuItem) GetHelpText() string {
 		return "Activate this room's maintenance terminal first"
 	}
 	next := CurrentCircuitPreset(r.Parent.g, r.Parent.selectedRoomName).NextPreset()
-	return PreviewCircuitShed(r.Parent.g, r.Parent.selectedRoomName, next)
+	return PreviewCircuitToggleImpact(r.Parent.g, r.Parent.selectedRoomName, next)
 }
 
 func (r *RoomCircuitPresetMenuItem) CanCycle() bool {
@@ -116,34 +123,19 @@ func (r *RoomCircuitPresetMenuItem) HandleCycle(delta int) (bool, string) {
 	return true, r.Parent.applyCircuitPreset(preset)
 }
 
-// RestoreAllAdjacentMenuItem powers terminals in all adjacent rooms (legacy bulk restore).
-type RestoreAllAdjacentMenuItem struct {
+// RefreshPowerGridMenuItem re-applies generator-fed terminal power across the conductive grid.
+type RefreshPowerGridMenuItem struct {
 	Parent *MaintenanceMenuHandler
 }
 
-func (r *RestoreAllAdjacentMenuItem) GetLabel() string {
-	return "Restore routing mesh"
+func (r *RefreshPowerGridMenuItem) GetLabel() string {
+	return "Refresh power grid"
 }
 
-func (r *RestoreAllAdjacentMenuItem) IsSelectable() bool { return true }
+func (r *RefreshPowerGridMenuItem) IsSelectable() bool { return true }
 
-func (r *RestoreAllAdjacentMenuItem) GetHelpText() string {
-	return "Press Enter to restore terminals reachable via powered doors and closed relays"
-}
-
-// RestoreSelectedRoomMenuItem powers terminals only in the currently viewed room.
-type RestoreSelectedRoomMenuItem struct {
-	Parent *MaintenanceMenuHandler
-}
-
-func (r *RestoreSelectedRoomMenuItem) GetLabel() string {
-	return fmt.Sprintf("Restore terminals in:\t%s", r.Parent.selectedRoomName)
-}
-
-func (r *RestoreSelectedRoomMenuItem) IsSelectable() bool { return true }
-
-func (r *RestoreSelectedRoomMenuItem) GetHelpText() string {
-	return "Press Enter to restore power to unpowered terminals in the viewed room only"
+func (r *RefreshPowerGridMenuItem) GetHelpText() string {
+	return "Press Enter to re-apply terminal feed from powered generators via the conductive grid"
 }
 
 // AdvancedPowerMenuItem opens granular door/light/CCTV toggles (diagnostics).
@@ -169,7 +161,7 @@ type AdvancedPowerMenuHandler struct {
 }
 
 func (h *AdvancedPowerMenuHandler) GetTitle() string {
-	return fmt.Sprintf("Advanced power: %s", h.parent.selectedRoomName)
+	return fmt.Sprintf("Advanced power: %s", RoomLabelWithPowerDraw(h.parent.g, h.parent.selectedRoomName))
 }
 
 func (h *AdvancedPowerMenuHandler) GetInstructions(selected MenuItem) string {
@@ -194,7 +186,7 @@ func (h *AdvancedPowerMenuHandler) GetMenuItems() []MenuItem {
 	room := h.parent.selectedRoomName
 	g := h.parent.g
 	items := []MenuItem{
-		&InfoMenuItem{Label: fmt.Sprintf("Room: %s", room)},
+		&InfoMenuItem{Label: fmt.Sprintf("Room: %s", RoomLabelWithPowerDraw(g, room))},
 		&InfoMenuItem{Label: ""},
 	}
 	g.Grid.ForEachCell(func(row, col int, c *world.Cell) {
@@ -221,11 +213,19 @@ func (h *MaintenanceMenuHandler) initMaintenanceMenuState() {
 	h.mode = maintModeControls
 	h.g.MaintenanceMenuMode = maintModeControls
 	h.g.MaintenanceSelectableRooms = append([]string(nil), h.selectableRooms...)
+	h.g.MaintenanceMenuTerminalRow = -1
+	h.g.MaintenanceMenuTerminalCol = -1
+	if h.cell != nil {
+		h.g.MaintenanceMenuTerminalRow = h.cell.Row
+		h.g.MaintenanceMenuTerminalCol = h.cell.Col
+	}
 }
 
 func (h *MaintenanceMenuHandler) clearMaintenanceMenuState() {
 	h.g.MaintenanceMenuMode = ""
 	h.g.MaintenanceSelectableRooms = nil
+	h.g.MaintenanceMenuTerminalRow = -1
+	h.g.MaintenanceMenuTerminalCol = -1
 }
 
 func (h *MaintenanceMenuHandler) toggleMode() {
@@ -264,7 +264,7 @@ func (h *MaintenanceMenuHandler) cycleRoomMessage(delta int) (string, bool) {
 		return "", false
 	}
 	h.cycleRoom(delta)
-	return fmt.Sprintf("Viewing: %s", h.selectedRoomName), true
+	return fmt.Sprintf("Viewing: %s", RoomLabelWithPowerDraw(h.g, h.selectedRoomName)), true
 }
 
 func (h *MaintenanceMenuHandler) applyCircuitPreset(preset CircuitPreset) string {
@@ -277,28 +277,12 @@ func (h *MaintenanceMenuHandler) applyCircuitPreset(preset CircuitPreset) string
 	return ApplyCircuitPreset(h.g, h.selectedRoomName, preset)
 }
 
-func (h *MaintenanceMenuHandler) restoreAllAdjacent() string {
-	rooms := setup.RoomsReachableInPowerMesh(h.g, h.cell)
-	if len(rooms) == 0 {
-		rooms = []string{h.terminalRoomName}
+func (h *MaintenanceMenuHandler) refreshPowerGrid() string {
+	n := setup.ApplyGridConductivePower(h.g)
+	if n > 0 {
+		return fmt.Sprintf("Refreshed power to %d terminal(s) via power grid", n)
 	}
-	roomSet := make(map[string]bool)
-	for _, r := range rooms {
-		roomSet[r] = true
-	}
-	_, msg := setup.RestoreTerminalsInRooms(h.g, roomSet)
-	return msg
-}
-
-func (h *MaintenanceMenuHandler) restoreSelectedRoom() string {
-	reachable := setup.RoomsReachableInPowerMesh(h.g, h.cell)
-	for _, r := range reachable {
-		if r == h.selectedRoomName {
-			_, msg := setup.RestoreTerminalsInRooms(h.g, map[string]bool{h.selectedRoomName: true})
-			return msg
-		}
-	}
-	return "Selected room not on routing mesh — power doors and close relays first"
+	return "No unpowered terminals on power grid"
 }
 
 func (h *MaintenanceMenuHandler) pingNearbyInline() string {
@@ -336,7 +320,7 @@ func (h *MaintenanceMenuHandler) pingNearbyInline() string {
 	return fmt.Sprintf("Ping: discovered %d — %s", len(names), strings.Join(names, "; "))
 }
 
-// HandleMaintenanceIntent handles Tab mode toggle and 1/2/3 circuit preset shortcuts.
+// HandleMaintenanceIntent handles Tab mode toggle and 1/2 power grid shortcuts.
 func (h *MaintenanceMenuHandler) HandleMaintenanceIntent(intent engineinput.Intent) (bool, string) {
 	switch intent.Action {
 	case engineinput.ActionMaintModeToggle:
@@ -347,8 +331,6 @@ func (h *MaintenanceMenuHandler) HandleMaintenanceIntent(intent engineinput.Inte
 		return true, "Controls panel — Tab for diagnostics"
 	case engineinput.ActionCircuitOff:
 		return true, h.applyCircuitPreset(CircuitOff)
-	case engineinput.ActionCircuitEssential:
-		return true, h.applyCircuitPreset(CircuitEssential)
 	case engineinput.ActionCircuitFull:
 		return true, h.applyCircuitPreset(CircuitFull)
 	default:
@@ -359,19 +341,18 @@ func (h *MaintenanceMenuHandler) HandleMaintenanceIntent(intent engineinput.Inte
 func (h *MaintenanceMenuHandler) getControlsMenuItems() []MenuItem {
 	flavourLine := deck.TerminalFlavourText(h.g.CurrentDeckID)
 	_, roomConsumption, _, _ := buildRoomDevices(h.g, h.selectedRoomName, h.maintenanceTerm)
+	gridSupply, gridUsed, gridFree := setup.GridPowerSummary(h.g, h.cell)
 
 	items := []MenuItem{
 		&InfoMenuItem{Label: "SUBTLE{" + flavourLine + "}"},
 		&ViewingRoomMenuItem{Parent: h},
 		&InfoMenuItem{Label: ""},
-		&InfoMenuItem{Label: fmt.Sprintf("Supply:\t%s", renderer.FormatPowerWatts(h.g.PowerSupply, false))},
-		&InfoMenuItem{Label: fmt.Sprintf("Used:\t%s", renderer.FormatPowerWatts(h.g.PowerConsumption, false))},
-		&InfoMenuItem{Label: fmt.Sprintf("Free:\t%s", renderer.FormatPowerWatts(h.g.GetAvailablePower(), false))},
-		&InfoMenuItem{Label: fmt.Sprintf("Room load:\t%s", renderer.FormatPowerWatts(roomConsumption, false))},
+		&InfoMenuItem{Label: fmt.Sprintf("Supply:\t%s", renderer.FormatPowerWatts(gridSupply, false))},
+		&InfoMenuItem{Label: fmt.Sprintf("Used:\t%s", renderer.FormatPowerWatts(gridUsed, false))},
+		&InfoMenuItem{Label: fmt.Sprintf("Free:\t%s", renderer.FormatPowerWatts(gridFree, false))},
+		&InfoMenuItem{Label: fmt.Sprintf("Room load:\t%s", renderer.FormatPowerLoad(roomConsumption, setup.RoomConsideredPowered(h.g, h.selectedRoomName), false))},
 		&InfoMenuItem{Label: ""},
 		&RoomCircuitPresetMenuItem{Parent: h},
-		&RestoreAllAdjacentMenuItem{Parent: h},
-		&RestoreSelectedRoomMenuItem{Parent: h},
 		&PingTerminalsMenuItem{},
 		&ModeToggleMenuItem{Parent: h},
 		&InfoMenuItem{Label: ""},
@@ -407,8 +388,9 @@ func (h *MaintenanceMenuHandler) getDiagnosticsMenuItems() []MenuItem {
 		}
 	}
 	items = append(items,
-		&InfoMenuItem{Label: fmt.Sprintf("Consumption:\t%s", renderer.FormatPowerWatts(roomConsumption, false))},
+		&InfoMenuItem{Label: fmt.Sprintf("Consumption:\t%s", renderer.FormatPowerLoad(roomConsumption, setup.RoomConsideredPowered(h.g, h.selectedRoomName), false))},
 		&InfoMenuItem{Label: ""},
+		&RefreshPowerGridMenuItem{Parent: h},
 		&AdvancedPowerMenuItem{Parent: h},
 		&ModeToggleMenuItem{Parent: h},
 		&InfoMenuItem{Label: ""},

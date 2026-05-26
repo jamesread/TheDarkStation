@@ -1,4 +1,4 @@
-// Package setup tests level setup: InitRoomPower (start room doors powered at init), etc.
+// Package setup tests level setup: InitRoomPower defaults, etc.
 package setup
 
 import (
@@ -16,7 +16,7 @@ func TestInitRoomPower_NilGridNoPanic(t *testing.T) {
 	InitRoomPower(g) // must not panic
 }
 
-func TestInitRoomPower_StartRoomDoorsPowered(t *testing.T) {
+func TestInitRoomPower_StartRoomDoorsUnpowered(t *testing.T) {
 	g := state.NewGame()
 	grid := world.NewGrid(2, 2)
 	grid.MarkAsRoomWithName(0, 0, "StartRoom", "ROOM_START")
@@ -25,8 +25,8 @@ func TestInitRoomPower_StartRoomDoorsPowered(t *testing.T) {
 
 	InitRoomPower(g)
 
-	if !g.RoomDoorsPowered["StartRoom"] {
-		t.Error("InitRoomPower: RoomDoorsPowered[StartRoom] = false, want true (start room doors powered at init)")
+	if g.RoomDoorsPowered["StartRoom"] {
+		t.Error("InitRoomPower: RoomDoorsPowered[StartRoom] = true, want false (no start-room exception)")
 	}
 }
 
@@ -45,11 +45,10 @@ func TestInitRoomPower_MultiRoomDefaults(t *testing.T) {
 
 	InitRoomPower(g)
 
-	// Start room (Bridge) doors powered
-	if !g.RoomDoorsPowered["Bridge"] {
-		t.Error("start room Bridge: RoomDoorsPowered should be true")
+	// All rooms start with routing unpowered
+	if g.RoomDoorsPowered["Bridge"] {
+		t.Error("Bridge: RoomDoorsPowered should be false at init")
 	}
-	// Other rooms unpowered
 	if g.RoomDoorsPowered["Lab"] {
 		t.Error("Lab: RoomDoorsPowered should be false")
 	}
@@ -85,8 +84,8 @@ func TestInitRoomPower_DifferentRoomNames(t *testing.T) {
 
 	InitRoomPower(g)
 
-	if !g.RoomDoorsPowered["Beta"] {
-		t.Error("start room Beta: doors should be powered")
+	if g.RoomDoorsPowered["Beta"] {
+		t.Error("start room Beta: doors should be unpowered at init")
 	}
 	if g.RoomDoorsPowered["Alpha"] {
 		t.Error("Alpha: doors should NOT be powered")
@@ -123,8 +122,8 @@ func TestInitRoomPower_Idempotent(t *testing.T) {
 	InitRoomPower(g)
 	InitRoomPower(g)
 
-	if !g.RoomDoorsPowered["Start"] {
-		t.Error("after double init: Start doors should be powered")
+	if g.RoomDoorsPowered["Start"] {
+		t.Error("after double init: Start doors should stay unpowered")
 	}
 	if g.RoomDoorsPowered["Other"] {
 		t.Error("after double init: Other doors should NOT be powered")
@@ -162,11 +161,11 @@ func TestInitMaintenanceTerminalPower_StartRoomPowered(t *testing.T) {
 
 	InitMaintenanceTerminalPower(g)
 
-	if !startTerm.Powered {
-		t.Error("start room terminal should be powered after InitMaintenanceTerminalPower")
+	if startTerm.Powered {
+		t.Error("start room terminal should be unpowered after InitMaintenanceTerminalPower")
 	}
 	if otherTerm.Powered {
-		t.Error("non-start room terminal should NOT be powered after InitMaintenanceTerminalPower")
+		t.Error("non-start room terminal should be unpowered after InitMaintenanceTerminalPower")
 	}
 }
 
@@ -205,11 +204,11 @@ func TestInitMaintenanceTerminalPower_MultipleTerminalsInStartRoom(t *testing.T)
 
 	InitMaintenanceTerminalPower(g)
 
-	if !term1.Powered || !term2.Powered {
-		t.Error("all start room terminals should be powered")
+	if term1.Powered || term2.Powered {
+		t.Error("terminals should be unpowered after InitMaintenanceTerminalPower")
 	}
 	if termOther.Powered {
-		t.Error("Other room terminal should NOT be powered")
+		t.Error("Other room terminal should be unpowered")
 	}
 }
 
@@ -238,11 +237,8 @@ func TestInitMaintenanceTerminalPower_Idempotent(t *testing.T) {
 	InitMaintenanceTerminalPower(g)
 	InitMaintenanceTerminalPower(g)
 
-	if !startTerm.Powered {
-		t.Error("after double init: start room terminal should be powered")
-	}
-	if otherTerm.Powered {
-		t.Error("after double init: other room terminal should NOT be powered")
+	if startTerm.Powered || otherTerm.Powered {
+		t.Error("after double init: all terminals should remain unpowered")
 	}
 }
 

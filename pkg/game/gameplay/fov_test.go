@@ -5,6 +5,7 @@ import (
 
 	engworld "darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -50,7 +51,12 @@ func TestUnpoweredDoorSightBlocker_poweredDoorAllowsSight(t *testing.T) {
 	gameworld.GetGameData(grid.GetCell(5, 5)).Door = &entities.Door{RoomName: "Beyond", Locked: false}
 
 	g := state.NewGame()
+	g.Grid = grid
 	g.RoomDoorsPowered = map[string]bool{"Beyond": true}
+	gen := entities.NewGenerator("G", 1)
+	gen.InsertBatteriesAndStart(1)
+	gameworld.GetGameData(grid.GetCell(5, 7)).Generator = gen
+	setup.PropagateRoomPowerOnlineFromGenerators(g)
 
 	center := grid.GetCell(5, 3)
 	center.Room = true

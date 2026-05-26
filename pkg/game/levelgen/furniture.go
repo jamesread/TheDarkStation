@@ -2,7 +2,7 @@
 package levelgen
 
 import (
-	"math/rand"
+	"darkstation/pkg/game/levelrand"
 
 	"github.com/zyedidia/generic/mapset"
 
@@ -26,7 +26,8 @@ func PlaceFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 	})
 
 	// For each unique room, try to place 1-2 furniture pieces
-	for roomName, cells := range roomCells {
+	for _, roomName := range SortedRoomMapKeys(roomCells) {
+		cells := roomCells[roomName]
 		templates := entities.GetAllFurnitureForRoom(roomName)
 		if len(templates) == 0 {
 			templates = entities.FurnitureFallbackForFunctionalLayer(deck.FunctionalType(g.Level))
@@ -36,7 +37,7 @@ func PlaceFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		}
 
 		// Shuffle templates for variety
-		rand.Shuffle(len(templates), func(i, j int) {
+		levelrand.Shuffle(len(templates), func(i, j int) {
 			templates[i], templates[j] = templates[j], templates[i]
 		})
 
@@ -79,7 +80,7 @@ func PlaceFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		}
 
 		// Shuffle valid cells
-		rand.Shuffle(len(validCells), func(i, j int) {
+		levelrand.Shuffle(len(validCells), func(i, j int) {
 			validCells[i], validCells[j] = validCells[j], validCells[i]
 		})
 
@@ -132,7 +133,7 @@ func hideItemsInFurniture(g *state.Game, roomCells []*world.Cell, furniture []*e
 			// Only hide keycards and patch kits - items that are part of puzzles
 			if ContainsSubstring(item.Name, "Keycard") || item.Name == "Patch Kit" {
 				// 50% chance to hide in furniture
-				if rand.Intn(100) < 50 {
+				if levelrand.Intn(100) < 50 {
 					itemsToMove = append(itemsToMove, item)
 				}
 			}

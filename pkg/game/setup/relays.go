@@ -1,12 +1,12 @@
 package setup
 
 import (
-	"math/rand"
 	"sort"
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/levelrand"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -49,7 +49,7 @@ func ApplyPowerRelays(g *state.Game) {
 	})
 
 	seed := plaqueSeed(g) ^ 0x50a7e631
-	rng := rand.New(rand.NewSource(seed))
+	rng := levelrand.NewDerived(seed, 0x0e1a7001)
 	rng.Shuffle(len(junctions), func(i, j int) {
 		junctions[i], junctions[j] = junctions[j], junctions[i]
 	})

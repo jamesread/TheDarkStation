@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/state"
@@ -39,8 +40,11 @@ func TestCheckAdjacentGenerators_InsertsBatteries(t *testing.T) {
 	if gen.BatteriesInserted != 2 {
 		t.Errorf("BatteriesInserted = %d, want 2", gen.BatteriesInserted)
 	}
-	if !gen.IsPowered() {
-		t.Error("generator should be powered after inserting enough batteries")
+	if gen.IsPowered() {
+		t.Error("generator should await startup after inserting batteries")
+	}
+	if !GeneratorNeedsLongUsePowerUp(gen) {
+		t.Error("generator should need hold-to-use startup")
 	}
 	if g.Batteries != 3 {
 		t.Errorf("remaining batteries = %d, want 3", g.Batteries)
@@ -61,8 +65,13 @@ func TestCheckAdjacentGenerators_UpdatesPowerSupply(t *testing.T) {
 
 	CheckAdjacentGenerators(g)
 
+	if g.PowerSupply != 0 {
+		t.Errorf("PowerSupply after inserting batteries (pre-startup) = %d, want 0", g.PowerSupply)
+	}
+	gen.BringOnline()
+	g.UpdatePowerSupply()
 	if g.PowerSupply != 100 {
-		t.Errorf("PowerSupply after powering generator = %d, want 100", g.PowerSupply)
+		t.Errorf("PowerSupply after startup = %d, want 100", g.PowerSupply)
 	}
 }
 
@@ -104,6 +113,7 @@ func TestCheckAdjacentGenerators_AlreadyPowered(t *testing.T) {
 	g := makeTestGame(2, 2)
 	gen := entities.NewGenerator("G1", 1)
 	gen.InsertBatteries(1)
+	gen.BringOnline()
 	gameworld.GetGameData(g.Grid.GetCell(0, 1)).Generator = gen
 	g.AddGenerator(gen)
 	g.Batteries = 3
@@ -119,6 +129,7 @@ func TestCheckAdjacentGeneratorAtCell_Powered(t *testing.T) {
 	g := makeTestGame(2, 2)
 	gen := entities.NewGenerator("G1", 1)
 	gen.InsertBatteries(1)
+	gen.BringOnline()
 	cell := g.Grid.GetCell(0, 1)
 	gameworld.GetGameData(cell).Generator = gen
 	g.AddGenerator(gen)
@@ -140,6 +151,41 @@ func TestCheckAdjacentGeneratorAtCell_Unpowered(t *testing.T) {
 	got := CheckAdjacentGeneratorAtCell(g, cell)
 	if !got {
 		t.Error("CheckAdjacentGeneratorAtCell returned false for cell with unpowered generator")
+	}
+}
+
+func TestCheckAdjacentGeneratorAtCell_trippedWithBatteries(t *testing.T) {
+	g := makeTestGame(2, 2)
+	gen := entities.NewGenerator("G1", 1)
+	gen.InsertBatteries(1)
+	gen.Trip()
+	cell := g.Grid.GetCell(0, 1)
+	gameworld.GetGameData(cell).Generator = gen
+	g.AddGenerator(gen)
+
+	if !GeneratorNeedsLongUsePowerUp(gen) {
+		t.Fatal("tripped fueled generator should need hold-to-start")
+	}
+	if !CheckAdjacentGeneratorAtCell(g, cell) {
+		t.Fatal("tripped fueled generator should be interactable")
+	}
+}
+
+func TestProcessIntent_interactTrippedGeneratorStartsLongUse(t *testing.T) {
+	g, genCell := makeLongUseTestGame()
+	gen := gameworld.GetGameData(genCell).Generator
+	if !gen.Tripped {
+		t.Fatal("test setup: generator should be tripped")
+	}
+
+	ProcessIntent(g, engineinput.Intent{Action: engineinput.ActionInteract})
+
+	if !IsLongUseActive(g) {
+		t.Fatal("interact on tripped fueled generator should start long-use session")
+	}
+	if g.LongUse.TargetRow != genCell.Row || g.LongUse.TargetCol != genCell.Col {
+		t.Fatalf("long-use target = (%d,%d), want (%d,%d)",
+			g.LongUse.TargetRow, g.LongUse.TargetCol, genCell.Row, genCell.Col)
 	}
 }
 
@@ -245,14 +291,19 @@ func TestIntegration_BatteryPickupAndGeneratorPower(t *testing.T) {
 		t.Fatalf("step 3: batteries = %d, want 1", g.Batteries)
 	}
 
-	// Step 4: Move back to (0,0), insert final battery
+	// Step 4: Move back to (0,0), insert final battery — still awaits startup
 	g.CurrentCell = g.Grid.GetCell(0, 0)
 	CheckAdjacentGenerators(g)
-	if !gen.IsPowered() {
-		t.Fatal("step 4: generator should be powered")
+	if gen.IsPowered() {
+		t.Fatal("step 4: generator should await startup after final battery")
 	}
+	if !GeneratorNeedsLongUsePowerUp(gen) {
+		t.Fatal("step 4: generator should need hold-to-use startup")
+	}
+	gen.BringOnline()
+	g.UpdatePowerSupply()
 	if g.PowerSupply != 100 {
-		t.Errorf("step 4: PowerSupply = %d, want 100", g.PowerSupply)
+		t.Errorf("step 4: PowerSupply after startup = %d, want 100", g.PowerSupply)
 	}
 	if g.Batteries != 0 {
 		t.Errorf("step 4: remaining batteries = %d, want 0", g.Batteries)
@@ -416,6 +467,12 @@ func TestCheckAdjacentMaintenanceTerminalAtCell_PoweredOpensMenu(t *testing.T) {
 	maintTerm := entities.NewMaintenanceTerminal("MT-1", "Room")
 	maintTerm.Powered = true
 	gameworld.GetGameData(termCell).MaintenanceTerm = maintTerm
+	gen := entities.NewGenerator("G", 1)
+	gen.InsertBatteries(1)
+	gen.BringOnline()
+	gameworld.GetGameData(g.Grid.GetCell(0, 0)).Generator = gen
+	g.AddGenerator(gen)
+	g.RoomDoorsPowered["Room"] = true
 
 	originalRun := runMaintenanceMenu
 	defer func() { runMaintenanceMenu = originalRun }()

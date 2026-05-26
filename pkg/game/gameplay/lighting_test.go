@@ -27,6 +27,7 @@ func TestUpdateLightingExploration_PassiveOverloadSetsPowerOverloadWarned(t *tes
 	g.CurrentCell = grid.GetCell(0, 0)
 	g.RoomDoorsPowered = map[string]bool{"R": true}
 	g.RoomCCTVPowered = map[string]bool{"R": false}
+	g.RoomPowerOnline = map[string]bool{"R": true}
 	g.PowerOverloadWarned = false
 
 	UpdateLightingExploration(g)
@@ -83,7 +84,7 @@ func makeLightingGrid() (*world.Grid, *state.Game) {
 	g.RoomCCTVPowered = map[string]bool{"R": false}
 	g.RoomLightsPowered = map[string]bool{"R": true}
 	gen := entities.NewGenerator("G1", 1)
-	gen.InsertBatteries(1)
+	gen.InsertBatteriesAndStart(1)
 	g.AddGenerator(gen)
 	return grid, g
 }

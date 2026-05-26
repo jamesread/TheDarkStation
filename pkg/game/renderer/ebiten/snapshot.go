@@ -11,6 +11,8 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/features"
+	gamemenu "darkstation/pkg/game/menu"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -184,6 +186,29 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 	e.snapshot.callouts = make([]Callout, len(activeCallouts))
 	copy(e.snapshot.callouts, activeCallouts)
 	e.calloutsMutex.Unlock()
+
+	if g.LongUse != nil {
+		e.snapshot.longUseActive = true
+		e.snapshot.longUseTargetRow = g.LongUse.TargetRow
+		e.snapshot.longUseTargetCol = g.LongUse.TargetCol
+		if g.LongUse.DurationMs > 0 {
+			p := float64(g.LongUse.AccumulatedMs) / float64(g.LongUse.DurationMs)
+			if p > 1 {
+				p = 1
+			}
+			if p < 0 {
+				p = 0
+			}
+			e.snapshot.longUseProgress = p
+		}
+	} else {
+		e.snapshot.longUseActive = false
+		e.snapshot.longUseProgress = 0
+		e.snapshot.longUseTargetRow = 0
+		e.snapshot.longUseTargetCol = 0
+	}
+
+	capturePowerGridSnapshot(g, &e.snapshot)
 }
 
 // computeRoomLabels finds the leftmost valid position for each visited room's label,
@@ -299,11 +324,18 @@ func (e *EbitenRenderer) computeRoomLabels(g *state.Game) []roomLabel {
 	}
 
 	labels := make([]roomLabel, 0, len(leftmostByRoom))
+	maintLabels := g.MaintenanceMenuRoom != "" || g.MaintenanceMenuMode != ""
+	fedRooms := setup.RoomsFedByPoweredGeneratorGrid(g)
 	for roomName, pos := range leftmostByRoom {
+		labelText := roomName
+		if maintLabels {
+			labelText = gamemenu.RoomLabelWithPowerDraw(g, roomName)
+		}
 		// Use the leftmost column as both start and end (single cell position)
 		// The drawing code will position the label starting from this point
 		labels = append(labels, roomLabel{
-			RoomName: roomName,
+			RoomName: labelText,
+			Powered:  setup.RoomPoweredOnPowerGrid(g, roomName, fedRooms),
 			Row:      pos.row,
 			StartCol: pos.col,
 			EndCol:   pos.col, // Single cell position

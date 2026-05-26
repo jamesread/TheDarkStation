@@ -14,6 +14,7 @@ import (
 	"github.com/leonelquinteros/gotext"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -120,6 +121,9 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	if genericMenuActive {
 		e.drawGenericMenuOverlay(screen)
 	}
+
+	// Text input dialog (centered modal; e.g. load level seed)
+	e.drawTextInputDialog(screen)
 
 	// Draw console overlay
 	e.drawConsole(screen)
@@ -318,9 +322,10 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 	// Draw tiles to offscreen buffer at integer coordinates - eliminates per-tile
 	// sub-pixel jitter. The single blit with fractional offset is smooth.
 	e.mapBuffer.Fill(colorBackground)
+	pg := &snap.powerGrid
 	for vRow := 0; vRow < e.viewportRows; vRow++ {
 		for vCol := 0; vCol < e.viewportCols; vCol++ {
-			e.drawTileToBuffer(e.mapBuffer, startRow, startCol, vRow, vCol, g, snap)
+			e.drawTileToBuffer(e.mapBuffer, startRow, startCol, vRow, vCol, g, snap, pg)
 		}
 	}
 
@@ -330,6 +335,7 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 	screen.DrawImage(e.mapBuffer, op)
 
 	e.drawFOVRays(screen, g, mapScrX, mapScrY, startRow, startCol)
+	e.drawPowerGridOverlay(screen, g, pg, mapScrX, mapScrY, startRow, startCol)
 
 	// Draw overlays using the same screen origin so labels/callouts match the quantized blit.
 	mapXF := mapScrX
@@ -337,13 +343,14 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 	e.drawRoomLabels(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawEnvironmentalPlaques(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawCallouts(screen, snap, mapXF, mapYF, startRow, startCol)
+	e.drawLongUseProgress(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawPlayerWithDebounce(screen, g, snap, mapXF, mapYF, startRow, startCol)
 	e.drawExitAnimation(screen, snap, mapXF, mapYF, startRow, startCol)
 }
 
 // drawTileToBuffer draws a single tile to the map buffer at integer coordinates.
 // Used for jitter-free camera transitions - all tiles at exact pixel positions.
-func (e *EbitenRenderer) drawTileToBuffer(buf *ebiten.Image, startRow, startCol, vRow, vCol int, g *state.Game, snap *renderSnapshot) {
+func (e *EbitenRenderer) drawTileToBuffer(buf *ebiten.Image, startRow, startCol, vRow, vCol int, g *state.Game, snap *renderSnapshot, pg *powerGridSnapshot) {
 	mapRow := startRow + vRow
 	mapCol := startCol + vCol
 
@@ -357,17 +364,17 @@ func (e *EbitenRenderer) drawTileToBuffer(buf *ebiten.Image, startRow, startCol,
 	if cell != nil && cell.Row == snap.playerRow && cell.Col == snap.playerCol {
 		// Draw floor under the player (player drawn separately as overlay)
 		underfootOptions := e.getCellRenderOptions(g, cell, snap, true)
-		customBg := e.getTileCustomBg(g, cell, snap, &underfootOptions)
+		customBg := e.getTileCustomBg(g, cell, snap, &underfootOptions, pg)
 		e.drawTileWithBg(buf, " ", x, y, colorBackground, underfootOptions.HasBackground, customBg)
 		return
 	}
 
-	customBg := e.getTileCustomBg(g, cell, snap, &cellRenderOptions)
+	customBg := e.getTileCustomBg(g, cell, snap, &cellRenderOptions, pg)
 	e.drawTileWithBg(buf, cellRenderOptions.Icon, x, y, cellRenderOptions.Color, cellRenderOptions.HasBackground, customBg)
 }
 
 // getTileCustomBg returns the background color for a cell (focus, hazard, floor, exit, etc.).
-func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *renderSnapshot, opts *CellRenderOptions) color.Color {
+func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *renderSnapshot, opts *CellRenderOptions, pg *powerGridSnapshot) color.Color {
 	var customBg color.Color
 	isFocused := cell != nil && cell.Row == snap.focusedCellRow && cell.Col == snap.focusedCellCol
 	isInteractable := false
@@ -390,8 +397,12 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 			customBg = colorHazardBackground
 		} else if (g.HasMap || cell.Discovered) && gameworld.HasDoor(cell) {
 			roomName := gameworld.GetGameData(cell).Door.RoomName
-			if !g.RoomDoorsPowered[roomName] {
-				customBg = colorHazardBackground
+			if !setup.CellHasLivePower(g, cell) {
+				if setup.RoomManualEgressReleased(g, roomName) {
+					customBg = focusPlateForForeground(colorDoorLocked)
+				} else {
+					customBg = colorHazardBackground
+				}
 			}
 		} else if (g.HasMap || cell.Discovered) && gameworld.HasMaintenanceTerminal(cell) {
 			data := gameworld.GetGameData(cell)
@@ -411,9 +422,18 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 			hasAdjacentRoomNamed(cell, g.MaintenanceMenuRoom) {
 			customBg = colorWallHighlight
 		}
-		if customBg == nil && opts != nil && opts.Icon == IconWall {
-			if adjBg := maintSelectableRoomWallBg(g, cell); adjBg != nil {
-				customBg = adjBg
+		if customBg == nil && powerGridOverlayActiveFromSnap(pg) {
+			if floorBg := powerGridRoomFloorBg(g, pg, cell, opts); floorBg != nil {
+				customBg = floorBg
+			} else if opts != nil && opts.Icon == IconWall {
+				if wallBg := powerGridWallBg(g, pg, cell); wallBg != nil {
+					customBg = wallBg
+				}
+			}
+		}
+		if customBg == nil {
+			if gridBg := powerGridCellBg(g, pg, cell); gridBg != nil {
+				customBg = gridBg
 			}
 		}
 		if customBg == nil && opts != nil && opts.BackgroundColor != nil {
@@ -845,8 +865,15 @@ func (e *EbitenRenderer) drawRoomLabels(screen *ebiten.Image, snap *renderSnapsh
 		cellX := mapX + float64(vCol*e.tileSize)
 		cellY := mapY + float64(vRow*e.tileSize)
 
-		// Measure text
-		textWidth := e.getTextWidth(rl.RoomName)
+		var labelMarkup string
+		borderColor := colorHazard
+		if rl.Powered {
+			labelMarkup = fmt.Sprintf("POWERED{%s}", rl.RoomName)
+			borderColor = colorGeneratorOn
+		} else {
+			labelMarkup = fmt.Sprintf("UNPOWERED{%s}", rl.RoomName)
+		}
+		textWidth := e.getMarkupWidth(labelMarkup)
 
 		// Draw background box for readability
 		paddingX := 6
@@ -859,9 +886,7 @@ func (e *EbitenRenderer) drawRoomLabels(screen *ebiten.Image, snap *renderSnapsh
 		boxX := cellX + 2 // Small offset from left edge of cell
 		boxY := cellY - float64(boxH) - 4 - float64(boxH)/2
 
-		// Higher contrast colors for room labels (border matches title color)
 		bgColor := color.RGBA{15, 20, 40, 235}
-		borderColor := colorAction
 
 		const labelCornerRadius = 4
 		const labelBorderWidth = 1
@@ -872,8 +897,7 @@ func (e *EbitenRenderer) drawRoomLabels(screen *ebiten.Image, snap *renderSnapsh
 		textX := int(boxX) + paddingX
 		textY := int(boxY) + paddingY - int(fontSize)
 
-		// Use LOCATION{} markup for room labels (soft blue-gray, distinct from SUBTLE)
-		segments := e.parseMarkup(fmt.Sprintf("LOCATION{%s}", rl.RoomName))
+		segments := e.parseMarkup(labelMarkup)
 		// Draw bold-ish by rendering twice with slight offset
 		e.drawColoredTextSegments(screen, segments, textX, textY)
 		e.drawColoredTextSegments(screen, segments, textX+1, textY)
@@ -1211,4 +1235,36 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 		genText += strings.Join(genParts, ", ")
 		e.drawColoredTextSegments(screen, e.parseMarkup(genText), x, currentY)
 	}
+}
+
+// drawLongUseProgress renders a hold-to-use progress bar over the target cell.
+func (e *EbitenRenderer) drawLongUseProgress(screen *ebiten.Image, snap *renderSnapshot, mapScrX, mapScrY float64, startRow, startCol int) {
+	if !snap.longUseActive {
+		return
+	}
+	vRow := snap.longUseTargetRow - startRow
+	vCol := snap.longUseTargetCol - startCol
+	if vRow < 0 || vCol < 0 || vRow >= e.viewportRows || vCol >= e.viewportCols {
+		return
+	}
+	x := int(mapScrX) + vCol*e.tileSize
+	y := int(mapScrY) + vRow*e.tileSize
+	margin := 3
+	barW := e.tileSize - margin*2
+	barH := e.tileSize / 6
+	if barH < 4 {
+		barH = 4
+	}
+	barY := y + e.tileSize - barH - margin
+
+	bg := color.RGBA{30, 30, 40, 200}
+	fill := color.RGBA{0, 220, 120, 255}
+	border := color.RGBA{180, 180, 200, 255}
+
+	vector.FillRect(screen, float32(x+margin), float32(barY), float32(barW), float32(barH), bg, false)
+	fillW := int(float32(barW) * float32(snap.longUseProgress))
+	if fillW > 0 {
+		vector.FillRect(screen, float32(x+margin), float32(barY), float32(fillW), float32(barH), fill, false)
+	}
+	vector.StrokeRect(screen, float32(x+margin), float32(barY), float32(barW), float32(barH), 1, border, false)
 }

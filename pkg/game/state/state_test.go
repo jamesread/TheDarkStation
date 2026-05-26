@@ -3,6 +3,8 @@ package state
 import (
 	"testing"
 
+	"github.com/zyedidia/generic/mapset"
+
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
 	gameworld "darkstation/pkg/game/world"
@@ -83,10 +85,15 @@ func TestAllGeneratorsPowered(t *testing.T) {
 
 	gen1.InsertBatteries(1)
 	if g.AllGeneratorsPowered() {
+		t.Error("AllGeneratorsPowered() = true with 1 fueled but offline, want false")
+	}
+	gen1.BringOnline()
+	if g.AllGeneratorsPowered() {
 		t.Error("AllGeneratorsPowered() = true with 1 unpowered, want false")
 	}
 
 	gen2.InsertBatteries(1)
+	gen2.BringOnline()
 	if !g.AllGeneratorsPowered() {
 		t.Error("AllGeneratorsPowered() = false with all powered, want true")
 	}
@@ -108,11 +115,16 @@ func TestUnpoweredGeneratorCount(t *testing.T) {
 	}
 
 	gen1.InsertBatteries(1)
+	if got := g.UnpoweredGeneratorCount(); got != 2 {
+		t.Errorf("UnpoweredGeneratorCount() after fueling G1 = %d, want 2 (awaiting startup)", got)
+	}
+	gen1.BringOnline()
 	if got := g.UnpoweredGeneratorCount(); got != 1 {
-		t.Errorf("UnpoweredGeneratorCount() after powering G1 = %d, want 1", got)
+		t.Errorf("UnpoweredGeneratorCount() after starting G1 = %d, want 1", got)
 	}
 
 	gen2.InsertBatteries(2)
+	gen2.BringOnline()
 	if got := g.UnpoweredGeneratorCount(); got != 0 {
 		t.Errorf("UnpoweredGeneratorCount() after powering all = %d, want 0", got)
 	}
@@ -128,7 +140,7 @@ func TestUpdatePowerSupply_Deck0(t *testing.T) {
 	}
 
 	gen1 := entities.NewGenerator("G1", 1)
-	gen1.InsertBatteries(1)
+	gen1.InsertBatteriesAndStart(1)
 	g.AddGenerator(gen1)
 
 	g.UpdatePowerSupply()
@@ -137,7 +149,7 @@ func TestUpdatePowerSupply_Deck0(t *testing.T) {
 	}
 
 	gen2 := entities.NewGenerator("G2", 1)
-	gen2.InsertBatteries(1)
+	gen2.InsertBatteriesAndStart(1)
 	g.AddGenerator(gen2)
 
 	g.UpdatePowerSupply()
@@ -151,7 +163,7 @@ func TestUpdatePowerSupply_UnpoweredGeneratorNotCounted(t *testing.T) {
 	g.CurrentDeckID = 0
 
 	powered := entities.NewGenerator("Powered", 1)
-	powered.InsertBatteries(1)
+	powered.InsertBatteriesAndStart(1)
 	unpowered := entities.NewGenerator("Unpowered", 2)
 	unpowered.InsertBatteries(1) // partial
 	g.AddGenerator(powered)
@@ -164,34 +176,30 @@ func TestUpdatePowerSupply_UnpoweredGeneratorNotCounted(t *testing.T) {
 }
 
 func TestUpdatePowerSupply_DeckDecay(t *testing.T) {
-	// Deck 5 (0-based): output multiplier = 1.0 - 0.04*5 = 0.80
 	g := NewGame()
 	g.CurrentDeckID = 5
 
 	gen := entities.NewGenerator("G1", 1)
-	gen.InsertBatteries(1)
+	gen.InsertBatteriesAndStart(1)
 	g.AddGenerator(gen)
 
 	g.UpdatePowerSupply()
-	expected := int(100.0 * 0.80) // 80
-	if g.PowerSupply != expected {
-		t.Errorf("PowerSupply on deck 5 = %d, want %d (80%% of 100)", g.PowerSupply, expected)
+	if g.PowerSupply != 100 {
+		t.Errorf("PowerSupply on deck 5 = %d, want 100 (output multiplier fixed at 1.0)", g.PowerSupply)
 	}
 }
 
 func TestUpdatePowerSupply_DeepDeckFloor(t *testing.T) {
-	// Deck 9 (final): multiplier = max(1.0 - 0.04*9, 0.5) = max(0.64, 0.5) = 0.64
 	g := NewGame()
 	g.CurrentDeckID = 9
 
 	gen := entities.NewGenerator("G1", 1)
-	gen.InsertBatteries(1)
+	gen.InsertBatteriesAndStart(1)
 	g.AddGenerator(gen)
 
 	g.UpdatePowerSupply()
-	expected := int(100.0 * 0.64) // 64
-	if g.PowerSupply != expected {
-		t.Errorf("PowerSupply on deck 9 = %d, want %d", g.PowerSupply, expected)
+	if g.PowerSupply != 100 {
+		t.Errorf("PowerSupply on deck 9 = %d, want 100", g.PowerSupply)
 	}
 }
 
@@ -245,6 +253,7 @@ func TestCalculatePowerConsumption_DoorsCCTVPuzzles(t *testing.T) {
 	g.Grid = grid
 	g.RoomDoorsPowered = map[string]bool{"R": true}
 	g.RoomCCTVPowered = map[string]bool{"R": true}
+	g.RoomPowerOnline = map[string]bool{"R": true}
 
 	got := g.CalculatePowerConsumption()
 	// doors 10 + 1 CCTV × 10 + 1 puzzle × 3 = 23 (base, deck 0 multiplier 1.0)
@@ -277,6 +286,7 @@ func TestCalculatePowerConsumption_UpdatesWhenRoomPowerChanges(t *testing.T) {
 	}
 
 	g.RoomDoorsPowered["R"] = true
+	g.RoomPowerOnline["R"] = true
 	got := g.CalculatePowerConsumption()
 	// Doors consume 10w once per powered room (or scaled by deck)
 	if got == 0 {
@@ -290,14 +300,13 @@ func TestSaveAndLoadDeckState_PreservesGenerators(t *testing.T) {
 
 	gen1 := entities.NewGenerator("G1", 2)
 	gen1.InsertBatteries(2)
+	gen1.BringOnline()
 	gen2 := entities.NewGenerator("G2", 3)
 	gen2.InsertBatteries(1) // partial
-	g.AddGenerator(gen1)
-	g.AddGenerator(gen2)
-	g.PowerSupply = 100
-
-	// Need a grid for SaveCurrentDeckState
 	g.Grid = makeMinimalGrid()
+	attachGeneratorToGrid(g, gen1, 0, 0)
+	attachGeneratorToGrid(g, gen2, 0, 1)
+	g.PowerSupply = 100
 
 	g.SaveCurrentDeckState()
 
@@ -346,7 +355,8 @@ func TestSaveAndLoadDeckState_PermanentInsertionRoundTrip(t *testing.T) {
 
 	gen := entities.NewGenerator("G1", 2)
 	gen.InsertBatteries(2)
-	g.AddGenerator(gen)
+	gen.BringOnline()
+	attachGeneratorToGrid(g, gen, 0, 0)
 	g.UpdatePowerSupply()
 
 	if g.PowerSupply != 100 {
@@ -379,12 +389,15 @@ func TestSaveAndLoadDeckState_DeepCopyIsolation(t *testing.T) {
 
 	gen := entities.NewGenerator("G1", 2)
 	gen.InsertBatteries(2)
-	g.AddGenerator(gen)
+	gen.BringOnline()
+	g.Grid = makeMinimalGrid()
+	attachGeneratorToGrid(g, gen, 0, 0)
 
 	g.SaveCurrentDeckState()
 
-	// Mutate the live generator after saving
-	gen.BatteriesInserted = 0
+	// Mutating the saved snapshot must not affect the live grid generator.
+	ds := g.DeckStates[0]
+	ds.Generators[0].BatteriesInserted = 0
 
 	g.LoadDeckState(0)
 
@@ -396,6 +409,60 @@ func TestSaveAndLoadDeckState_DeepCopyIsolation(t *testing.T) {
 	}
 }
 
+func TestSaveAndLoadDeckState_PreservesOwnedItems(t *testing.T) {
+	g := NewGame()
+	g.CurrentDeckID = 0
+	g.Grid = makeMinimalGrid()
+	g.OwnedItems.Put(world.NewItem("Keycard-A"))
+	g.OwnedItems.Put(world.NewItem("Keycard-B"))
+
+	g.SaveCurrentDeckState()
+
+	ds := g.DeckStates[0]
+	if ds == nil {
+		t.Fatal("DeckStates[0] is nil after save")
+	}
+	if ds.OwnedItems.Size() != 2 {
+		t.Fatalf("saved OwnedItems size = %d, want 2", ds.OwnedItems.Size())
+	}
+
+	g.OwnedItems = mapset.New[*world.Item]()
+	g.CurrentDeckID = 1
+
+	g.LoadDeckState(0)
+
+	if g.OwnedItems.Size() != 2 {
+		t.Fatalf("after load, OwnedItems size = %d, want 2", g.OwnedItems.Size())
+	}
+	if !itemSetHasName(g.OwnedItems, "Keycard-A") || !itemSetHasName(g.OwnedItems, "Keycard-B") {
+		t.Errorf("after load, OwnedItems = %v, want Keycard-A and Keycard-B", g.OwnedItems)
+	}
+}
+
+func TestSaveAndLoadDeckState_OwnedItemsDeepCopyIsolation(t *testing.T) {
+	g := NewGame()
+	g.CurrentDeckID = 0
+	g.Grid = makeMinimalGrid()
+	g.OwnedItems.Put(world.NewItem("Keycard-A"))
+
+	g.SaveCurrentDeckState()
+
+	ds := g.DeckStates[0]
+	g.OwnedItems.Put(world.NewItem("Keycard-B"))
+
+	g.LoadDeckState(0)
+
+	if g.OwnedItems.Size() != 1 {
+		t.Fatalf("after load, OwnedItems size = %d, want 1 (deck snapshot only)", g.OwnedItems.Size())
+	}
+	if !itemSetHasName(g.OwnedItems, "Keycard-A") {
+		t.Error("loaded inventory should match saved deck, not live mutations after save")
+	}
+	if ds.OwnedItems.Size() != 1 || !itemSetHasName(ds.OwnedItems, "Keycard-A") {
+		t.Error("saved deck inventory should remain unchanged when live inventory mutates")
+	}
+}
+
 func TestAdvanceLevel_ResetsPowerState(t *testing.T) {
 	g := NewGame()
 	g.CurrentDeckID = 0
@@ -403,7 +470,7 @@ func TestAdvanceLevel_ResetsPowerState(t *testing.T) {
 	g.Grid = makeMinimalGrid()
 
 	gen := entities.NewGenerator("G1", 1)
-	gen.InsertBatteries(1)
+	gen.InsertBatteriesAndStart(1)
 	g.AddGenerator(gen)
 	g.Batteries = 5
 	g.PowerSupply = 100
@@ -441,6 +508,28 @@ func makeMinimalGrid() *world.Grid {
 	return grid
 }
 
+func attachGeneratorToGrid(g *Game, gen *entities.Generator, row, col int) {
+	if g == nil || g.Grid == nil || gen == nil {
+		return
+	}
+	cell := g.Grid.GetCell(row, col)
+	if cell == nil {
+		return
+	}
+	gameworld.GetGameData(cell).Generator = gen
+	g.syncGeneratorsFromGrid()
+}
+
+func itemSetHasName(items world.ItemSet, name string) bool {
+	found := false
+	items.Each(func(item *world.Item) {
+		if item != nil && item.Name == name {
+			found = true
+		}
+	})
+	return found
+}
+
 func TestNewGame_Defaults(t *testing.T) {
 	g := NewGame()
 	if g.Batteries != 0 {
@@ -457,152 +546,5 @@ func TestNewGame_Defaults(t *testing.T) {
 	}
 	if g.PowerOverloadWarned {
 		t.Error("PowerOverloadWarned = true, want false")
-	}
-}
-
-func TestShortOutIfOverload_NoOverloadReturnsFalse(t *testing.T) {
-	g := NewGame()
-	g.CurrentDeckID = 0
-	g.Grid = makeMinimalGrid()
-	g.PowerSupply = 200
-	g.RoomDoorsPowered["R"] = true
-	g.PowerConsumption = g.CalculatePowerConsumption()
-
-	got := g.ShortOutIfOverload("R")
-	if got {
-		t.Error("ShortOutIfOverload with consumption <= supply should return false")
-	}
-	if !g.RoomDoorsPowered["R"] {
-		t.Error("protected room should remain powered")
-	}
-}
-
-func TestShortOutIfOverload_UnpowersOthersUntilWithinSupply(t *testing.T) {
-	// Grid: Room A has many CCTV terminals + doors, Room B has doors.
-	// Supply 100w. Protect B; overload should short Room A consumers.
-	grid := world.NewGrid(2, 12)
-	for r := 0; r < 2; r++ {
-		for c := 0; c < 12; c++ {
-			room := "A"
-			if c >= 10 {
-				room = "B"
-			}
-			grid.MarkAsRoomWithName(r, c, room, "desc")
-			gameworld.InitGameData(grid.GetCell(r, c))
-		}
-	}
-	grid.SetStartCellAt(0, 0)
-	grid.SetExitCellAt(1, 11)
-	grid.BuildAllCellConnections()
-
-	// Door in each room (10w per powered room)
-	gameworld.GetGameData(grid.GetCell(0, 0)).Door = &entities.Door{RoomName: "A", Locked: false}
-	gameworld.GetGameData(grid.GetCell(0, 10)).Door = &entities.Door{RoomName: "B", Locked: false}
-	// Twenty CCTV terminals in Room A (200w when CCTV power is on)
-	for r := 0; r < 2; r++ {
-		for c := 0; c < 10; c++ {
-			gameworld.GetGameData(grid.GetCell(r, c)).Terminal = entities.NewCCTVTerminal("TA")
-		}
-	}
-
-	gen := entities.NewGenerator("G1", 1)
-	gen.InsertBatteries(1)
-	g := NewGame()
-	g.CurrentDeckID = 0
-	g.Grid = grid
-	g.AddGenerator(gen)
-	g.RoomDoorsPowered = map[string]bool{"A": true, "B": true}
-	g.RoomCCTVPowered = map[string]bool{"A": true, "B": false}
-	g.UpdatePowerSupply()
-	g.PowerConsumption = g.CalculatePowerConsumption()
-	// A: doors 10 + CCTV 200, B: doors 10 => 220w > 100w supply
-
-	got := g.ShortOutIfOverload("B")
-	if !got {
-		t.Error("ShortOutIfOverload with overload should return true")
-	}
-	if !g.RoomDoorsPowered["B"] {
-		t.Error("protected room B should remain powered")
-	}
-	if g.RoomDoorsPowered["A"] {
-		t.Error("room A doors should be shorted out first")
-	}
-	if g.RoomCCTVPowered["A"] {
-		t.Error("room A CCTV should be shorted out to resolve overload")
-	}
-	if g.PowerConsumption > g.PowerSupply {
-		t.Errorf("after short-out: consumption %d > supply %d", g.PowerConsumption, g.PowerSupply)
-	}
-}
-
-func TestShortOutIfOverload_DeterministicOrder(t *testing.T) {
-	// Four rooms: RA,RB,RC,RD. Each has one door (10w) and two CCTV terminals (20w when on): 30w/room.
-	// Supply 100w, total 120w. Protect RC. Deterministic order should short RA doors then RA CCTV.
-	grid := world.NewGrid(2, 8)
-	for r := 0; r < 2; r++ {
-		for c := 0; c < 8; c++ {
-			var room string
-			switch {
-			case c < 2:
-				room = "RA"
-			case c < 4:
-				room = "RB"
-			case c < 6:
-				room = "RC"
-			default:
-				room = "RD"
-			}
-			grid.MarkAsRoomWithName(r, c, room, "desc")
-			gd := gameworld.InitGameData(grid.GetCell(r, c))
-			// One door per room
-			if (room == "RA" && r == 0 && c == 0) ||
-				(room == "RB" && r == 0 && c == 2) ||
-				(room == "RC" && r == 0 && c == 4) ||
-				(room == "RD" && r == 0 && c == 6) {
-				gd.Door = &entities.Door{RoomName: room, Locked: false}
-			}
-			// Two CCTV terminals per room
-			if (room == "RA" && ((r == 0 && c == 1) || (r == 1 && c == 1))) ||
-				(room == "RB" && ((r == 0 && c == 3) || (r == 1 && c == 3))) ||
-				(room == "RC" && ((r == 0 && c == 5) || (r == 1 && c == 5))) ||
-				(room == "RD" && ((r == 0 && c == 7) || (r == 1 && c == 7))) {
-				gd.Terminal = entities.NewCCTVTerminal("T")
-			}
-		}
-	}
-	grid.SetStartCellAt(0, 0)
-	grid.SetExitCellAt(1, 7)
-	grid.BuildAllCellConnections()
-
-	gen := entities.NewGenerator("G1", 1)
-	gen.InsertBatteries(1)
-	g := NewGame()
-	g.CurrentDeckID = 0
-	g.Grid = grid
-	g.AddGenerator(gen)
-	g.RoomDoorsPowered = map[string]bool{"RA": true, "RB": true, "RC": true, "RD": true}
-	g.RoomCCTVPowered = map[string]bool{"RA": true, "RB": true, "RC": true, "RD": true}
-	g.UpdatePowerSupply()
-	g.PowerConsumption = g.CalculatePowerConsumption()
-	// 30w * 4 rooms = 120w > 100w
-
-	g.ShortOutIfOverload("RC")
-	if g.RoomDoorsPowered["RA"] {
-		t.Error("RA doors should be shorted first (room-name + doors-first order)")
-	}
-	if g.RoomCCTVPowered["RA"] {
-		t.Error("RA CCTV should be shorted before touching RB/RD (deterministic order)")
-	}
-	if !g.RoomDoorsPowered["RB"] || !g.RoomCCTVPowered["RB"] {
-		t.Error("RB consumers should remain powered after resolving overload via RA")
-	}
-	if !g.RoomDoorsPowered["RC"] {
-		t.Error("protected room RC should remain powered")
-	}
-	if !g.RoomCCTVPowered["RC"] {
-		t.Error("protected room RC CCTV should remain powered")
-	}
-	if g.PowerConsumption > g.PowerSupply {
-		t.Errorf("consumption %d > supply %d after short-out", g.PowerConsumption, g.PowerSupply)
 	}
 }

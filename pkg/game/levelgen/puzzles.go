@@ -2,8 +2,8 @@
 package levelgen
 
 import (
+	"darkstation/pkg/game/levelrand"
 	"fmt"
-	"math/rand"
 	"strings"
 
 	"github.com/zyedidia/generic/mapset"
@@ -106,7 +106,7 @@ func PlacePuzzles(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 
 			if len(roomCells) > 0 {
 				// Pick a random furniture in this room
-				furnitureCell := roomCells[rand.Intn(len(roomCells))]
+				furnitureCell := roomCells[levelrand.Intn(len(roomCells))]
 				furniture := gameworld.GetGameData(furnitureCell).Furniture
 				// Append code to description
 				furniture.Description += fmt.Sprintf(" Code: %s", solution)

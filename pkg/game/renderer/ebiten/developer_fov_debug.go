@@ -7,6 +7,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -21,8 +22,7 @@ func fovSightBlocker(g *state.Game) world.SightBlocker {
 		if !gameworld.HasDoor(cell) {
 			return false
 		}
-		roomName := gameworld.GetGameData(cell).Door.RoomName
-		return !g.RoomDoorsPowered[roomName]
+		return !setup.CellHasLivePower(g, cell)
 	}
 }
 

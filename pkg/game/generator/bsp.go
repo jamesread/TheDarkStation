@@ -1,8 +1,8 @@
 package generator
 
 import (
+	"darkstation/pkg/game/levelrand"
 	"fmt"
-	"math/rand"
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/deck"
@@ -94,7 +94,8 @@ func (g *BSPGenerator) Generate(level int) *world.Grid {
 	}
 	splitBSP(root, minSize)
 
-	createRooms(root, roomBases, roomAdjectives)
+	usedRoomNames := make(map[string]bool)
+	createRooms(root, roomBases, roomAdjectives, usedRoomNames)
 
 	// Carve rooms into the grid
 	carveRooms(grid, root)
@@ -109,7 +110,7 @@ func (g *BSPGenerator) Generate(level int) *world.Grid {
 	rooms := collectRooms(root)
 	if len(rooms) >= 1 {
 		// Start in a random room
-		startRoom := rooms[rand.Intn(len(rooms))]
+		startRoom := rooms[levelrand.Intn(len(rooms))]
 		startRow := startRoom.y + startRoom.height/2
 		startCol := startRoom.x + startRoom.width/2
 		grid.SetStartCellAt(startRow, startCol)
@@ -155,7 +156,7 @@ func splitBSP(node *bspNode, minSize int) {
 	} else if node.height > node.width && node.height >= minSize*2 {
 		splitHorizontal = true // Split horizontally
 	} else if node.width >= minSize*2 && node.height >= minSize*2 {
-		splitHorizontal = rand.Intn(2) == 0
+		splitHorizontal = levelrand.Intn(2) == 0
 	} else if node.width >= minSize*2 {
 		splitHorizontal = false
 	} else if node.height >= minSize*2 {
@@ -166,7 +167,7 @@ func splitBSP(node *bspNode, minSize int) {
 
 	if splitHorizontal {
 		// Split horizontally (top and bottom)
-		splitPoint := minSize + rand.Intn(node.height-minSize*2+1)
+		splitPoint := minSize + levelrand.Intn(node.height-minSize*2+1)
 		node.left = &bspNode{
 			x:      node.x,
 			y:      node.y,
@@ -181,7 +182,7 @@ func splitBSP(node *bspNode, minSize int) {
 		}
 	} else {
 		// Split vertically (left and right)
-		splitPoint := minSize + rand.Intn(node.width-minSize*2+1)
+		splitPoint := minSize + levelrand.Intn(node.width-minSize*2+1)
 		node.left = &bspNode{
 			x:      node.x,
 			y:      node.y,
@@ -202,19 +203,20 @@ func splitBSP(node *bspNode, minSize int) {
 }
 
 // createRooms creates rooms in leaf nodes using thematic bases and adjectives.
-func createRooms(node *bspNode, bases, adjectives []string) {
+// Each room name is unique within the generated deck (usedRoomNames tracks assignments).
+func createRooms(node *bspNode, bases, adjectives []string, usedRoomNames map[string]bool) {
 	if node.left != nil || node.right != nil {
 		if node.left != nil {
-			createRooms(node.left, bases, adjectives)
+			createRooms(node.left, bases, adjectives, usedRoomNames)
 		}
 		if node.right != nil {
-			createRooms(node.right, bases, adjectives)
+			createRooms(node.right, bases, adjectives, usedRoomNames)
 		}
 		return
 	}
 
-	roomWidth := minRoomSize + rand.Intn(node.width-minRoomSize-roomPadding+1)
-	roomHeight := minRoomSize + rand.Intn(node.height-minRoomSize-roomPadding+1)
+	roomWidth := minRoomSize + levelrand.Intn(node.width-minRoomSize-roomPadding+1)
+	roomHeight := minRoomSize + levelrand.Intn(node.height-minRoomSize-roomPadding+1)
 
 	if roomWidth > node.width-roomPadding {
 		roomWidth = node.width - roomPadding
@@ -223,8 +225,8 @@ func createRooms(node *bspNode, bases, adjectives []string) {
 		roomHeight = node.height - roomPadding
 	}
 
-	roomX := node.x + rand.Intn(node.width-roomWidth)
-	roomY := node.y + rand.Intn(node.height-roomHeight)
+	roomX := node.x + levelrand.Intn(node.width-roomWidth)
+	roomY := node.y + levelrand.Intn(node.height-roomHeight)
 
 	roomCounter++
 	if len(adjectives) == 0 {
@@ -233,9 +235,14 @@ func createRooms(node *bspNode, bases, adjectives []string) {
 	if len(bases) == 0 {
 		bases = []string{"Section"}
 	}
-	adjective := adjectives[rand.Intn(len(adjectives))]
-	baseName := bases[rand.Intn(len(bases))]
+	adjective := adjectives[levelrand.Intn(len(adjectives))]
+	baseName := bases[levelrand.Intn(len(bases))]
 	name := fmt.Sprintf("%s %s", adjective, baseName)
+	for usedRoomNames[name] {
+		roomCounter++
+		name = fmt.Sprintf("%s %s %d", adjective, baseName, roomCounter)
+	}
+	usedRoomNames[name] = true
 	description := fmt.Sprintf("ROOM_%s", baseName)
 
 	node.room = &bspRoom{
@@ -285,7 +292,7 @@ func connectRooms(grid *world.Grid, node *bspNode) {
 		rightCenterY := rightRoom.y + rightRoom.height/2
 
 		// Create L-shaped corridor with 3-cell width
-		if rand.Intn(2) == 0 {
+		if levelrand.Intn(2) == 0 {
 			// Horizontal first, then vertical
 			carveCorridorHorizontal(grid, leftCenterY, leftCenterX, rightCenterX)
 			carveCorridorVertical(grid, rightCenterX, leftCenterY, rightCenterY)
@@ -346,7 +353,7 @@ func getRoom(node *bspNode) *bspRoom {
 	}
 
 	if leftRoom != nil && rightRoom != nil {
-		if rand.Intn(2) == 0 {
+		if levelrand.Intn(2) == 0 {
 			return leftRoom
 		}
 		return rightRoom

@@ -13,6 +13,9 @@ import (
 	"darkstation/pkg/game/state"
 )
 
+// LongUseAdvanceFunc ticks an in-progress hold-to-use session from the Ebiten Update thread.
+type LongUseAdvanceFunc func(g *state.Game, held, released bool, nowMs int64)
+
 // Callout represents a floating message displayed near a cell
 type Callout struct {
 	Row       int    // Cell row
@@ -26,9 +29,10 @@ type Callout struct {
 // roomLabel represents a persistent label for a room, positioned at the leftmost point
 type roomLabel struct {
 	RoomName string
-	Row      int // Grid row of the label position (room interior row)
-	StartCol int // Grid column index (leftmost point)
-	EndCol   int // Same as StartCol (kept for compatibility)
+	Powered  bool // Power grid enabled and fed by a powered generator
+	Row      int  // Grid row of the label position (room interior row)
+	StartCol int  // Grid column index (leftmost point)
+	EndCol   int  // Same as StartCol (kept for compatibility)
 }
 
 // envPlaque is diegetic corridor signage (gettext msgid); drawn small inside the tile.
@@ -64,6 +68,25 @@ type renderSnapshot struct {
 		row int
 		col int
 	} // Cells with interactable objects (for focus background)
+	longUseActive    bool
+	longUseProgress  float64
+	longUseTargetRow int
+	longUseTargetCol int
+	powerGrid        powerGridSnapshot
+}
+
+// powerGridSnapshot holds overlay routing computed on the game thread for race-free Draw.
+type powerGridSnapshot struct {
+	active              bool
+	maintenanceMenuRoom string
+	maintTerminalRow    int
+	maintTerminalCol    int
+	overlaySeedRow      int
+	overlaySeedCol      int
+	overlayDevActive    bool
+	liveCells           map[uint64]bool
+	armedCells          map[uint64]bool
+	fedRooms            map[string]bool
 }
 
 // generatorState holds generator info for rendering
@@ -136,6 +159,14 @@ type EbitenRenderer struct {
 
 	// Input channel for communication between Ebiten and game loop
 	inputChan chan engineinput.Intent
+
+	// Interact hold state (updated each Update, polled during long-use hold loops).
+	interactHoldMutex    sync.Mutex
+	interactHeld         bool
+	interactPrevHeld     bool
+	interactReleasedEdge bool
+	longUseAdvancer      LongUseAdvanceFunc
+	longUsePrevHeld      bool
 
 	// Flag indicating renderer is running
 	running bool
@@ -241,6 +272,15 @@ type EbitenRenderer struct {
 	consoleAnimating     bool
 	consoleAnimStartTime int64 // Timestamp when animation started
 	consoleMutex         sync.RWMutex
+
+	// Text input dialog (developer seed entry, etc.)
+	textInputActive   bool
+	textInputHex      bool
+	textInputTitle    string
+	textInputPrompt   string
+	textInputText     string
+	textInputResultCh chan textInputResult
+	textInputMutex    sync.RWMutex
 }
 
 // floatingTile represents a single tile in the background animation

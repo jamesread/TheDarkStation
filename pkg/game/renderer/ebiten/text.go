@@ -168,6 +168,9 @@ func (e *EbitenRenderer) parseMarkup(msg string) []textSegment {
 		case "DOOR":
 			// DOOR{} uses the door/locked color (yellow for locked doors)
 			segColor = renderer.CalloutColorDoor
+		case "ESSENTIAL":
+			// ESSENTIAL{} circuit preset (yellow for now)
+			segColor = renderer.CalloutColorDoor
 		case "TITLE":
 			// TITLE{} uses the standard title color (blue-purple, matches menu titles)
 			segColor = colorAction

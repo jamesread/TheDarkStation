@@ -1,11 +1,11 @@
 package setup
 
 import (
-	"math/rand"
 	"sort"
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/deck"
+	"darkstation/pkg/game/levelrand"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -77,7 +77,7 @@ func ApplyEnvironmentalSignage(g *state.Game) {
 		return junctions[i][1] < junctions[j][1]
 	})
 
-	rng := rand.New(rand.NewSource(plaqueSeed(g)))
+	rng := levelrand.NewDerived(plaqueSeed(g), 0xe0516e01)
 	rng.Shuffle(len(junctions), func(i, j int) {
 		junctions[i], junctions[j] = junctions[j], junctions[i]
 	})

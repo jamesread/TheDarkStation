@@ -7,6 +7,7 @@ import (
 	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -146,10 +147,14 @@ func TestCanEnter_UnpoweredDoorBlocksMovement(t *testing.T) {
 }
 
 func TestCanEnter_PoweredDoorAllowsMovement(t *testing.T) {
-	g, _, cellRight := makeMinimalGameWithGrid(t)
+	g, cellLeft, cellRight := makeMinimalGameWithGrid(t)
 	data := gameworld.GetGameData(cellRight)
 	data.Door = &entities.Door{RoomName: "Powered", Locked: false}
 	g.RoomDoorsPowered["Powered"] = true
+	gen := entities.NewGenerator("G", 1)
+	gen.InsertBatteriesAndStart(1)
+	gameworld.GetGameData(cellLeft).Generator = gen
+	setup.PropagateRoomPowerOnlineFromGenerators(g)
 
 	ok, _ := CanEnter(g, cellRight, false)
 	if !ok {

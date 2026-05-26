@@ -11,6 +11,7 @@ import (
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/features"
 	"darkstation/pkg/game/renderer"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -242,14 +243,28 @@ func CheckAdjacentGeneratorAtCell(g *state.Game, cell *world.Cell) bool {
 		calloutText.WriteString(fmt.Sprintf("Batteries: ACTION{%d}/ACTION{%d}\n", gen.BatteriesInserted, gen.BatteriesRequired))
 	} else {
 		calloutText.WriteString(fmt.Sprintf("UNPOWERED{%s}\n", gen.Name))
-		calloutText.WriteString("SUBTLE{Status: }UNPOWERED{Unpowered}\n")
+		if GeneratorNeedsLongUsePowerUp(gen) {
+			calloutText.WriteString("SUBTLE{Status: }UNPOWERED{Waiting for startup sequence}\n")
+			if gen.Tripped {
+				calloutText.WriteString("SUBTLE{Tripped by overload — hold USE to restart}\n")
+			} else {
+				calloutText.WriteString("SUBTLE{Hold USE to start}\n")
+			}
+		} else {
+			calloutText.WriteString("SUBTLE{Status: }UNPOWERED{Unpowered}\n")
+		}
 		calloutText.WriteString(fmt.Sprintf("Batteries: ACTION{%d}/ACTION{%d}\n", gen.BatteriesInserted, gen.BatteriesRequired))
-		calloutText.WriteString(fmt.Sprintf("Needs: ACTION{%d} more batteries\n", gen.BatteriesNeeded()))
+		if gen.BatteriesNeeded() > 0 {
+			calloutText.WriteString(fmt.Sprintf("Needs: ACTION{%d} more batteries\n", gen.BatteriesNeeded()))
+		}
 	}
+	individual, gridTotal, gridCount := setup.GeneratorGridSupplyAtCell(g, cell)
 	calloutText.WriteString("\n")
-	calloutText.WriteString(fmt.Sprintf("Power Supply: %s\n", renderer.FormatPowerWatts(g.PowerSupply, false)))
-	calloutText.WriteString(fmt.Sprintf("Power Consumption: %s\n", renderer.FormatPowerWatts(g.PowerConsumption, false)))
-	calloutText.WriteString(fmt.Sprintf("Available Power: %s", renderer.FormatPowerWatts(g.GetAvailablePower(), false)))
+	calloutText.WriteString(fmt.Sprintf("This generator: %s\n", renderer.FormatPowerWatts(individual, false)))
+	calloutText.WriteString(fmt.Sprintf("Grid supply: %s\n", renderer.FormatPowerWatts(gridTotal, false)))
+	if gridCount > 1 {
+		calloutText.WriteString(fmt.Sprintf("SUBTLE{Separate power grids on deck: }ACTION{%d}", gridCount))
+	}
 
 	// Use appropriate color based on power status
 	calloutColor := renderer.CalloutColorGenerator
@@ -258,6 +273,10 @@ func CheckAdjacentGeneratorAtCell(g *state.Game, cell *world.Cell) bool {
 	}
 
 	renderer.AddCallout(cell.Row, cell.Col, calloutText.String(), calloutColor, 0)
+
+	if gen.IsPowered() {
+		ToggleGeneratorPowerGridOverlay(g, cell)
+	}
 
 	return true
 }
@@ -351,15 +370,15 @@ func CheckAdjacentGenerators(g *state.Game) {
 		inserted := gen.InsertBatteries(g.UseBatteries(toInsert))
 		if inserted > 0 {
 			logMessage(g, "Inserted ACTION{%d} batteries into ROOM{%s}", inserted, gen.Name)
-
 			if gen.IsPowered() {
 				logMessage(g, "ITEM{%s} is now powered!", gen.Name)
 				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("POWERED{%s - online}", gen.Name), renderer.CalloutColorGeneratorOn, 0)
-				// Update power supply when generator is powered
-				g.UpdatePowerSupply()
-				// Update lighting based on new power availability
+				setup.NotifyPowerGridChanged(g)
 				UpdateLightingExploration(g)
 				logMessage(g, "Power supply: %dw available", g.GetAvailablePower())
+			} else if GeneratorNeedsLongUsePowerUp(gen) {
+				logMessage(g, "%s is waiting for startup — hold USE to power it up", gen.Name)
+				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("UNPOWERED{%s — waiting for startup sequence}", gen.Name), renderer.CalloutColorGenerator, 0)
 			} else {
 				logMessage(g, "%s needs ACTION{%d} more batteries", gen.Name, gen.BatteriesNeeded())
 				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("UNPOWERED{+%d batteries - %d more needed}", inserted, gen.BatteriesNeeded()), renderer.CalloutColorGenerator, 0)
@@ -513,7 +532,7 @@ func CheckAdjacentHazardControlsAtCell(g *state.Game, cell *world.Cell) bool {
 	return true
 }
 
-// CheckAdjacentPowerRelayAtCell toggles a corridor routing relay (Phase 3 power mesh).
+// CheckAdjacentPowerRelayAtCell toggles a corridor routing relay (Phase 3 power grid).
 func CheckAdjacentPowerRelayAtCell(g *state.Game, cell *world.Cell) bool {
 	if cell == nil || !gameworld.HasPowerRelay(cell) {
 		return false
@@ -526,6 +545,7 @@ func CheckAdjacentPowerRelayAtCell(g *state.Game, cell *world.Cell) bool {
 	}
 	msg := fmt.Sprintf("RELAY{%s}\nSUBTLE{Routing: }ACTION{%s}", "Power routing relay", stateLabel)
 	renderer.AddCallout(cell.Row, cell.Col, msg, renderer.CalloutColorMaintenance, 0)
+	setup.NotifyPowerGridChanged(g)
 	return true
 }
 
@@ -536,8 +556,13 @@ func CheckAdjacentMaintenanceTerminalAtCell(g *state.Game, cell *world.Cell) boo
 		return false
 	}
 
+	g.MaintenanceMenuTerminalRow = cell.Row
+	g.MaintenanceMenuTerminalCol = cell.Col
+	setup.ApplyGridConductivePower(g)
 	maintenanceTerm := gameworld.GetGameData(cell).MaintenanceTerm
 	if !maintenanceTerm.Powered {
+		g.MaintenanceMenuTerminalRow = -1
+		g.MaintenanceMenuTerminalCol = -1
 		logMessage(g, "Terminal has no power. Restore power from another maintenance terminal.")
 		renderer.AddCallout(cell.Row, cell.Col, "UNPOWERED{Terminal has no power}", renderer.CalloutColorMaintenance, 0)
 		return true

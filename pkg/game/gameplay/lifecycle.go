@@ -2,8 +2,9 @@
 package gameplay
 
 import (
-	"math/rand"
 	"time"
+
+	"darkstation/pkg/game/levelrand"
 
 	"github.com/zyedidia/generic/mapset"
 
@@ -38,14 +39,106 @@ func BuildGame(startLevel int) *state.Game {
 
 	// Generate current deck on first entry (no stored state yet)
 	seed := time.Now().UnixNano()
-	g.LevelSeed = seed
-	rand.Seed(seed)
-	g.Grid = GenerateGrid(g.Level)
-	SetupLevel(g)
+	generateLevel(g, startLevel, seed)
 
 	g.ClearMessages()
 
 	return g
+}
+
+// generateLevel rebuilds grid and setup from a seed (deterministic when seed is fixed).
+func generateLevel(g *state.Game, level int, seed int64) {
+	levelrand.Seed(seed)
+	g.LevelSeed = seed
+	g.Level = level
+	g.CurrentDeckID = level - 1
+	g.Grid = GenerateGrid(level)
+	SetupLevel(g)
+}
+
+// RegenerateFromSeed rebuilds the current level from seed (for reset / debug reproduction).
+func RegenerateFromSeed(g *state.Game, seed int64) {
+	if g == nil {
+		return
+	}
+	level := g.Level
+	if level < 1 {
+		level = 1
+	}
+	generateLevel(g, level, seed)
+}
+
+// LoadLevelFromSeed clears deck progress and rebuilds the current level from seed.
+func LoadLevelFromSeed(g *state.Game, seed int64) {
+	if g == nil {
+		return
+	}
+	clearLevelProgress(g)
+	generateLevel(g, g.Level, seed)
+	g.SaveCurrentDeckState()
+	UpdateLightingExploration(g)
+	setup.EnsureSolvabilityDoorPower(g)
+	setup.ApplyGridConductivePower(g)
+	g.ClearMessages()
+}
+
+func clearLevelProgress(g *state.Game) {
+	g.OwnedItems = mapset.New[*world.Item]()
+	g.Batteries = 0
+	g.HasMap = false
+	g.FoundCodes = make(map[string]bool)
+	g.Generators = make([]*entities.Generator, 0)
+	g.Hints = nil
+	g.PowerSupply = 0
+	g.PowerConsumption = 0
+	g.PowerOverloadWarned = false
+	g.RoomDoorsPowered = make(map[string]bool)
+	g.RoomCCTVPowered = make(map[string]bool)
+	g.RoomLightsPowered = make(map[string]bool)
+	g.RoomPowerOnline = make(map[string]bool)
+	g.ManualEgressReleased = make(map[string]bool)
+	g.PowerPropPending = nil
+	g.LongUse = nil
+
+	g.MovementCount = 0
+	g.InteractionsCount = 0
+	g.LastInteractedRow = -1
+	g.LastInteractedCol = -1
+	g.InteractionPlayerRow = -1
+	g.InteractionPlayerCol = -1
+
+	g.ExitAnimating = false
+	g.ExitAnimStartTime = 0
+	g.GameComplete = false
+}
+
+// clearCrossDeckPowerState resets player-carried power state when entering a different deck.
+// Each deck keeps its own grid-attached generators and saved room power maps.
+func clearCrossDeckPowerState(g *state.Game) {
+	if g == nil {
+		return
+	}
+	g.Batteries = 0
+	g.OwnedItems = mapset.New[*world.Item]()
+	g.Generators = make([]*entities.Generator, 0)
+	g.PowerSupply = 0
+	g.PowerConsumption = 0
+	g.PowerOverloadWarned = false
+	g.PowerPropPending = nil
+	g.LongUse = nil
+	ClearGeneratorPowerGridOverlay(g)
+}
+
+// refreshDeckPower rebuilds generator registration and recalculates supply/consumption for the active deck.
+func refreshDeckPower(g *state.Game) {
+	if g == nil || g.Grid == nil {
+		return
+	}
+	g.RebuildGeneratorsFromGrid()
+	g.UpdatePowerSupply()
+	setup.SchedulePowerPropagation(g, setup.PowerNowMs())
+	setup.ApplyGridConductivePower(g)
+	g.PowerConsumption = g.CalculatePowerConsumption()
 }
 
 // SetupLevel configures the current level with items and keys
@@ -75,15 +168,19 @@ func SetupLevel(g *state.Game) {
 	// Maintenance terminals (one per room); keep on final deck for barely functional power
 	levelgen.PlaceMaintenanceTerminals(g, avoid)
 
+	// Relocate init-trapped keycards/generators and clear furniture that blocks interact access.
+	setup.EnsureInitProgressReachability(g)
+	setup.EnsureInteractableNavAccess(g)
+
 	// Ensure no control-dependency deadlock: gatekeeper rooms with unpowered doors
 	// must be powerable from an adjacent room that has a terminal; otherwise power them initially.
 	setup.EnsureSolvabilityDoorPower(g)
 
-	// Only the start room's maintenance terminal(s) start powered; others can be restored from nearby.
 	setup.InitMaintenanceTerminalPower(g)
-
-	// Power doors for rooms blocking start-pocket egress when remote control from start is impossible.
-	setup.EnsureSolvabilityStartRoomEgress(g)
+	setup.EnsureGeneratorRoomBootstrap(g)
+	setup.PlaceAdditionalGenerators(g, avoid)
+	setup.PlaceBatteries(g, avoid)
+	setup.EnsureBatteryReachability(g)
 
 	// Remove or avoid blockers that would make the exit permanently unreachable (R7).
 	setup.EnsureExitReachability(g)
@@ -93,7 +190,7 @@ func SetupLevel(g *state.Game) {
 	setup.ApplyObservationLedPuzzleCues(g)
 	setup.ApplyMultiHopLinkage(g)
 
-	// Corridor power relays for routing mesh (power-routing Phase 3).
+	// Corridor power relays for power grid (power-routing Phase 3).
 	setup.ApplyPowerRelays(g)
 
 	// Move player to start cell (setup package sets current cell to center)
@@ -104,30 +201,7 @@ func SetupLevel(g *state.Game) {
 func ResetLevel(g *state.Game) {
 	currentLevel := g.Level
 
-	// Clear inventory and level-specific state
-	g.OwnedItems = mapset.New[*world.Item]()
-	g.Batteries = 0
-	g.HasMap = false
-	g.FoundCodes = make(map[string]bool)
-	g.Generators = make([]*entities.Generator, 0)
-	g.Hints = nil
-	g.PowerSupply = 0
-	g.PowerConsumption = 0
-	g.PowerOverloadWarned = false
-	g.RoomDoorsPowered = make(map[string]bool)
-	g.RoomCCTVPowered = make(map[string]bool)
-	g.RoomLightsPowered = make(map[string]bool)
-
-	g.MovementCount = 0
-	g.InteractionsCount = 0
-	g.LastInteractedRow = -1
-	g.LastInteractedCol = -1
-	g.InteractionPlayerRow = -1
-	g.InteractionPlayerCol = -1
-
-	g.ExitAnimating = false
-	g.ExitAnimStartTime = 0
-	g.GameComplete = false
+	clearLevelProgress(g)
 
 	var seed int64
 	if g.LevelSeed != 0 {
@@ -136,15 +210,14 @@ func ResetLevel(g *state.Game) {
 		seed = int64(currentLevel)
 	}
 
-	rand.Seed(seed)
-	g.Grid = GenerateGrid(currentLevel)
-	SetupLevel(g)
-	g.LevelSeed = seed
+	generateLevel(g, currentLevel, seed)
 
 	// Update store so revisit uses reset layout (Phase 3.4)
 	g.SaveCurrentDeckState()
 
 	UpdateLightingExploration(g)
+	setup.EnsureSolvabilityDoorPower(g)
+	setup.ApplyGridConductivePower(g)
 
 	g.ClearMessages()
 	logMessage(g, "Level reset!")
@@ -169,19 +242,21 @@ func AdvanceLevel(g *state.Game) {
 	// Save current deck so we can revisit (Phase 3.4)
 	g.SaveCurrentDeckState()
 
+	clearCrossDeckPowerState(g)
+
 	// Load stored state or generate on first entry (Phase 3.4)
 	if ds := g.DeckStates[nextID]; ds != nil && ds.Grid != nil {
 		g.LoadDeckState(nextID)
+		refreshDeckPower(g)
 		UpdateLightingExploration(g)
 	} else {
 		g.CurrentDeckID = nextID
 		g.Level = g.CurrentDeckID + 1
 		seed := time.Now().UnixNano()
-		g.LevelSeed = seed
-		rand.Seed(seed)
-		g.Grid = GenerateGrid(g.Level)
-		SetupLevel(g)
+		generateLevel(g, g.Level, seed)
+		refreshDeckPower(g)
 		g.SaveCurrentDeckState() // Store for potential revisit
+		UpdateLightingExploration(g)
 	}
 
 	g.ClearMessages()

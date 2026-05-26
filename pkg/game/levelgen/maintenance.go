@@ -2,8 +2,8 @@
 package levelgen
 
 import (
+	"darkstation/pkg/game/levelrand"
 	"fmt"
-	"math/rand"
 
 	"github.com/zyedidia/generic/mapset"
 
@@ -28,7 +28,8 @@ func PlaceMaintenanceTerminals(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 	roomEntries := setup.FindRoomEntryPoints(g.Grid)
 
 	// Place one maintenance terminal per room
-	for roomName, cells := range roomCells {
+	for _, roomName := range SortedRoomMapKeys(roomCells) {
+		cells := roomCells[roomName]
 		if len(cells) == 0 {
 			continue
 		}
@@ -124,8 +125,9 @@ func PlaceMaintenanceTerminals(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 			continue
 		}
 		candidates := connectedCandidates
+		setup.SortCellsByPosition(candidates)
 
-		selectedCell := candidates[rand.Intn(len(candidates))]
+		selectedCell := candidates[levelrand.Intn(len(candidates))]
 		maintenanceTerm := entities.NewMaintenanceTerminal(fmt.Sprintf("Maintenance Terminal - %s", roomName), roomName)
 		gameworld.GetGameData(selectedCell).MaintenanceTerm = maintenanceTerm
 		avoid.Put(selectedCell)

@@ -2,8 +2,8 @@
 package levelgen
 
 import (
+	"darkstation/pkg/game/levelrand"
 	"fmt"
-	"math/rand"
 
 	"github.com/zyedidia/generic/mapset"
 
@@ -20,9 +20,9 @@ func PlaceHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells
 	// Number of hazards scales with level: level 2 = 1, level 3 = 1-2, level 4+ = 2-3
 	numHazards := 1
 	if g.Level >= 4 {
-		numHazards = 2 + rand.Intn(2)
+		numHazards = 2 + levelrand.Intn(2)
 	} else if g.Level >= 3 {
-		numHazards = 1 + rand.Intn(2)
+		numHazards = 1 + levelrand.Intn(2)
 	}
 
 	// Available hazard types (excluding Vacuum initially, add it at level 3+)
@@ -47,7 +47,8 @@ func PlaceHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells
 		entries *setup.RoomEntryPoints
 	}
 	var candidates []roomCandidate
-	for roomName, entries := range roomEntries {
+	for _, roomName := range SortedRoomMapKeys(roomEntries) {
+		entries := roomEntries[roomName]
 		// Only consider rooms with 1-3 entry points (manageable to block)
 		if len(entries.EntryCells) >= 1 && len(entries.EntryCells) <= 3 {
 			candidates = append(candidates, roomCandidate{name: roomName, entries: entries})
@@ -55,7 +56,7 @@ func PlaceHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells
 	}
 
 	// Shuffle candidates for variety
-	rand.Shuffle(len(candidates), func(i, j int) {
+	levelrand.Shuffle(len(candidates), func(i, j int) {
 		candidates[i], candidates[j] = candidates[j], candidates[i]
 	})
 
@@ -104,7 +105,7 @@ func PlaceHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells
 		}
 
 		// Choose a random hazard type
-		hazardType := hazardTypes[rand.Intn(len(hazardTypes))]
+		hazardType := hazardTypes[levelrand.Intn(len(hazardTypes))]
 		hazard := entities.NewHazard(hazardType)
 		info := entities.HazardTypes[hazardType]
 

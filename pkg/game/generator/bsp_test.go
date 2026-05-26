@@ -3,7 +3,7 @@
 package generator
 
 import (
-	"math/rand"
+	"darkstation/pkg/game/levelrand"
 	"strings"
 	"testing"
 
@@ -44,7 +44,7 @@ func countRoomCells(grid *world.Grid) int {
 }
 
 func TestBSPGenerate_HasNamedRooms(t *testing.T) {
-	rand.Seed(1)
+	levelrand.Seed(1)
 	grid := DefaultGenerator.Generate(1)
 	if grid == nil {
 		t.Fatal("Generate(1) returned nil")
@@ -62,7 +62,7 @@ func TestBSPGenerate_HasNamedRooms(t *testing.T) {
 }
 
 func TestBSPGenerate_HasCorridors(t *testing.T) {
-	rand.Seed(2)
+	levelrand.Seed(2)
 	grid := DefaultGenerator.Generate(1)
 	if grid == nil {
 		t.Fatal("Generate(1) returned nil")
@@ -79,7 +79,7 @@ func TestBSPGenerate_HasCorridors(t *testing.T) {
 }
 
 func TestBSPGenerate_AllRoomsReachable(t *testing.T) {
-	rand.Seed(3)
+	levelrand.Seed(3)
 	grid := DefaultGenerator.Generate(1)
 	if grid == nil {
 		t.Fatal("Generate(1) returned nil")
@@ -102,7 +102,7 @@ func TestBSPGenerate_DeckFunctionalLayer(t *testing.T) {
 	if len(bases) == 0 || len(adjectives) == 0 {
 		t.Fatal("RoomNamesForType returned empty; deck functional layer not configured")
 	}
-	rand.Seed(4)
+	levelrand.Seed(4)
 	grid := DefaultGenerator.Generate(1)
 	if grid == nil {
 		t.Fatal("Generate(1) returned nil")
@@ -135,9 +135,56 @@ func TestBSPGenerate_DeckFunctionalLayer(t *testing.T) {
 // midDeckLevelForTest is used as a "mid" deck level for comparing grid size/room count to final deck.
 const midDeckLevelForTest = 3
 
+func TestBSPGenerate_UniqueRoomNames(t *testing.T) {
+	for seed := int64(1); seed <= 200; seed++ {
+		levelrand.Seed(seed)
+		grid := DefaultGenerator.Generate(7)
+		if grid == nil {
+			t.Fatalf("Generate(7) seed %d returned nil", seed)
+		}
+		byName := make(map[string][]*world.Cell)
+		grid.ForEachCell(func(row, col int, cell *world.Cell) {
+			if cell == nil || !cell.Room || cell.Name == "" || cell.Name == "Corridor" {
+				return
+			}
+			byName[cell.Name] = append(byName[cell.Name], cell)
+		})
+		for name, cells := range byName {
+			if !roomCellsConnected(cells) {
+				t.Fatalf("seed %d: room name %q appears on disconnected regions", seed, name)
+			}
+		}
+	}
+}
+
+func roomCellsConnected(cells []*world.Cell) bool {
+	if len(cells) <= 1 {
+		return true
+	}
+	inSet := make(map[*world.Cell]bool, len(cells))
+	for _, c := range cells {
+		inSet[c] = true
+	}
+	visited := make(map[*world.Cell]bool)
+	queue := []*world.Cell{cells[0]}
+	visited[cells[0]] = true
+	for len(queue) > 0 {
+		c := queue[0]
+		queue = queue[1:]
+		for _, n := range []*world.Cell{c.North, c.East, c.South, c.West} {
+			if n == nil || !inSet[n] || visited[n] {
+				continue
+			}
+			visited[n] = true
+			queue = append(queue, n)
+		}
+	}
+	return len(visited) == len(cells)
+}
+
 func TestBSPGenerate_StartAndExitSet(t *testing.T) {
 	// Generator sets start and exit cells; start is in a room; exit is marked ExitCell.
-	rand.Seed(7)
+	levelrand.Seed(7)
 	grid := DefaultGenerator.Generate(1)
 	if grid == nil {
 		t.Fatal("Generate(1) returned nil")
@@ -169,9 +216,9 @@ func TestBSPGenerate_FinalDeckMinimalLayout(t *testing.T) {
 	if !deck.IsFinalDeck(deck.TotalDecks) {
 		t.Fatal("TotalDecks should be final deck level")
 	}
-	rand.Seed(5)
+	levelrand.Seed(5)
 	gridFinal := DefaultGenerator.Generate(deck.TotalDecks)
-	rand.Seed(6)
+	levelrand.Seed(6)
 	gridMid := DefaultGenerator.Generate(midDeckLevelForTest)
 	if gridFinal == nil || gridMid == nil {
 		t.Fatal("Generate returned nil")

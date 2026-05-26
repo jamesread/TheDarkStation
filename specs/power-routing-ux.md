@@ -7,7 +7,7 @@ Companion to [`power-system.md`](power-system.md). Describes how players **contr
 - **Controls-first** terminal: power actions reachable without scrolling past diagnostic strata.
 - **Room circuits** as presets (OFF / ESSENTIAL / FULL) instead of three separate door/CCTV toggles for daily play.
 - **Preview** overload shedding before committing a preset.
-- **Targeted restore** of terminal mesh power (all adjacent vs selected room only).
+- **Targeted restore** of terminal power on the grid (all reachable vs selected room only).
 - **Map context** while the menu is open: highlight viewed room, show per-room load on adjacent walls.
 
 Watt math, solvability (`EnsureSolvabilityDoorPower`), and generator/battery rules are unchanged.
@@ -64,26 +64,26 @@ When `MaintenanceMenuRoom` is set:
 - `menu.CircuitPreset`, `menu.ApplyCircuitPreset`, `menu.PreviewCircuitShed`
 - `state.Game.PreviewShortOutIfOverload(protectedRoom, doorsOn, cctvOn) []state.PowerShedEntry`
 
-## Phase 3: Routing mesh (spatial propagation)
+## Phase 3: Power grid (spatial propagation)
 
-Terminal control power propagates along a **routing mesh**, not flat room adjacency.
+Terminal control power propagates along a **power grid**, not flat room adjacency.
 
-### Mesh rules
+### Power grid rules
 
 - BFS from the active maintenance terminal cell (or seeds for solvability).
 - A cell is traversable when:
   - It is not blocked by an **open** relay (`PowerRelay` present and `Closed == false`).
   - **Locked doors** block traversal.
   - **Unpowered doors** block traversal (door cell’s room has `RoomDoorsPowered == false`).
-- Rooms entered on the mesh are those with any visited non-corridor cell.
+- Rooms entered on the power grid are those with any visited non-corridor cell.
 
 ### Maintenance menu (Phase 3 updates)
 
 | Action | Behaviour |
 |--------|-----------|
-| Restore routing mesh | Powers unpowered terminals in all rooms reachable from this terminal via the mesh |
-| Restore selected room | Only succeeds if the viewed room is on the mesh from this terminal |
-| Room list (A/D) | `SelectableRoomsForTerminal` — mesh-reachable rooms, not raw adjacency |
+| Restore power grid | Powers unpowered terminals in all rooms reachable from this terminal via the power grid |
+| Restore selected room | Only succeeds if the viewed room is on the power grid from this terminal |
+| Room list (A/D) | `SelectableRoomsForTerminal` — power grid-reachable rooms, not raw adjacency |
 
 ### Corridor relays
 
@@ -93,7 +93,7 @@ Terminal control power propagates along a **routing mesh**, not flat room adjace
 
 ### Solvability
 
-`EnsureSolvabilityDoorPower` uses `RoomsReachableInPowerMeshExcluding` instead of only geometric adjacency when checking whether a gatekeeper can be powered from a neighbouring terminal.
+`EnsureSolvabilityDoorPower` uses `RoomsReachableInPowerGridExcluding` instead of only geometric adjacency when checking whether a gatekeeper can be powered from a neighbouring terminal.
 
 ## Out of scope
 

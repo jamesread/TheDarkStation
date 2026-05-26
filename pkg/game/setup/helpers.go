@@ -2,7 +2,7 @@
 package setup
 
 import (
-	"math/rand"
+	"darkstation/pkg/game/levelrand"
 	"sort"
 
 	"github.com/zyedidia/generic/mapset"
@@ -140,7 +140,8 @@ func findRoomInReachable(reachable *mapset.Set[*world.Cell], avoid *mapset.Set[*
 		return nil
 	}
 
-	return candidates[rand.Intn(len(candidates))]
+	SortCellsByPosition(candidates)
+	return candidates[levelrand.Intn(len(candidates))]
 }
 
 // collectReachableRooms collects all reachable rooms from a starting cell using BFS
@@ -234,7 +235,8 @@ func findRoom(g *state.Game, start *world.Cell, avoid *mapset.Set[*world.Cell]) 
 	}
 
 	// Pick a random room from the candidates
-	return farRooms[rand.Intn(len(farRooms))]
+	SortCellsByPosition(farRooms)
+	return farRooms[levelrand.Intn(len(farRooms))]
 }
 
 // placeItem places an item in a random reachable room at an appropriate distance based on level

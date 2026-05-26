@@ -46,6 +46,12 @@ func (e *EbitenRenderer) Update() error {
 		return nil
 	}
 
+	// Text input dialog (blocks game intents while open)
+	if e.isTextInputDialogActive() {
+		e.handleTextInputDialogInput()
+		return nil
+	}
+
 	// Update floating tiles animation if main menu is active
 	// Step 2: Enable update loop (tiles move but not drawn yet)
 	e.genericMenuMutex.RLock()
@@ -62,6 +68,9 @@ func (e *EbitenRenderer) Update() error {
 
 	// Handle font size changes (Ctrl+= to increase, Ctrl+- to decrease)
 	e.handleZoom()
+
+	// Track hold state before dispatching interact so the long-use loop sees the key down on the same frame.
+	e.trackInteractHold()
 
 	// Keyboard before gamepad so E/Enter is not lost to stick drift or held movement.
 	// (See checkInput: interact is also handled before WASD movement within keyboard.)
@@ -89,7 +98,26 @@ func (e *EbitenRenderer) Update() error {
 	// multiple times per frame; time-based interpolation there caused visible jitter).
 	e.advanceMaintenanceCamera()
 
+	e.advanceLongUseFromInput()
+
 	return nil
+}
+
+func (e *EbitenRenderer) advanceLongUseFromInput() {
+	if e.longUseAdvancer == nil {
+		return
+	}
+	e.gameMutex.RLock()
+	g := e.game
+	e.gameMutex.RUnlock()
+	if g == nil || g.LongUse == nil {
+		e.longUsePrevHeld = false
+		return
+	}
+	held := isInteractPressed()
+	released := e.longUsePrevHeld && !held
+	e.longUsePrevHeld = held
+	e.longUseAdvancer(g, held, released, e.menuAnimClockMilli)
 }
 
 // handleZoom handles =/- for font/tile size adjustment
@@ -527,6 +555,47 @@ func (e *EbitenRenderer) checkInput() engineinput.Intent {
 	}
 
 	return engineinput.Intent{Action: engineinput.ActionNone}
+}
+
+func isInteractPressed() bool {
+	if inpututil.IsKeyJustPressed(ebiten.KeyE) ||
+		inpututil.IsKeyJustPressed(ebiten.KeyEnter) ||
+		inpututil.IsKeyJustPressed(ebiten.KeyKPEnter) {
+		return true
+	}
+	if ebiten.IsKeyPressed(ebiten.KeyE) ||
+		ebiten.IsKeyPressed(ebiten.KeyEnter) ||
+		ebiten.IsKeyPressed(ebiten.KeyKPEnter) {
+		return true
+	}
+	for _, id := range ebiten.AppendGamepadIDs(nil) {
+		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton0) ||
+			ebiten.IsGamepadButtonPressed(id, ebiten.GamepadButton0) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *EbitenRenderer) trackInteractHold() {
+	held := isInteractPressed()
+	e.interactHoldMutex.Lock()
+	defer e.interactHoldMutex.Unlock()
+	if e.interactPrevHeld && !held {
+		e.interactReleasedEdge = true
+	}
+	e.interactHeld = held
+	e.interactPrevHeld = held
+}
+
+// PollInteractHold returns whether USE is held and whether it was released since the last poll.
+func (e *EbitenRenderer) PollInteractHold() (held bool, released bool) {
+	e.interactHoldMutex.Lock()
+	defer e.interactHoldMutex.Unlock()
+	held = e.interactHeld
+	released = e.interactReleasedEdge
+	e.interactReleasedEdge = false
+	return held, released
 }
 
 // Layout returns the game's logical screen size (Ebiten interface)
