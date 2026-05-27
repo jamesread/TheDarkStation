@@ -30,6 +30,7 @@ func initCvars() {
 	cvarMap["gameplay.visited"] = "0" // 1 = track visited cells (walked-on floor style, room labels, linkage cues)
 	cvarMap["draw.fps"] = "1"         // 1 = show FPS counter in top-right corner
 	cvarMap["draw.player_pos"] = "0"  // 1 = show player X/Y below FPS counter (top-right)
+	cvarMap["draw.env_plaques"] = "0" // 1 = corridor environmental signage (Story 5.1; positioning WIP)
 	cvarMap["version"] = renderer.Version
 	if renderer.Commit != "unknown" && len(renderer.Commit) > 0 {
 		cvarMap["commit"] = renderer.Commit

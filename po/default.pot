@@ -71,6 +71,42 @@ msgstr	"NO FURTHER WORK REQUESTS DETECTED"
 msgid	"PRESS_ANY_KEY_RETURN_TITLE"
 msgstr	"Press any key to return to title"
 
+msgid	"PRESS_ANY_KEY_CONTINUE"
+msgstr	"Press any key to continue"
+
+msgid	"PRESS_ANY_KEY_SKIP_CREDITS"
+msgstr	"Press any key to skip"
+
+msgid	"STAT_DECKS_CLEARED"
+msgstr	"Decks stabilized: %d"
+
+msgid	"STAT_MOVEMENTS"
+msgstr	"Movements: %d"
+
+msgid	"STAT_INTERACTIONS"
+msgstr	"Terminal interactions: %d"
+
+msgid	"STAT_TIME_SECONDS"
+msgstr	"Time elapsed: %ds"
+
+msgid	"STAT_TIME_MINUTES"
+msgstr	"Time elapsed: %dm %ds"
+
+msgid	"STAT_TIME_HOURS"
+msgstr	"Time elapsed: %dh %dm"
+
+msgid	"CREDITS_GAME_TITLE"
+msgstr	"The Dark Station"
+
+msgid	"CREDITS_CREATED_BY"
+msgstr	"Created by James Read"
+
+msgid	"CREDITS_ENGINE"
+msgstr	"Go · Ebiten · Procedural generation"
+
+msgid	"CREDITS_THANK_YOU"
+msgstr	"Thank you for playing"
+
 msgid	"NORTH"
 msgstr	"North"
 

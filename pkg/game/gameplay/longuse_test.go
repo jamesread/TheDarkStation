@@ -83,11 +83,19 @@ func TestTickLongUse_completesAfterDuration(t *testing.T) {
 func TestCompleteLongUse_powersGenerator(t *testing.T) {
 	g, genCell := makeLongUseTestGame()
 	gen := gameworld.GetGameData(genCell).Generator
+	g.RoomDoorsPowered = map[string]bool{"R": false}
+	g.RoomCCTVPowered = map[string]bool{"R": false}
 	TryBeginLongUseOnAdjacent(g)
 	g.LongUse.StartedAtMs = time.Now().UnixMilli() - GeneratorPowerUpDuration.Milliseconds()
 	CompleteLongUse(g)
 	if !gen.IsPowered() {
 		t.Fatal("generator should be powered after long use completes")
+	}
+	if !g.RoomDoorsPowered["R"] {
+		t.Fatal("generator room circuit should turn ON when generator powers up")
+	}
+	if !g.RoomCCTVPowered["R"] {
+		t.Fatal("generator room CCTV should turn ON when generator powers up")
 	}
 	if IsLongUseActive(g) {
 		t.Fatal("session should be cleared after complete")

@@ -207,3 +207,32 @@ func TestProcessIntent_AllFourDirections(t *testing.T) {
 		})
 	}
 }
+
+func TestMoveCell_UpdatesFacingOnMove(t *testing.T) {
+	g, left, right := makeMinimalGameWithGrid(t)
+	g.CurrentCell = left
+	g.PlayerFacing = state.FaceNorth
+
+	MoveCell(g, right)
+
+	if g.PlayerFacing != state.FaceEast {
+		t.Errorf("PlayerFacing = %v, want FaceEast after moving east", g.PlayerFacing)
+	}
+}
+
+func TestMoveCell_UpdatesFacingOnBlockedMove(t *testing.T) {
+	g, left, right := makeMinimalGameWithGrid(t)
+	data := gameworld.GetGameData(right)
+	data.Generator = entities.NewGenerator("Gen", 0)
+	g.CurrentCell = left
+	g.PlayerFacing = state.FaceNorth
+
+	MoveCell(g, right)
+
+	if g.CurrentCell != left {
+		t.Fatal("expected blocked move to stay on same cell")
+	}
+	if g.PlayerFacing != state.FaceEast {
+		t.Errorf("PlayerFacing = %v, want FaceEast after attempting to move east", g.PlayerFacing)
+	}
+}

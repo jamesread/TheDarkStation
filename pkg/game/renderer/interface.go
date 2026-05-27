@@ -46,9 +46,12 @@ type Renderer interface {
 	// RenderFrame renders a complete game frame (map, status bar, callouts, menus)
 	RenderFrame(g *state.Game)
 
-	// GetInput gets user input (event-based)
+	// GetInput gets user input (event-based, blocks until input is available).
 	// It returns a high-level Intent from the tiered input system.
 	GetInput() input.Intent
+
+	// TryGetInput returns a pending intent without blocking.
+	TryGetInput() (input.Intent, bool)
 
 	// StyleText applies a style to text and returns the styled string
 	// For Ebiten this returns markup that will be parsed during rendering
@@ -137,6 +140,14 @@ func GetInput() string {
 		}
 	}
 	return ""
+}
+
+// TryGetIntent returns a pending intent without blocking.
+func TryGetIntent() (input.Intent, bool) {
+	if Current != nil {
+		return Current.TryGetInput()
+	}
+	return input.Intent{}, false
 }
 
 // StyleText applies a style to text

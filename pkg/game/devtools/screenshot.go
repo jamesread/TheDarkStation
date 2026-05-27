@@ -190,7 +190,7 @@ func getCellHTMLInfo(g *state.Game, r *world.Cell) (string, string) {
 
 	// Player position
 	if g.CurrentCell == r {
-		return "@", "player"
+		return g.PlayerFacing.Icon(), "player"
 	}
 
 	// Get game-specific data for this cell

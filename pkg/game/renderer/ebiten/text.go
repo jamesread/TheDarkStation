@@ -31,19 +31,21 @@ func (e *EbitenRenderer) drawColoredChar(screen *ebiten.Image, char string, x, y
 
 // drawColoredCharF is the float64 variant for sub-pixel positioning (smooth camera).
 func (e *EbitenRenderer) drawColoredCharF(screen *ebiten.Image, char string, x, y float64, col color.Color) {
+	e.drawColoredCharRotatedF(screen, char, x, y, col, 0)
+}
+
+// drawColoredCharRotatedF draws a mono glyph centered in a tile, optionally rotated around the tile center.
+func (e *EbitenRenderer) drawColoredCharRotatedF(screen *ebiten.Image, char string, x, y float64, col color.Color, angleRad float64) {
 	face := e.getMonoFontFace()
 
-	// Calculate position to center the character in the tile
-	// text.Measure returns the bounding box width and height
 	w, h := text.Measure(char, face, 0)
-
-	// Center horizontally and vertically within the tile
-	// text/v2 Draw uses top-left as the origin point
-	offsetX := (float64(e.tileSize) - w) / 2
-	offsetY := (float64(e.tileSize) - h) / 2
+	centerX := x + float64(e.tileSize)/2
+	centerY := y + float64(e.tileSize)/2
 
 	op := &text.DrawOptions{}
-	op.GeoM.Translate(x+offsetX, y+offsetY)
+	op.GeoM.Translate(-w/2, -h/2)
+	op.GeoM.Rotate(angleRad)
+	op.GeoM.Translate(centerX, centerY)
 	op.ColorScale.ScaleWithColor(col)
 
 	text.Draw(screen, char, face, op)

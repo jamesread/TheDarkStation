@@ -10,8 +10,8 @@ import (
 func TestDevMenuHandler_GetMenuItems(t *testing.T) {
 	h := NewDevMenuHandler(state.NewGame())
 	items := h.GetMenuItems()
-	if len(items) != 11 {
-		t.Fatalf("expected 11 items, got %d", len(items))
+	if len(items) != 12 {
+		t.Fatalf("expected 12 items, got %d", len(items))
 	}
 	if items[0].GetLabel() != "Zoom: 24px (30×15 tiles)" {
 		t.Fatalf("item 0 label = %q", items[0].GetLabel())
@@ -37,11 +37,14 @@ func TestDevMenuHandler_GetMenuItems(t *testing.T) {
 	if items[8].GetLabel() != "Load level seed" {
 		t.Fatalf("item 8 label = %q", items[8].GetLabel())
 	}
-	if items[9].GetLabel() != "Trigger overload" {
+	if items[9].GetLabel() != "Jump to deck" {
 		t.Fatalf("item 9 label = %q", items[9].GetLabel())
 	}
-	if items[10].GetLabel() != "Close" {
+	if items[10].GetLabel() != "Trigger overload" {
 		t.Fatalf("item 10 label = %q", items[10].GetLabel())
+	}
+	if items[11].GetLabel() != "Close" {
+		t.Fatalf("item 11 label = %q", items[11].GetLabel())
 	}
 }
 
@@ -108,7 +111,7 @@ func TestDevMenuHandler_TogglePlayerPosition(t *testing.T) {
 func TestDevMenuHandler_CloseItem(t *testing.T) {
 	h := NewDevMenuHandler(state.NewGame())
 	closeItem := &gamemenu.CloseMenuItem{Label: "Close"}
-	shouldClose, help := h.OnActivate(closeItem, 10)
+	shouldClose, help := h.OnActivate(closeItem, 11)
 	if !shouldClose {
 		t.Fatal("Close should close menu")
 	}

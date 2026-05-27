@@ -80,6 +80,83 @@ func (e *EbitenRenderer) initFloatingTiles(screenWidth, screenHeight int) {
 	e.initFloatingTilesUnlocked(screenWidth, screenHeight)
 }
 
+// ensureFloatingTiles creates the ambient tile field when needed (main menu or completion screens).
+func (e *EbitenRenderer) ensureFloatingTiles(screenWidth, screenHeight int) {
+	if screenWidth <= 0 || screenHeight <= 0 {
+		return
+	}
+	e.floatingTilesMutex.Lock()
+	defer e.floatingTilesMutex.Unlock()
+	if len(e.floatingTiles) == 0 {
+		e.initFloatingTilesUnlocked(screenWidth, screenHeight)
+	}
+}
+
+const floatingTileCollisionRadius = 14.0
+
+func bounceFloatingTileOffWalls(tile *floatingTile, screenWidth, screenHeight int) {
+	r := floatingTileCollisionRadius
+	maxX := float64(screenWidth) - r
+	maxY := float64(screenHeight) - r
+	if tile.x < r {
+		tile.x = r
+		if tile.vx < 0 {
+			tile.vx = -tile.vx
+		}
+	} else if tile.x > maxX {
+		tile.x = maxX
+		if tile.vx > 0 {
+			tile.vx = -tile.vx
+		}
+	}
+	if tile.y < r {
+		tile.y = r
+		if tile.vy < 0 {
+			tile.vy = -tile.vy
+		}
+	} else if tile.y > maxY {
+		tile.y = maxY
+		if tile.vy > 0 {
+			tile.vy = -tile.vy
+		}
+	}
+}
+
+func resolveFloatingTileCollisions(tiles []floatingTile) {
+	minDist := floatingTileCollisionRadius * 2
+	for i := range tiles {
+		for j := i + 1; j < len(tiles); j++ {
+			a := &tiles[i]
+			b := &tiles[j]
+			dx := b.x - a.x
+			dy := b.y - a.y
+			distSq := dx*dx + dy*dy
+			if distSq >= minDist*minDist || distSq < 1e-6 {
+				continue
+			}
+			dist := math.Sqrt(distSq)
+			nx := dx / dist
+			ny := dy / dist
+			overlap := (minDist - dist) * 0.5
+			a.x -= nx * overlap
+			a.y -= ny * overlap
+			b.x += nx * overlap
+			b.y += ny * overlap
+
+			dvx := a.vx - b.vx
+			dvy := a.vy - b.vy
+			dot := dvx*nx + dvy*ny
+			if dot >= 0 {
+				continue
+			}
+			a.vx -= dot * nx
+			a.vy -= dot * ny
+			b.vx += dot * nx
+			b.vy += dot * ny
+		}
+	}
+}
+
 // updateFloatingTiles updates the positions of floating tiles each frame.
 func (e *EbitenRenderer) updateFloatingTiles(screenWidth, screenHeight int) {
 	e.floatingTilesMutex.Lock()
@@ -92,17 +169,7 @@ func (e *EbitenRenderer) updateFloatingTiles(screenWidth, screenHeight int) {
 		tile.x += tile.vx
 		tile.y += tile.vy
 
-		// Wrap around screen edges
-		if tile.x < 0 {
-			tile.x += float64(screenWidth)
-		} else if tile.x >= float64(screenWidth) {
-			tile.x -= float64(screenWidth)
-		}
-		if tile.y < 0 {
-			tile.y += float64(screenHeight)
-		} else if tile.y >= float64(screenHeight) {
-			tile.y -= float64(screenHeight)
-		}
+		bounceFloatingTileOffWalls(tile, screenWidth, screenHeight)
 
 		// Update rotation
 		tile.rotation += tile.rotationSpeed
@@ -129,6 +196,22 @@ func (e *EbitenRenderer) updateFloatingTiles(screenWidth, screenHeight int) {
 			}
 		}
 	}
+
+	resolveFloatingTileCollisions(e.floatingTiles)
+}
+
+// floatingTilesAnimationActive reports whether the ambient tile field should advance this frame.
+func (e *EbitenRenderer) floatingTilesAnimationActive() bool {
+	e.genericMenuMutex.RLock()
+	menuActive := e.genericMenuActive && e.genericMenuTitle == "The Dark Station"
+	e.genericMenuMutex.RUnlock()
+	if menuActive {
+		return true
+	}
+	e.gameMutex.RLock()
+	g := e.game
+	e.gameMutex.RUnlock()
+	return g != nil && g.GameComplete
 }
 
 // drawFloatingTilesBackground draws the floating tiles animation behind the menu.

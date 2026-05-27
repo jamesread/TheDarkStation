@@ -152,42 +152,8 @@ func keycardsStillAccessible(g *state.Game, base, with *mapset.Set[*world.Cell])
 	return true
 }
 
-// generatorsStillAccessible reports whether every init-reachable generator stays interactable
-// when extraBlocked is also impassable. Generators already unreachable at init are ignored here;
-// EnsureGeneratorSafePlacement relocates those after placement.
-func generatorsStillAccessible(g *state.Game, base, with *mapset.Set[*world.Cell]) bool {
-	if g == nil || g.Grid == nil {
-		return true
-	}
-	allOK := true
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if !allOK || cell == nil {
-			return
-		}
-		if gameworld.GetGameData(cell).Generator == nil {
-			return
-		}
-		if !cellAccessibleFromReachable(base, cell) {
-			return
-		}
-		if !cellAccessibleFromReachable(with, cell) {
-			allOK = false
-		}
-	})
-	return allOK
-}
-
-// generatorAdjacentReachableAtInit reports whether a generator at candidate would have at least
-// one adjacent stand tile reachable from start at level init (generators block their own cell).
-func generatorAdjacentReachableAtInit(g *state.Game, candidate *world.Cell) bool {
-	if g == nil || candidate == nil {
-		return false
-	}
-	with := InitialReachableCellsWithExtraBlock(g, candidate)
-	return cellAccessibleFromReachable(with, candidate)
-}
-
-// InitProgressPreserved reports whether blocking candidate still leaves init keycards and generators reachable.
+// InitProgressPreserved reports whether blocking candidate still leaves init keycards reachable
+// and does not cut off init-reachable rooms. Generators and batteries may lie behind unpowered doors.
 func InitProgressPreserved(g *state.Game, candidate *world.Cell) bool {
 	if g == nil || candidate == nil {
 		return true
@@ -195,9 +161,6 @@ func InitProgressPreserved(g *state.Game, candidate *world.Cell) bool {
 	base := InitialReachableCells(g)
 	with := InitialReachableCellsWithExtraBlock(g, candidate)
 	if !keycardsStillAccessible(g, base, with) {
-		return false
-	}
-	if !generatorsStillAccessible(g, base, with) {
 		return false
 	}
 	baseRooms := reachableNamedRooms(base)
@@ -276,17 +239,20 @@ func EnsureKeycardReachability(g *state.Game) {
 	}
 }
 
-// generatorLocationOK reports whether an existing generator at cell preserves init keycard
-// and generator reachability (stricter than InitProgressPreserved, which ignores already-stranded items).
+// generatorLocationOK reports whether an existing generator at cell preserves exit/nav paths
+// and init keycard access. Generators may be unreachable at level start until power is restored.
 func generatorLocationOK(g *state.Game, cell *world.Cell) bool {
 	if g == nil || cell == nil || gameworld.GetGameData(cell).Generator == nil {
 		return true
 	}
-	if !generatorAdjacentReachableAtInit(g, cell) {
+	if !ExitReachableWhenCompletable(g, cell) {
+		return false
+	}
+	if !BlockingPlacementPreservesNavAccess(g, cell) {
 		return false
 	}
 	reachable := InitialReachableCells(g)
-	return keycardsAccessible(g, reachable) && generatorsAccessible(g, reachable)
+	return keycardsAccessible(g, reachable)
 }
 
 // EnsureGeneratorSafePlacement relocates generators that block init progression (e.g. corridor chokepoints).
@@ -347,55 +313,8 @@ func EnsureGeneratorSafePlacement(g *state.Game) {
 	}
 }
 
-// EnsureInitProgressReachability applies keycard, generator, and battery placement safety nets.
+// EnsureInitProgressReachability applies keycard and generator placement safety nets.
 func EnsureInitProgressReachability(g *state.Game) {
 	EnsureGeneratorSafePlacement(g)
 	EnsureKeycardReachability(g)
-}
-
-// EnsureBatteryReachability moves init-unreachable floor batteries onto reachable tiles (I3 safety net).
-func EnsureBatteryReachability(g *state.Game) {
-	if g == nil || g.Grid == nil {
-		return
-	}
-	reachable := InitialReachableCells(g)
-	landing := pickReachableItemLandingCell(g, reachable)
-	if landing == nil {
-		return
-	}
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if cell == nil {
-			return
-		}
-		var toMove []*world.Item
-		cell.ItemsOnFloor.Each(func(item *world.Item) {
-			if item != nil && item.Name == "Battery" {
-				toMove = append(toMove, item)
-			}
-		})
-		for _, item := range toMove {
-			if reachable.Has(cell) {
-				continue
-			}
-			cell.ItemsOnFloor.Remove(item)
-			landing.ItemsOnFloor.Put(item)
-		}
-	})
-}
-
-func pickReachableItemLandingCell(g *state.Game, reachable *mapset.Set[*world.Cell]) *world.Cell {
-	if g == nil || g.Grid == nil || reachable == nil {
-		return nil
-	}
-	if start := g.Grid.StartCell(); start != nil && reachable.Has(start) && isValidForFloorItem(g, start, nil) {
-		return start
-	}
-	var fallback *world.Cell
-	reachable.Each(func(cell *world.Cell) {
-		if fallback != nil || !isValidForFloorItem(g, cell, nil) {
-			return
-		}
-		fallback = cell
-	})
-	return fallback
 }

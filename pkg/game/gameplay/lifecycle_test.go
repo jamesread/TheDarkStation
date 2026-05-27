@@ -132,6 +132,60 @@ func TestAdvanceLevel_LoadsStoredDeckWhenPresent(t *testing.T) {
 	}
 }
 
+func TestJumpToDeck_GeneratesOnFirstVisit(t *testing.T) {
+	g := BuildGame(1)
+	if err := JumpToDeck(g, 5); err != nil {
+		t.Fatalf("JumpToDeck(5): %v", err)
+	}
+	if g.CurrentDeckID != 4 || g.Level != 5 {
+		t.Errorf("after JumpToDeck(5): CurrentDeckID=%d Level=%d, want 4,5", g.CurrentDeckID, g.Level)
+	}
+	if g.Grid == nil {
+		t.Fatal("JumpToDeck: Grid is nil")
+	}
+	if g.DeckStates[4] == nil || g.DeckStates[4].Grid == nil {
+		t.Error("JumpToDeck should save generated deck 5 state")
+	}
+}
+
+func TestJumpToDeck_LoadsStoredDeck(t *testing.T) {
+	g := BuildGame(1)
+	if err := JumpToDeck(g, 3); err != nil {
+		t.Fatalf("JumpToDeck(3): %v", err)
+	}
+	deck3Grid := g.Grid
+	if err := JumpToDeck(g, 1); err != nil {
+		t.Fatalf("JumpToDeck(1): %v", err)
+	}
+	if err := JumpToDeck(g, 3); err != nil {
+		t.Fatalf("JumpToDeck(3) again: %v", err)
+	}
+	if g.Grid != deck3Grid {
+		t.Error("JumpToDeck should load stored deck 3, not regenerate")
+	}
+}
+
+func TestJumpToDeck_InvalidDeck(t *testing.T) {
+	g := BuildGame(1)
+	if err := JumpToDeck(g, 0); err == nil {
+		t.Fatal("JumpToDeck(0) should fail")
+	}
+	if err := JumpToDeck(g, deck.TotalDecks+1); err == nil {
+		t.Fatal("JumpToDeck beyond TotalDecks should fail")
+	}
+}
+
+func TestJumpToDeck_ClearsCompletionState(t *testing.T) {
+	g := BuildGame(deck.TotalDecks)
+	TriggerGameComplete(g)
+	if err := JumpToDeck(g, 1); err != nil {
+		t.Fatalf("JumpToDeck(1): %v", err)
+	}
+	if g.GameComplete {
+		t.Error("JumpToDeck should clear GameComplete")
+	}
+}
+
 func TestAdvanceLevel_FinalDeckNoAdvance(t *testing.T) {
 	// AdvanceLevel on final deck does nothing (NextDeckID returns false).
 	g := BuildGame(deck.TotalDecks)
@@ -176,6 +230,9 @@ func TestTriggerGameComplete_SetsGameComplete(t *testing.T) {
 	TriggerGameComplete(g)
 	if !g.GameComplete {
 		t.Error("TriggerGameComplete should set GameComplete=true")
+	}
+	if g.CompletionPhase != state.CompletionPhaseSummary {
+		t.Errorf("CompletionPhase = %v, want Summary", g.CompletionPhase)
 	}
 }
 

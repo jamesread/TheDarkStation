@@ -92,6 +92,7 @@ func beginLongUse(g *state.Game, kind LongUseKind, cell *world.Cell) bool {
 	if duration <= 0 {
 		return false
 	}
+	FaceTowardAdjacentCell(g, cell)
 	g.LongUse = &state.LongUseSession{
 		Kind:        string(kind),
 		TargetRow:   cell.Row,
@@ -201,7 +202,7 @@ func completeGeneratorPowerUp(g *state.Game, cell *world.Cell) {
 		return
 	}
 	setup.NotifyPowerGridChanged(g)
-	setup.BootstrapPoweredGenerators(g)
+	setup.BootstrapPoweredGenerators(g, cell)
 	UpdateLightingExploration(g)
 	renderer.AddCallout(cell.Row, cell.Col,
 		"POWERED{"+gen.Name+" - online}", renderer.CalloutColorGeneratorOn, 0)

@@ -7,22 +7,18 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
 	"darkstation/pkg/engine/world"
-	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
 
 var fovRayColor = color.RGBA{255, 220, 80, 140}
 
-func fovSightBlocker(g *state.Game) world.SightBlocker {
-	if g == nil {
-		return nil
-	}
+func fovSightBlocker(snap *renderSnapshot) world.SightBlocker {
 	return func(cell *world.Cell) bool {
 		if !gameworld.HasDoor(cell) {
 			return false
 		}
-		return !setup.CellHasLivePower(g, cell)
+		return !snapCellHasLivePower(snap, cell)
 	}
 }
 
@@ -34,13 +30,13 @@ func mapCellCenterScreen(mapX, mapY float64, row, col, startRow, startCol, tileS
 		float32(mapY + float64(vRow)*float64(tileSize) + half)
 }
 
-func (e *EbitenRenderer) drawFOVRays(screen *ebiten.Image, g *state.Game, mapX, mapY float64, startRow, startCol int) {
+func (e *EbitenRenderer) drawFOVRays(screen *ebiten.Image, g *state.Game, snap *renderSnapshot, mapX, mapY float64, startRow, startCol int) {
 	if !e.DrawFOVRaysEnabled() || g == nil || g.Grid == nil || g.CurrentCell == nil {
 		return
 	}
 
 	center := g.CurrentCell
-	rays := world.CollectFOVRays(g.Grid, center, fovSightBlocker(g))
+	rays := world.CollectFOVRays(g.Grid, center, fovSightBlocker(snap))
 	if len(rays) == 0 {
 		return
 	}

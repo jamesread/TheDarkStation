@@ -9,7 +9,7 @@ import (
 	gameworld "darkstation/pkg/game/world"
 )
 
-// BootstrapGeneratorRoom arms routing and energizes the room containing a powered generator.
+// BootstrapGeneratorRoom turns the room circuit ON (doors + CCTV) for a powered generator on cell.
 func BootstrapGeneratorRoom(g *state.Game, cell *world.Cell) {
 	if g == nil || cell == nil || !cell.Room || cell.Name == "" || cell.Name == "Corridor" {
 		return
@@ -18,9 +18,15 @@ func BootstrapGeneratorRoom(g *state.Game, cell *world.Cell) {
 	if gen == nil || !gen.IsPowered() {
 		return
 	}
+	if g.RoomDoorsPowered == nil {
+		g.RoomDoorsPowered = make(map[string]bool)
+	}
+	if g.RoomCCTVPowered == nil {
+		g.RoomCCTVPowered = make(map[string]bool)
+	}
 	g.RoomDoorsPowered[cell.Name] = true
+	g.RoomCCTVPowered[cell.Name] = true
 	EnsureRoomPowerOnlineMap(g)
-	// RoomPowerOnline is derived from live conduit reachability (see PropagateRoomPowerOnlineFromGenerators).
 }
 
 // EnsureGeneratorRoomBootstrap arms routing for every generator room, energizes rooms whose
@@ -297,12 +303,14 @@ func MaintBootstrapOK(g *state.Game) bool {
 	return CountPoweredMaintenanceTerminals(g) > 0
 }
 
-// BootstrapPoweredGenerators refreshes generator-room routing and conductive terminal feed
-// after a generator comes online mid-game (does not re-arm doors the player turned off).
-func BootstrapPoweredGenerators(g *state.Game) {
+// BootstrapPoweredGenerators refreshes routing and conductive terminal feed after a generator
+// comes online mid-game. When poweredCell is set, that generator room's circuit is turned ON.
+func BootstrapPoweredGenerators(g *state.Game, poweredCell *world.Cell) {
 	if g == nil || g.Grid == nil {
 		return
 	}
-	PropagateRoomPowerOnlineFromGenerators(g)
-	ApplyGridConductivePower(g)
+	if poweredCell != nil {
+		BootstrapGeneratorRoom(g, poweredCell)
+	}
+	NotifyPowerGridChanged(g)
 }

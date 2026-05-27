@@ -2,6 +2,7 @@
 package setup
 
 import (
+	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/levelrand"
 	"fmt"
 
@@ -52,32 +53,29 @@ func placeSpawnGenerator(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 
 // findValidGeneratorCell finds a valid cell for generator placement
 func findValidGeneratorCell(g *state.Game, roomName string, startCell *world.Cell, avoid *mapset.Set[*world.Cell]) *world.Cell {
-	var validCell *world.Cell
-
-	// First pass: prefer cells that preserve init progression and are not weak chokepoints.
+	var preferred, fallback []*world.Cell
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if cell != nil && cell.Room && cell.Name == roomName && validCell == nil {
-			if isValidForGenerator(cell, avoid) && CanPlaceBlockingEntity(g, cell) &&
-				generatorAdjacentReachableAtInit(g, cell) &&
-				!isChokepoint(g.Grid, cell, startCell) {
-				validCell = cell
-			}
+		if cell == nil || !cell.Room || cell.Name != roomName {
+			return
+		}
+		if !isValidForGenerator(cell, avoid) || !CanPlaceBlockingEntity(g, cell) {
+			return
+		}
+		if !isChokepoint(g.Grid, cell, startCell) {
+			preferred = append(preferred, cell)
+		} else {
+			fallback = append(fallback, cell)
 		}
 	})
-
-	// Second pass: any valid cell that preserves init progression.
-	if validCell == nil {
-		g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-			if cell != nil && cell.Room && cell.Name == roomName && validCell == nil {
-				if isValidForGenerator(cell, avoid) && CanPlaceBlockingEntity(g, cell) &&
-					generatorAdjacentReachableAtInit(g, cell) {
-					validCell = cell
-				}
-			}
-		})
+	pool := preferred
+	if len(pool) == 0 {
+		pool = fallback
 	}
-
-	return validCell
+	if len(pool) == 0 {
+		return nil
+	}
+	levelrand.Shuffle(len(pool), func(i, j int) { pool[i], pool[j] = pool[j], pool[i] })
+	return pool[0]
 }
 
 // isValidForGenerator checks if a cell is valid for generator placement
@@ -93,7 +91,6 @@ func isValidForGenerator(cell *world.Cell, avoid *mapset.Set[*world.Cell]) bool 
 }
 
 // PlaceAdditionalGenerators places generators beyond the auto-started spawn generator (level 3+).
-// Call after EnsureGeneratorRoomBootstrap so init reachability reflects armed generator-room doors.
 func PlaceAdditionalGenerators(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 	if g == nil || g.Grid == nil || g.Level < 3 {
 		return
@@ -127,7 +124,7 @@ func calculateBatteriesForGenerator(level int) int {
 }
 
 func placeAdditionalGenerators(g *state.Game, avoid *mapset.Set[*world.Cell]) {
-	numAdditionalGenerators := g.Level - 3
+	numAdditionalGenerators := numAdditionalGeneratorsForLevel(g.Level)
 	start := g.Grid.StartCell()
 	for i := 0; i < numAdditionalGenerators; i++ {
 		batteriesRequired := calculateBatteriesForGenerator(g.Level)
@@ -135,15 +132,42 @@ func placeAdditionalGenerators(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		if placeAdditionalGenerator(g, start, avoid, gen) {
 			continue
 		}
-		// Last resort: any init-reachable room regardless of distance preference.
-		if placeAdditionalGeneratorInAnyReachableRoom(g, start, avoid, gen) {
+		// Last resort: allow rooms that already have a generator (single-room final deck).
+		if placeAdditionalGeneratorInAnyRoom(g, start, avoid, gen, true) {
 			continue
 		}
 	}
 }
 
+// numAdditionalGeneratorsForLevel returns how many unpowered generators to place beyond the spawn gen.
+func numAdditionalGeneratorsForLevel(level int) int {
+	if level < 3 {
+		return 0
+	}
+	if deck.IsFinalDeck(level) {
+		return 1 // GDD §10.2: final deck minimal systems
+	}
+	return level - 3
+}
+
+func roomHasGenerator(g *state.Game, roomName string) bool {
+	if g == nil || g.Grid == nil || roomName == "" {
+		return false
+	}
+	found := false
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if found || cell == nil || cell.Name != roomName {
+			return
+		}
+		if gameworld.GetGameData(cell).Generator != nil {
+			found = true
+		}
+	})
+	return found
+}
+
 func placeAdditionalGenerator(g *state.Game, start *world.Cell, avoid *mapset.Set[*world.Cell], gen *entities.Generator) bool {
-	for _, roomCell := range generatorRoomCandidates(g, start, avoid, true) {
+	for _, roomCell := range generatorRoomCandidates(g, start, avoid, true, false) {
 		if tryPlaceGeneratorInRoom(g, start, avoid, gen, roomCell) {
 			return true
 		}
@@ -151,8 +175,8 @@ func placeAdditionalGenerator(g *state.Game, start *world.Cell, avoid *mapset.Se
 	return false
 }
 
-func placeAdditionalGeneratorInAnyReachableRoom(g *state.Game, start *world.Cell, avoid *mapset.Set[*world.Cell], gen *entities.Generator) bool {
-	for _, roomCell := range generatorRoomCandidates(g, start, avoid, false) {
+func placeAdditionalGeneratorInAnyRoom(g *state.Game, start *world.Cell, avoid *mapset.Set[*world.Cell], gen *entities.Generator, allowOccupiedRooms bool) bool {
+	for _, roomCell := range generatorRoomCandidates(g, start, avoid, false, allowOccupiedRooms) {
 		if tryPlaceGeneratorInRoom(g, start, avoid, gen, roomCell) {
 			return true
 		}
@@ -175,15 +199,17 @@ func tryPlaceGeneratorInRoom(g *state.Game, start *world.Cell, avoid *mapset.Set
 	return true
 }
 
-// generatorRoomCandidates returns init-reachable rooms, preferring those far from start when preferFar is true.
-func generatorRoomCandidates(g *state.Game, start *world.Cell, avoid *mapset.Set[*world.Cell], preferFar bool) []*world.Cell {
-	reachable := InitialReachableCells(g)
+// generatorRoomCandidates returns deck rooms, preferring those far from start when preferFar is true.
+func generatorRoomCandidates(g *state.Game, start *world.Cell, avoid *mapset.Set[*world.Cell], preferFar, allowOccupiedRooms bool) []*world.Cell {
 	byRoom := make(map[string]*world.Cell)
-	reachable.Each(func(cell *world.Cell) {
-		if cell == nil || cell.Name == "" || cell.Name == "Corridor" {
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room || cell.Name == "" || cell.Name == "Corridor" {
 			return
 		}
 		if avoid != nil && avoid.Has(cell) {
+			return
+		}
+		if !allowOccupiedRooms && roomHasGenerator(g, cell.Name) {
 			return
 		}
 		if _, ok := byRoom[cell.Name]; !ok {

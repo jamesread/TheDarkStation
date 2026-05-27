@@ -234,3 +234,20 @@ func TestBSPGenerate_FinalDeckMinimalLayout(t *testing.T) {
 		t.Errorf("final deck should have fewer or equal room cells than mid deck: got %d vs %d", roomsFinal, roomsMid)
 	}
 }
+
+func TestBSPGenerate_FinalDeckHasMultipleRooms(t *testing.T) {
+	levelrand.Seed(42)
+	grid := DefaultGenerator.Generate(deck.TotalDecks)
+	if grid == nil {
+		t.Fatal("Generate returned nil")
+	}
+	names := make(map[string]bool)
+	grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell != nil && cell.Room && cell.Name != "" && cell.Name != "Corridor" {
+			names[cell.Name] = true
+		}
+	})
+	if len(names) < 2 {
+		t.Fatalf("final deck should have at least 2 named rooms, got %d", len(names))
+	}
+}

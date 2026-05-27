@@ -26,7 +26,13 @@ func TestGetCellRenderOptions_doorManualRelease_isYellow(t *testing.T) {
 	gameworld.GetGameData(doorCell).Door = &entities.Door{RoomName: "RoomB", Locked: false}
 	g.ManualEgressReleased["RoomB"] = true
 
-	snap := &renderSnapshot{playerRow: 0, playerCol: 0}
+	snap := &renderSnapshot{
+		playerRow: 0,
+		playerCol: 0,
+		mapPower: mapPowerSnapshot{
+			manualEgressReleased: map[string]bool{"RoomB": true},
+		},
+	}
 	opts := e.getCellRenderOptions(g, doorCell, snap, false)
 	if opts.Color != colorDoorLocked {
 		t.Fatalf("manual release door color = %v, want yellow %v", opts.Color, colorDoorLocked)

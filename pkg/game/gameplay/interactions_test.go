@@ -206,6 +206,47 @@ func TestCheckAdjacentGeneratorAtCell_NoGenerator(t *testing.T) {
 	}
 }
 
+func TestCheckAdjacentInteractables_facesInteractedCell(t *testing.T) {
+	g := makeTestGame(3, 3)
+	g.CurrentCell = g.Grid.GetCell(1, 1)
+	g.PlayerFacing = state.FaceNorth
+
+	south := g.Grid.GetCell(2, 1)
+	gameworld.GetGameData(south).Generator = entities.NewGenerator("South Gen", 0)
+
+	if !CheckAdjacentInteractables(g) {
+		t.Fatal("expected generator interaction")
+	}
+	if g.PlayerFacing != state.FaceSouth {
+		t.Errorf("PlayerFacing = %v, want FaceSouth", g.PlayerFacing)
+	}
+}
+
+func TestCheckAdjacentInteractables_facesCycledTarget(t *testing.T) {
+	g := makeTestGame(3, 3)
+	g.CurrentCell = g.Grid.GetCell(1, 1)
+	g.PlayerFacing = state.FaceNorth
+
+	east := g.Grid.GetCell(1, 2)
+	west := g.Grid.GetCell(1, 0)
+	gameworld.GetGameData(east).Generator = entities.NewGenerator("East Gen", 0)
+	gameworld.GetGameData(west).Generator = entities.NewGenerator("West Gen", 0)
+
+	if !CheckAdjacentInteractables(g) {
+		t.Fatal("expected first generator interaction")
+	}
+	if g.PlayerFacing != state.FaceEast {
+		t.Fatalf("first interact: PlayerFacing = %v, want FaceEast", g.PlayerFacing)
+	}
+
+	if !CheckAdjacentInteractables(g) {
+		t.Fatal("expected cycled generator interaction")
+	}
+	if g.PlayerFacing != state.FaceWest {
+		t.Errorf("cycled interact: PlayerFacing = %v, want FaceWest", g.PlayerFacing)
+	}
+}
+
 func TestPickUpItemsOnFloor_Battery(t *testing.T) {
 	g := makeTestGame(2, 2)
 	battery := world.NewItem("Battery")

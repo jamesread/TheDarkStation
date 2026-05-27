@@ -2,6 +2,7 @@
 package gameplay
 
 import (
+	"fmt"
 	"time"
 
 	"darkstation/pkg/game/levelrand"
@@ -13,9 +14,12 @@ import (
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/levelgen"
+	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 )
+
+const levelGenTotalSteps = 11
 
 // GenerateGrid creates a new grid using the default generator
 func GenerateGrid(level int) *world.Grid {
@@ -41,6 +45,7 @@ func BuildGame(startLevel int) *state.Game {
 	seed := time.Now().UnixNano()
 	generateLevel(g, startLevel, seed)
 
+	InitRunTracking(g)
 	g.ClearMessages()
 
 	return g
@@ -48,12 +53,24 @@ func BuildGame(startLevel int) *state.Game {
 
 // generateLevel rebuilds grid and setup from a seed (deterministic when seed is fixed).
 func generateLevel(g *state.Game, level int, seed int64) {
+	renderer.BeginLevelGen(level, levelGenTotalSteps)
+	defer renderer.ClearLevelGenProgress()
+
+	step := 0
+	report := func(label string) {
+		step++
+		renderer.ReportLevelGenProgress(step, levelGenTotalSteps, label)
+	}
+
+	report("Preparing deck")
 	levelrand.Seed(seed)
 	g.LevelSeed = seed
 	g.Level = level
 	g.CurrentDeckID = level - 1
+
+	report("Generating layout")
 	g.Grid = GenerateGrid(level)
-	SetupLevel(g)
+	setupLevel(g, report)
 }
 
 // RegenerateFromSeed rebuilds the current level from seed (for reset / debug reproduction).
@@ -106,6 +123,7 @@ func clearLevelProgress(g *state.Game) {
 	g.LastInteractedCol = -1
 	g.InteractionPlayerRow = -1
 	g.InteractionPlayerCol = -1
+	g.PlayerFacing = state.FaceNorth
 
 	g.ExitAnimating = false
 	g.ExitAnimStartTime = 0
@@ -141,59 +159,62 @@ func refreshDeckPower(g *state.Game) {
 	g.PowerConsumption = g.CalculatePowerConsumption()
 }
 
-// SetupLevel configures the current level with items and keys
+// SetupLevel configures the current level with items and keys.
 func SetupLevel(g *state.Game) {
+	setupLevel(g, func(string) {})
+}
+
+func setupLevel(g *state.Game, report func(string)) {
+	if report == nil {
+		report = func(string) {}
+	}
+
 	g.ResetObservationCueAnnounced()
 	g.ResetLinkageTokensSeen()
+
+	report("Installing core systems")
 	config := setup.SetupLevel(g)
 	avoid := &config.Avoid
 	lockedDoorCells := &config.LockedDoorCells
 	minimalSystems := deck.IsFinalDeck(g.Level) // Final deck: minimal rooms/systems (GDD §10.2)
 
-	// Place environmental hazards (level 2+), skip on final deck
+	report("Placing environmental hazards")
 	if g.Level >= 2 && !minimalSystems {
 		levelgen.PlaceHazards(g, avoid, lockedDoorCells)
 	}
 
-	// Place furniture in rooms (1-2 per room); none on final deck
+	report("Furnishing rooms")
 	if !minimalSystems {
 		levelgen.PlaceFurniture(g, avoid)
 	}
 
-	// Place puzzle terminals (level 2+), skip on final deck
+	report("Deploying puzzle terminals")
 	if g.Level >= 2 && !minimalSystems {
 		levelgen.PlacePuzzles(g, avoid)
 	}
 
-	// Maintenance terminals (one per room); keep on final deck for barely functional power
+	report("Routing maintenance")
 	levelgen.PlaceMaintenanceTerminals(g, avoid)
 
-	// Relocate init-trapped keycards/generators and clear furniture that blocks interact access.
+	report("Ensuring reachability")
 	setup.EnsureInitProgressReachability(g)
 	setup.EnsureInteractableNavAccess(g)
 
-	// Ensure no control-dependency deadlock: gatekeeper rooms with unpowered doors
-	// must be powerable from an adjacent room that has a terminal; otherwise power them initially.
+	report("Energizing power grid")
 	setup.EnsureSolvabilityDoorPower(g)
-
 	setup.InitMaintenanceTerminalPower(g)
 	setup.EnsureGeneratorRoomBootstrap(g)
 	setup.PlaceAdditionalGenerators(g, avoid)
 	setup.PlaceBatteries(g, avoid)
-	setup.EnsureBatteryReachability(g)
 
-	// Remove or avoid blockers that would make the exit permanently unreachable (R7).
+	report("Checking exit routes")
 	setup.EnsureExitReachability(g)
-
-	// Diegetic corridor signage tied to functional deck layer (Story 5.1).
 	setup.ApplyEnvironmentalSignage(g)
 	setup.ApplyObservationLedPuzzleCues(g)
 	setup.ApplyMultiHopLinkage(g)
-
-	// Corridor power relays for power grid (power-routing Phase 3).
 	setup.ApplyPowerRelays(g)
 
-	// Move player to start cell (setup package sets current cell to center)
+	report("Finalizing deck")
 	MoveCell(g, g.Grid.StartCell())
 }
 
@@ -225,10 +246,7 @@ func ResetLevel(g *state.Game) {
 
 // TriggerGameComplete is called when the player reaches the exit on the final deck.
 // The lift has no destination; the game is complete (ending per GDD §11).
-func TriggerGameComplete(g *state.Game) {
-	g.GameComplete = true
-	logMessage(g, "No further work requests detected.")
-}
+// Implementation lives in completion.go (stats snapshot and end-screen phases).
 
 // AdvanceLevel moves to the next deck via the graph: saves current deck state,
 // loads or generates the next deck, sets CurrentDeckID/Level (Phase 3.3, 3.4).
@@ -261,4 +279,54 @@ func AdvanceLevel(g *state.Game) {
 
 	g.ClearMessages()
 	logMessage(g, "You moved to deck %d!", g.Level)
+}
+
+// JumpToDeck moves the player to the given deck level (1-based). Developer/testing only.
+// Loads saved deck state when available; otherwise generates a new layout.
+func JumpToDeck(g *state.Game, targetLevel int) error {
+	if g == nil {
+		return fmt.Errorf("no game state")
+	}
+	if targetLevel < 1 || targetLevel > deck.TotalDecks {
+		return fmt.Errorf("deck must be between 1 and %d", deck.TotalDecks)
+	}
+	if targetLevel == g.Level {
+		return nil
+	}
+
+	g.SaveCurrentDeckState()
+	clearCrossDeckPowerState(g)
+	clearCompletionState(g)
+
+	targetID := targetLevel - 1
+	if ds := g.DeckStates[targetID]; ds != nil && ds.Grid != nil {
+		g.LoadDeckState(targetID)
+		refreshDeckPower(g)
+		UpdateLightingExploration(g)
+	} else {
+		g.CurrentDeckID = targetID
+		g.Level = targetLevel
+		seed := time.Now().UnixNano()
+		generateLevel(g, targetLevel, seed)
+		refreshDeckPower(g)
+		g.SaveCurrentDeckState()
+		UpdateLightingExploration(g)
+	}
+
+	g.ClearMessages()
+	logMessage(g, "Jumped to deck %d (dev)", g.Level)
+	return nil
+}
+
+func clearCompletionState(g *state.Game) {
+	if g == nil {
+		return
+	}
+	g.GameComplete = false
+	g.CompletionPhase = state.CompletionPhaseSummary
+	g.CreditsLineIndex = 0
+	g.CreditsLineStartMs = 0
+	g.CreditsExitStartMs = 0
+	g.CreditsTransitionStartMs = 0
+	g.QuitToTitle = false
 }

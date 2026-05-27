@@ -84,13 +84,13 @@ func (g *BSPGenerator) Generate(level int) *world.Grid {
 		height: rows - 2,
 	}
 
-	// More splits at higher levels for more rooms; final deck keeps minimal splits
+	// More splits at higher levels for more rooms; final deck keeps fewer splits (not zero).
 	minSize := minNodeSize - (level / 3)
 	if minSize < 6 {
 		minSize = 6
 	}
 	if isFinal {
-		minSize = 14 // Fewer, larger nodes → fewer rooms
+		minSize = 7 // 14×8 playable area can split into 2–3 rooms; 14 prevented any split
 	}
 	splitBSP(root, minSize)
 

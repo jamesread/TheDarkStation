@@ -72,6 +72,13 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 		return
 	}
 
+	e.snapSeq++
+	e.snapshot.seq = e.snapSeq
+
+	if g.MaintenanceMenuRoom != "" {
+		e.playerMove.snapTo(g.Level, g.CurrentCell.Row, g.CurrentCell.Col, e.snapSeq)
+	}
+
 	// Update tracked player position (clearing is now done via ClearCalloutsIfMoved)
 	e.lastPlayerRow = g.CurrentCell.Row
 	e.lastPlayerCol = g.CurrentCell.Col
@@ -81,6 +88,7 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 	e.snapshot.level = g.Level
 	e.snapshot.playerRow = g.CurrentCell.Row
 	e.snapshot.playerCol = g.CurrentCell.Col
+	e.snapshot.playerFacing = g.PlayerFacing
 	e.snapshot.cellName = g.CurrentCell.Name
 	e.snapshot.hasMap = g.HasMap
 	e.snapshot.batteries = g.Batteries
@@ -88,7 +96,7 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 	e.snapshot.gridCols = g.Grid.Cols()
 
 	// Compute persistent room labels (for rooms the player has visited)
-	e.snapshot.roomLabels = e.computeRoomLabels(g)
+	e.snapshot.roomLabels = e.refreshRoomLabels(g)
 	e.snapshot.envPlaques = e.computeEnvPlaques(g)
 
 	// Copy owned items
@@ -111,7 +119,7 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 	}
 
 	// Calculate objectives
-	e.snapshot.objectives = e.calculateObjectives(g)
+	e.snapshot.objectives = e.refreshObjectives(g)
 
 	// Copy exit animation state
 	e.snapshot.exitAnimating = g.ExitAnimating
@@ -209,6 +217,7 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 	}
 
 	capturePowerGridSnapshot(g, &e.snapshot)
+	e.refreshMapPowerSnapshot(g, &e.snapshot)
 }
 
 // computeRoomLabels finds the leftmost valid position for each visited room's label,
@@ -346,7 +355,7 @@ func (e *EbitenRenderer) computeRoomLabels(g *state.Game) []roomLabel {
 
 // computeEnvPlaques collects corridor plaques for cells the player has discovered or visited.
 func (e *EbitenRenderer) computeEnvPlaques(g *state.Game) []envPlaque {
-	if g == nil || g.Grid == nil {
+	if !e.EnvPlaquesEnabled() || g == nil || g.Grid == nil {
 		return nil
 	}
 	var out []envPlaque

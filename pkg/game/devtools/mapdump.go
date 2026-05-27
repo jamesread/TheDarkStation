@@ -60,7 +60,7 @@ func writeMapGrid(f *os.File, g *state.Game, rows, cols int, revealedOnly bool, 
 		for col := 0; col < cols; col++ {
 			cell := g.Grid.GetCell(row, col)
 			if row == playerRow && col == playerCol && g.CurrentCell != nil {
-				fmt.Fprint(f, "@")
+				fmt.Fprint(f, g.PlayerFacing.Icon())
 				continue
 			}
 			if cell != nil && cell.ExitCell {

@@ -114,8 +114,17 @@ func (e *EbitenRenderer) Clear() {
 
 // GetInput gets user input from Ebiten (blocking)
 func (e *EbitenRenderer) GetInput() engineinput.Intent {
-	// Wait for input from the Ebiten game loop
 	return <-e.inputChan
+}
+
+// TryGetInput returns a pending intent without blocking.
+func (e *EbitenRenderer) TryGetInput() (engineinput.Intent, bool) {
+	select {
+	case intent := <-e.inputChan:
+		return intent, true
+	default:
+		return engineinput.Intent{Action: engineinput.ActionNone}, false
+	}
 }
 
 // StyleText applies a style to text

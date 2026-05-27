@@ -52,16 +52,11 @@ func (e *EbitenRenderer) Update() error {
 		return nil
 	}
 
-	// Update floating tiles animation if main menu is active
-	// Step 2: Enable update loop (tiles move but not drawn yet)
-	e.genericMenuMutex.RLock()
-	genericMenuActive := e.genericMenuActive
-	title := e.genericMenuTitle
-	e.genericMenuMutex.RUnlock()
-
-	if genericMenuActive && title == "The Dark Station" {
+	// Update floating tiles for main menu and completion screens.
+	if e.floatingTilesAnimationActive() {
 		w, h := ebiten.WindowSize()
 		if w > 0 && h > 0 {
+			e.ensureFloatingTiles(w, h)
 			e.updateFloatingTiles(w, h)
 		}
 	}
@@ -174,6 +169,7 @@ func (e *EbitenRenderer) saveZoomPreference() {
 func (e *EbitenRenderer) recalculateViewport() {
 	// Invalidate font cache since sizes may have changed
 	e.invalidateFontCache()
+	e.invalidateMapDrawCache()
 
 	w, h := e.windowWidth, e.windowHeight
 	if w <= 0 || h <= 0 {

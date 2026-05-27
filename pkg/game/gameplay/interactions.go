@@ -152,6 +152,7 @@ func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLa
 			continue
 		}
 		if gameworld.HasGenerator(cell) && CheckAdjacentGeneratorAtCell(g, cell) {
+			FaceTowardAdjacentCell(g, cell)
 			g.LastInteractedRow = cell.Row
 			g.LastInteractedCol = cell.Col
 			g.InteractionsCount++
@@ -168,6 +169,7 @@ func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLa
 
 		if gameworld.HasFurniture(cell) {
 			if CheckAdjacentFurnitureAtCell(g, cell) {
+				FaceTowardAdjacentCell(g, cell)
 				g.LastInteractedRow = cell.Row
 				g.LastInteractedCol = cell.Col
 				g.InteractionsCount++
@@ -177,6 +179,7 @@ func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLa
 		}
 		if gameworld.HasUnusedTerminal(cell) {
 			if CheckAdjacentTerminalsAtCell(g, cell) {
+				FaceTowardAdjacentCell(g, cell)
 				g.LastInteractedRow = cell.Row
 				g.LastInteractedCol = cell.Col
 				g.InteractionsCount++
@@ -186,6 +189,7 @@ func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLa
 		}
 		if gameworld.HasUnsolvedPuzzle(cell) {
 			if CheckAdjacentPuzzlesAtCell(g, cell) {
+				FaceTowardAdjacentCell(g, cell)
 				g.LastInteractedRow = cell.Row
 				g.LastInteractedCol = cell.Col
 				g.InteractionsCount++
@@ -195,6 +199,7 @@ func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLa
 		}
 		if gameworld.HasInactiveHazardControl(cell) {
 			if CheckAdjacentHazardControlsAtCell(g, cell) {
+				FaceTowardAdjacentCell(g, cell)
 				g.LastInteractedRow = cell.Row
 				g.LastInteractedCol = cell.Col
 				g.InteractionsCount++
@@ -204,6 +209,7 @@ func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLa
 		}
 		if gameworld.HasPowerRelay(cell) {
 			if CheckAdjacentPowerRelayAtCell(g, cell) {
+				FaceTowardAdjacentCell(g, cell)
 				g.LastInteractedRow = cell.Row
 				g.LastInteractedCol = cell.Col
 				g.InteractionsCount++
@@ -213,6 +219,7 @@ func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLa
 		}
 		if gameworld.HasMaintenanceTerminal(cell) {
 			if CheckAdjacentMaintenanceTerminalAtCell(g, cell) {
+				FaceTowardAdjacentCell(g, cell)
 				// Reset last interacted cell so maintenance terminal can be reopened immediately
 				g.LastInteractedRow = -1
 				g.LastInteractedCol = -1

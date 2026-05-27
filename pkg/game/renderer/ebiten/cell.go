@@ -8,7 +8,6 @@ import (
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/features"
-	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -22,7 +21,7 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 
 	// Player position - use snapshot coordinates for consistency (unless we want underfoot options)
 	if !forUnderfoot && cell.Row == snap.playerRow && cell.Col == snap.playerCol {
-		return CellRenderOptions{Icon: PlayerIcon, Color: colorPlayer, HasBackground: false}
+		return CellRenderOptions{Icon: snap.playerFacing.Icon(), Color: colorPlayer, HasBackground: false}
 	}
 
 	// Get game-specific data for this cell
@@ -46,8 +45,8 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 	// Door (show if has map or discovered)
 	if gameworld.HasDoor(cell) && (g.HasMap || cell.Discovered) {
 		roomName := data.Door.RoomName
-		if !setup.CellHasLivePower(g, cell) {
-			if setup.RoomManualEgressReleased(g, roomName) {
+		if !snapCellHasLivePower(snap, cell) {
+			if snapRoomManualEgressReleased(snap, roomName) {
 				return CellRenderOptions{Icon: IconDoorUnlocked, Color: colorDoorLocked, HasBackground: true}
 			}
 			// Unpowered: use hazard color (matches UNPOWERED{} markup)
@@ -253,19 +252,20 @@ func hasAdjacentRoomNamed(c *world.Cell, roomName string) bool {
 }
 
 // maintSelectableRoomWallBg tints walls for adjacent selectable rooms while the maintenance menu is open.
-func maintSelectableRoomWallBg(g *state.Game, cell *world.Cell) color.Color {
-	if g == nil || cell == nil || g.MaintenanceMenuRoom == "" || len(g.MaintenanceSelectableRooms) == 0 {
+func maintSelectableRoomWallBg(snap *renderSnapshot, cell *world.Cell) color.Color {
+	menuRoom := snapMaintenanceMenuRoom(snap)
+	if snap == nil || cell == nil || menuRoom == "" || len(snap.mapPower.maintenanceSelectableRooms) == 0 {
 		return nil
 	}
-	for _, room := range g.MaintenanceSelectableRooms {
-		if room == g.MaintenanceMenuRoom {
+	for _, room := range snap.mapPower.maintenanceSelectableRooms {
+		if room == menuRoom {
 			continue
 		}
 		if !hasAdjacentRoomNamed(cell, room) {
 			continue
 		}
-		doors := g.RoomDoorsPowered[room]
-		cctv := g.RoomCCTVPowered[room]
+		doors := snap.mapPower.roomDoorsPowered != nil && snap.mapPower.roomDoorsPowered[room]
+		cctv := snap.mapPower.roomCCTVPowered != nil && snap.mapPower.roomCCTVPowered[room]
 		switch {
 		case doors && cctv:
 			return color.RGBA{35, 90, 55, 255}

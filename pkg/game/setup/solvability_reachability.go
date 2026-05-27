@@ -286,8 +286,5 @@ func AnalyzeSolvability(g *state.Game) SolvabilityReport {
 	if !keycardsAccessible(g, reachable) {
 		report.Warnings = append(report.Warnings, "keycard not reachable at init (I3 violation)")
 	}
-	if !generatorsAccessible(g, reachable) {
-		report.Warnings = append(report.Warnings, "generator not reachable at init (I5 violation)")
-	}
 	return report
 }

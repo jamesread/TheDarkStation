@@ -10,6 +10,7 @@ import (
 
 	"github.com/leonelquinteros/gotext"
 
+	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/devtools"
 	"darkstation/pkg/game/gameplay"
@@ -100,7 +101,7 @@ func main() {
 				mainLoop(g)
 				// Check if we should quit to title
 				if g.QuitToTitle {
-					// Break out of game loop to return to main menu
+					g.ResetAllProgress()
 					break
 				}
 			}
@@ -144,14 +145,34 @@ func runMainMenuInLoop() gamemenu.MainMenuAction {
 }
 
 func mainLoop(g *state.Game) {
-	// Completion screen: only render and process input (any key returns to title)
+	if g.QuitToTitle {
+		return
+	}
+
+	// Completion screen: stats, credits, then return to title (non-blocking so animations run).
 	if g.GameComplete {
+		intent := engineinput.Intent{Action: engineinput.ActionNone}
+		if pending, ok := renderer.TryGetIntent(); ok {
+			intent = pending
+		}
+		gameplay.ProcessCompletionInput(g, intent)
+		if g.QuitToTitle {
+			return
+		}
+		gameplay.UpdateCompletionSequence(g)
+		if g.QuitToTitle {
+			return
+		}
 		renderer.RenderFrame(g)
-		gameplay.ProcessIntent(g, renderer.Current.GetInput())
+		time.Sleep(16 * time.Millisecond)
 		return
 	}
 
 	renderer.Clear()
+
+	if g.CurrentCell == nil || g.Grid == nil {
+		return
+	}
 
 	renderer.ClearCalloutsIfMoved(g.CurrentCell.Row, g.CurrentCell.Col)
 	renderer.ShowRoomEntryIfNew(g.CurrentCell.Row, g.CurrentCell.Col, g.CurrentCell.Name)

@@ -106,6 +106,54 @@ func capturePowerGridSnapshot(g *state.Game, snap *renderSnapshot) {
 	pg.fedRooms = copyStringBoolMap(setup.RoomsFedByPoweredGeneratorGrid(g))
 }
 
+// captureMapPowerSnapshot records live power and room circuit maps on the game thread (RenderFrame).
+func captureMapPowerSnapshot(g *state.Game, snap *renderSnapshot) {
+	if snap == nil {
+		return
+	}
+	mp := &snap.mapPower
+	*mp = mapPowerSnapshot{}
+	if g == nil || g.Grid == nil {
+		return
+	}
+	mp.livePowerCells = cellSetToKeyMap(setup.CellsReachableFromPoweredGenerators(g))
+	mp.roomDoorsPowered = copyStringBoolMap(g.RoomDoorsPowered)
+	mp.roomCCTVPowered = copyStringBoolMap(g.RoomCCTVPowered)
+	mp.manualEgressReleased = copyStringBoolMap(g.ManualEgressReleased)
+	mp.maintenanceMenuRoom = g.MaintenanceMenuRoom
+	if len(g.MaintenanceSelectableRooms) > 0 {
+		mp.maintenanceSelectableRooms = append([]string(nil), g.MaintenanceSelectableRooms...)
+	}
+}
+
+func snapCellHasLivePower(snap *renderSnapshot, cell *world.Cell) bool {
+	if snap == nil {
+		return false
+	}
+	return snapshotHasCell(snap.mapPower.livePowerCells, cell)
+}
+
+func snapRoomManualEgressReleased(snap *renderSnapshot, roomName string) bool {
+	if snap == nil || roomName == "" {
+		return false
+	}
+	return snap.mapPower.manualEgressReleased != nil && snap.mapPower.manualEgressReleased[roomName]
+}
+
+func snapRoomCCTVPowered(snap *renderSnapshot, roomName string) bool {
+	if snap == nil || roomName == "" {
+		return false
+	}
+	return snap.mapPower.roomCCTVPowered != nil && snap.mapPower.roomCCTVPowered[roomName]
+}
+
+func snapMaintenanceMenuRoom(snap *renderSnapshot) string {
+	if snap == nil {
+		return ""
+	}
+	return snap.mapPower.maintenanceMenuRoom
+}
+
 func powerGridSeedCell(g *state.Game) *world.Cell {
 	if g == nil || g.Grid == nil {
 		return nil

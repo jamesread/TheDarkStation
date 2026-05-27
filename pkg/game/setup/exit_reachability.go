@@ -76,7 +76,7 @@ func ExitReachableWhenCompletable(g *state.Game, extraBlocked *world.Cell) bool 
 
 // CanPlaceBlockingEntity reports whether placing a permanent blocker at candidate still
 // leaves a completable path to the exit (R7), preserves adjacent nav space for interactables,
-// and does not cut off init-reachable keycards or generators (I3 / I5).
+// and does not cut off init-reachable keycards or rooms.
 func CanPlaceBlockingEntity(g *state.Game, candidate *world.Cell) bool {
 	if g == nil || candidate == nil {
 		return false

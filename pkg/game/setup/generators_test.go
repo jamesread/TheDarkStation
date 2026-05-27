@@ -169,6 +169,15 @@ func countGridGenerators(g *state.Game) int {
 	return n
 }
 
+func TestNumAdditionalGeneratorsForLevel_finalDeckMinimal(t *testing.T) {
+	if got := numAdditionalGeneratorsForLevel(10); got != 1 {
+		t.Fatalf("final deck additional generators = %d, want 1", got)
+	}
+	if got := numAdditionalGeneratorsForLevel(7); got != 4 {
+		t.Fatalf("level 7 additional generators = %d, want 4", got)
+	}
+}
+
 func TestPlaceAdditionalGenerators_AfterBootstrap_mapTxtSeed(t *testing.T) {
 	// Regression: level 7 map.txt seed previously placed only the spawn generator.
 	g := state.NewGame()

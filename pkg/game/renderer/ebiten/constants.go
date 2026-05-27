@@ -58,7 +58,6 @@ var (
 
 // Icon constants - Unicode characters for proper font rendering
 const (
-	PlayerIcon             = "@"
 	IconWall               = "▒"
 	IconUnvisited          = "●"
 	IconVisited            = "○"
@@ -116,6 +115,9 @@ const (
 )
 
 const (
-	keyRepeatInitialDelay = 500 // Initial delay before first repeat (milliseconds)
-	keyRepeatInterval     = 100 // Interval between repeat events (milliseconds)
+	// playerMoveDurationMs is the visual slide time per tile (see player_move.go).
+	// Key repeat is matched so held WASD/arrows step once per completed slide.
+	playerMoveDurationMs  = 140
+	keyRepeatInitialDelay = playerMoveDurationMs
+	keyRepeatInterval     = playerMoveDurationMs
 )

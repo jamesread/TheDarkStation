@@ -71,8 +71,33 @@ func TestBootstrapGeneratorRoom_armsAndEnergizes(t *testing.T) {
 	if !g.RoomDoorsPowered["RoomA"] {
 		t.Error("doors should be armed")
 	}
+	if !g.RoomCCTVPowered["RoomA"] {
+		t.Error("CCTV circuit should be armed")
+	}
 	if !RoomIsOnline(g, "RoomA") {
 		t.Error("room should be online")
+	}
+	_ = grid
+}
+
+func TestBootstrapPoweredGenerators_armsPoweredCellRoom(t *testing.T) {
+	g, grid, start, _ := makePowerGridTestGrid(t)
+	gen := entities.NewGenerator("G", 1)
+	gen.InsertBatteriesAndStart(1)
+	gameworld.GetGameData(start).Generator = gen
+	g.RoomDoorsPowered = map[string]bool{"RoomA": false}
+	g.RoomCCTVPowered = map[string]bool{"RoomA": false}
+
+	BootstrapPoweredGenerators(g, start)
+
+	if !g.RoomDoorsPowered["RoomA"] {
+		t.Fatal("generator room doors should be armed when generator comes online")
+	}
+	if !g.RoomCCTVPowered["RoomA"] {
+		t.Fatal("generator room CCTV should be armed when generator comes online")
+	}
+	if !RoomIsOnline(g, "RoomA") {
+		t.Fatal("generator room should be online")
 	}
 	_ = grid
 }

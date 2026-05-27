@@ -14,3 +14,16 @@ func TestVisitedSystemEnabled_cvar(t *testing.T) {
 	}
 	setCvar("gameplay.visited", "0")
 }
+
+func TestEnvPlaquesEnabled_cvar(t *testing.T) {
+	e := &EbitenRenderer{}
+	setCvar("draw.env_plaques", "0")
+	if e.EnvPlaquesEnabled() {
+		t.Fatal("expected off with draw.env_plaques=0")
+	}
+	setCvar("draw.env_plaques", "1")
+	if !e.EnvPlaquesEnabled() {
+		t.Fatal("expected on with draw.env_plaques=1")
+	}
+	setCvar("draw.env_plaques", "0")
+}

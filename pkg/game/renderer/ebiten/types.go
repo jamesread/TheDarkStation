@@ -46,9 +46,11 @@ type envPlaque struct {
 // This prevents jitter from race conditions between game logic and rendering
 type renderSnapshot struct {
 	valid             bool
+	seq               uint64
 	level             int
 	playerRow         int
 	playerCol         int
+	playerFacing      state.PlayerFacing
 	cellName          string
 	hasMap            bool
 	batteries         int
@@ -73,6 +75,17 @@ type renderSnapshot struct {
 	longUseTargetRow int
 	longUseTargetCol int
 	powerGrid        powerGridSnapshot
+	mapPower         mapPowerSnapshot
+}
+
+// mapPowerSnapshot holds power routing state copied on the game thread for race-free Draw.
+type mapPowerSnapshot struct {
+	livePowerCells             map[uint64]bool
+	roomDoorsPowered           map[string]bool
+	roomCCTVPowered            map[string]bool
+	manualEgressReleased       map[string]bool
+	maintenanceMenuRoom        string
+	maintenanceSelectableRooms []string
 }
 
 // powerGridSnapshot holds overlay routing computed on the game thread for race-free Draw.
@@ -232,6 +245,9 @@ type EbitenRenderer struct {
 	debounceStartTime int64  // Timestamp when debounce started (milliseconds)
 	debounceMutex     sync.RWMutex
 
+	playerFacingRot playerFacingRotation
+	playerMove      playerMoveTransition
+
 	// Camera transition state (smooth pan when focusing on room in select room dialog)
 	cameraCenterRow           float64
 	cameraCenterCol           float64
@@ -246,6 +262,19 @@ type EbitenRenderer struct {
 	mapBuffer       *ebiten.Image
 	mapBufferWidth  int
 	mapBufferHeight int
+	mapDrawCache    mapDrawCache
+
+	// snapSeq increments each RenderFrame; map draw cache uses it to skip redundant buffer fills
+	// when Ebiten calls Draw() more than once per game tick.
+	snapSeq uint64
+
+	// Cached expensive snapshot derivations (invalidated by lightweight keys; no game logic changes).
+	mapPowerSnapCacheKey mapPowerSnapCacheKey
+	mapPowerLiveCells    map[uint64]bool
+	roomLabelsCacheKey   roomLabelsCacheKey
+	roomLabelsCache      []roomLabel
+	objectivesCacheKey   objectivesCacheKey
+	objectivesCache      []string
 
 	// Background animation for main menu (floating tiles)
 	floatingTiles      []floatingTile
@@ -281,6 +310,42 @@ type EbitenRenderer struct {
 	textInputText     string
 	textInputResultCh chan textInputResult
 	textInputMutex    sync.RWMutex
+
+	// Level generation loading overlay (updated on game thread, read in Draw).
+	levelGen     levelGenLoading
+	loadingMutex sync.RWMutex
+}
+
+// mapDrawCache records the last offscreen map build so duplicate Draw() calls in one frame
+// can blit without refilling every tile.
+type mapDrawCache struct {
+	valid                        bool
+	snapSeq                      uint64
+	camRowMilli, camColMilli     int64
+	startRow, startCol           int
+	blitX, blitY                 float64
+	bufW, bufH                   int
+	tileSize, viewRows, viewCols int
+}
+
+type mapPowerSnapCacheKey struct {
+	powerSupply, powerConsumption int
+	generatorPoweredMask          uint64
+	maintRoom                     string
+	powerGridOverlay              bool
+}
+
+type roomLabelsCacheKey struct {
+	level, playerRow, playerCol int
+	maintRoom                   string
+	maintMenuMode               bool
+	powerSupply                 int
+	generatorPoweredMask        uint64
+}
+
+type objectivesCacheKey struct {
+	level, movementCount, interactionsCount int
+	unpoweredGenerators                     int
 }
 
 // floatingTile represents a single tile in the background animation

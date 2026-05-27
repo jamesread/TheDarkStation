@@ -181,7 +181,7 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 
 // MoveCell moves the player to a new cell
 func MoveCell(g *state.Game, requestedCell *world.Cell) {
-	// Determine direction for debounce animation
+	// Determine direction for debounce animation and facing
 	var direction string
 	if g.CurrentCell != nil {
 		if requestedCell == g.CurrentCell.North {
@@ -193,6 +193,9 @@ func MoveCell(g *state.Game, requestedCell *world.Cell) {
 		} else if requestedCell == g.CurrentCell.West {
 			direction = "west"
 		}
+	}
+	if direction != "" {
+		setPlayerFacingFromDirection(g, direction)
 	}
 
 	if res, _ := CanEnter(g, requestedCell, true); res {
@@ -231,6 +234,29 @@ func MoveCell(g *state.Game, requestedCell *world.Cell) {
 		if direction != "" {
 			renderer.SetDebounceAnimation(direction)
 		}
+	}
+}
+
+func setPlayerFacingFromDirection(g *state.Game, direction string) {
+	switch direction {
+	case "north":
+		g.PlayerFacing = state.FaceNorth
+	case "south":
+		g.PlayerFacing = state.FaceSouth
+	case "east":
+		g.PlayerFacing = state.FaceEast
+	case "west":
+		g.PlayerFacing = state.FaceWest
+	}
+}
+
+// FaceTowardAdjacentCell updates player facing toward an orthogonally adjacent cell (e.g. on USE).
+func FaceTowardAdjacentCell(g *state.Game, target *world.Cell) {
+	if g == nil || g.CurrentCell == nil {
+		return
+	}
+	if facing, ok := state.FacingToward(g.CurrentCell, target); ok {
+		g.PlayerFacing = facing
 	}
 }
 

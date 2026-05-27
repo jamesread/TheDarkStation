@@ -38,6 +38,8 @@ type DeckState struct {
 type Game struct {
 	CurrentCell *world.Cell
 
+	PlayerFacing PlayerFacing // Direction the player is looking (map triangle icon)
+
 	Hints []string
 
 	Grid *world.Grid
@@ -55,23 +57,30 @@ type Game struct {
 	CurrentDeckID int                // 0-based deck index (source of truth for which deck we're in)
 	DeckStates    map[int]*DeckState // Per-deck generated state; key = deck ID (0-based)
 
-	Batteries            int                   // Number of batteries in inventory
-	Generators           []*entities.Generator // All generators on this level
-	FoundCodes           map[string]bool       // Puzzle codes found by the player (code -> found)
-	ExitAnimating        bool                  // True when exit animation is playing
-	ExitAnimStartTime    int64                 // Timestamp when exit animation started (milliseconds)
-	LastInteractedRow    int                   // Row of last cell interacted with (for cycling)
-	LastInteractedCol    int                   // Col of last cell interacted with (for cycling)
-	InteractionPlayerRow int                   // Player row when interaction order was established
-	InteractionPlayerCol int                   // Player col when interaction order was established
-	InteractionsCount    int                   // Number of objects the player has interacted with (for hint system)
-	MovementCount        int                   // Number of times the player has moved (for movement hint)
-	LevelSeed            int64                 // Random seed used for current level generation (for reset)
-	PowerSupply          int                   // Total available power from generators
-	PowerConsumption     int                   // Total power being consumed by active devices
-	PowerOverloadWarned  bool                  // Whether we've warned about power overload this cycle
-	QuitToTitle          bool                  // Set to true to quit to main menu
-	GameComplete         bool                  // True when player reached final deck and lift has no destination (completion)
+	Batteries                int                   // Number of batteries in inventory
+	Generators               []*entities.Generator // All generators on this level
+	FoundCodes               map[string]bool       // Puzzle codes found by the player (code -> found)
+	ExitAnimating            bool                  // True when exit animation is playing
+	ExitAnimStartTime        int64                 // Timestamp when exit animation started (milliseconds)
+	LastInteractedRow        int                   // Row of last cell interacted with (for cycling)
+	LastInteractedCol        int                   // Col of last cell interacted with (for cycling)
+	InteractionPlayerRow     int                   // Player row when interaction order was established
+	InteractionPlayerCol     int                   // Player col when interaction order was established
+	InteractionsCount        int                   // Number of objects the player has interacted with (for hint system)
+	MovementCount            int                   // Number of times the player has moved (for movement hint)
+	LevelSeed                int64                 // Random seed used for current level generation (for reset)
+	PowerSupply              int                   // Total available power from generators
+	PowerConsumption         int                   // Total power being consumed by active devices
+	PowerOverloadWarned      bool                  // Whether we've warned about power overload this cycle
+	QuitToTitle              bool                  // Set to true to quit to main menu
+	GameComplete             bool                  // True when player reached final deck and lift has no destination (completion)
+	RunStartedAt             int64                 // Unix ms when the current run began
+	CompletionPhase          CompletionPhase       // Summary stats or credits roll
+	RunStatsSnapshot         RunStats              // Stats frozen at completion
+	CreditsLineIndex         int                   // Current credits line during CompletionPhaseCredits
+	CreditsLineStartMs       int64                 // When the current credits line slide-in began
+	CreditsExitStartMs       int64                 // Non-zero while the current line is sliding out (manual/auto advance)
+	CreditsTransitionStartMs int64                 // Non-zero during summary→credits crossfade
 
 	// Room power: doors and CCTV/hazard controls are unpowered by default.
 	// Start room's doors are powered so the player can leave.
@@ -143,6 +152,7 @@ type PowerPropEntry struct {
 func NewGame() *Game {
 	return &Game{
 		OwnedItems:            mapset.New[*world.Item](),
+		PlayerFacing:          FaceNorth,
 		HasMap:                false,
 		Messages:              make([]MessageEntry, 0),
 		Level:                 1,

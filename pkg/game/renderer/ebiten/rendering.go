@@ -14,7 +14,6 @@ import (
 	"github.com/leonelquinteros/gotext"
 
 	"darkstation/pkg/engine/world"
-	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -23,6 +22,19 @@ import (
 func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	// Fill background first
 	screen.Fill(colorBackground)
+
+	if load := e.levelGenSnapshot(); load.active {
+		if e.monoFontSource != nil && e.sansFontSource != nil {
+			e.drawLevelGenLoading(screen, load)
+		}
+		e.drawConsole(screen)
+		sw, sh := screen.Bounds().Dx(), screen.Bounds().Dy()
+		e.gameMutex.RLock()
+		g := e.game
+		e.gameMutex.RUnlock()
+		e.drawDebugTopRight(screen, sw, sh, g)
+		return
+	}
 
 	// Check if menu overlays are active - these should be drawn even without valid game state
 	e.genericMenuMutex.RLock()
@@ -77,14 +89,14 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	// Get actual screen size
 	screenWidth, screenHeight := screen.Bounds().Dx(), screen.Bounds().Dy()
 
-	// Calculate font sizes for layout
-	uiFontSize := e.getUIFontSize()
-
-	// Calculate layout dimensions with dynamic spacing based on font size
-	statusBarHeight := int(uiFontSize)*2 + 20
-
-	// Objectives/deck/inventory panel hugs the window top-left; outer rounded rect is drawn at (x-10, y-5).
-	const objectivesWindowMargin = 12
+	if g.GameComplete {
+		e.drawGameCompleteScreen(screen, g, &snap, screenWidth, screenHeight, genericMenuActive)
+		e.drawTextInputDialog(screen)
+		e.drawConsole(screen)
+		e.drawDeveloperMessage(screen, screenWidth, screenHeight)
+		e.drawDebugTopRight(screen, screenWidth, screenHeight, g)
+		return
+	}
 
 	// Expand the viewport when the framebuffer is larger than the logical window (HiDPI).
 	if screenWidth > 0 && screenHeight > 0 {
@@ -100,27 +112,7 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	mapAreaWidth := screenWidth
 	mapAreaHeight := screenHeight
 
-	// Draw header (empty now - deck number moved to objectives panel)
-	e.drawHeaderFromSnapshot(screen, &snap, screenWidth, 0)
-
-	// Map uses full-window background (colorBackground #1a1a2e from initial Fill); no separate darker border.
-
-	// Draw the map using snapshot for player position
-	e.drawMap(screen, g, screenWidth, screenHeight, &snap)
-
-	if e.DrawMapAreaBorderEnabled() {
-		e.drawMapAreaBorderOutline(screen, 0, 0, mapAreaWidth, mapAreaHeight)
-	}
-
-	// Objectives/deck/inventory overlay (snapshot): window top-left with small inset (matches FPS margin style).
-	statusX := objectivesWindowMargin + 10
-	statusY := objectivesWindowMargin + 5
-	e.drawStatusBarFromSnapshot(screen, &snap, statusX, statusY, mapAreaWidth, statusBarHeight)
-
-	// Draw menu overlays on top of everything (covers most of the screen)
-	if genericMenuActive {
-		e.drawGenericMenuOverlay(screen)
-	}
+	e.drawGameplayMapLayer(screen, g, &snap, screenWidth, screenHeight, mapAreaWidth, mapAreaHeight, genericMenuActive)
 
 	// Text input dialog (centered modal; e.g. load level seed)
 	e.drawTextInputDialog(screen)
@@ -133,11 +125,81 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 
 	// Debug overlays (top right): FPS, player X/Y
 	e.drawDebugTopRight(screen, screenWidth, screenHeight, g)
+}
 
-	// Completion screen (GDD §10.2, §11): lift has no destination; game complete
-	if g.GameComplete {
-		e.drawCompletionOverlay(screen, screenWidth, screenHeight)
+func (e *EbitenRenderer) drawGameplayMapLayer(screen *ebiten.Image, g *state.Game, snap *renderSnapshot, screenWidth, screenHeight, mapAreaWidth, mapAreaHeight int, genericMenuActive bool) {
+	uiFontSize := e.getUIFontSize()
+	statusBarHeight := int(uiFontSize)*2 + 20
+	const objectivesWindowMargin = 12
+
+	e.drawHeaderFromSnapshot(screen, snap, screenWidth, 0)
+	e.drawMap(screen, g, screenWidth, screenHeight, snap)
+	if e.DrawMapAreaBorderEnabled() {
+		e.drawMapAreaBorderOutline(screen, 0, 0, mapAreaWidth, mapAreaHeight)
 	}
+	statusX := objectivesWindowMargin + 10
+	statusY := objectivesWindowMargin + 5
+	e.drawStatusBarFromSnapshot(screen, snap, statusX, statusY, mapAreaWidth, statusBarHeight)
+	if genericMenuActive {
+		e.drawGenericMenuOverlay(screen)
+	}
+}
+
+func (e *EbitenRenderer) drawGameCompleteScreen(screen *ebiten.Image, g *state.Game, snap *renderSnapshot, screenWidth, screenHeight int, genericMenuActive bool) {
+	if g == nil || snap == nil {
+		return
+	}
+
+	fadeActive, fade := creditsMapTransitionFade(g)
+	showMap := g.CompletionPhase == state.CompletionPhaseSummary || fadeActive
+
+	if showMap {
+		if screenWidth > 0 && screenHeight > 0 {
+			if neededCols := viewportTilesForAxis(screenWidth, e.tileSize); neededCols > e.viewportCols {
+				e.viewportCols = neededCols
+			}
+			if neededRows := viewportTilesForAxis(screenHeight, e.tileSize); neededRows > e.viewportRows {
+				e.viewportRows = neededRows
+			}
+		}
+		e.drawGameplayMapLayer(screen, g, snap, screenWidth, screenHeight, screenWidth, screenHeight, genericMenuActive)
+		if fadeActive {
+			scrim := color.RGBA{15, 15, 26, uint8(220 * fade)}
+			vector.DrawFilledRect(screen, 0, 0, float32(screenWidth), float32(screenHeight), scrim, false)
+		}
+	}
+
+	if g.CompletionPhase == state.CompletionPhaseSummary && !fadeActive {
+		e.drawCompletionSummaryScrim(screen, screenWidth, screenHeight)
+		e.drawCompletionSummary(screen, g, screenWidth, screenHeight, 1)
+		return
+	}
+
+	if g.CompletionPhase == state.CompletionPhaseCredits {
+		creditsAlpha := 1.0
+		if fadeActive {
+			creditsAlpha = fade
+		} else if g.CreditsLineStartMs == 0 {
+			return
+		}
+		if creditsAlpha <= 0 {
+			return
+		}
+		e.ensureFloatingTiles(screenWidth, screenHeight)
+		e.drawFloatingTilesBackground(screen)
+		if fadeActive {
+			scrim := color.RGBA{15, 15, 26, uint8(185 * fade)}
+			vector.DrawFilledRect(screen, 0, 0, float32(screenWidth), float32(screenHeight), scrim, false)
+		} else {
+			e.drawCompletionScrim(screen, screenWidth, screenHeight)
+		}
+		e.drawCompletionCredits(screen, g, screenWidth, screenHeight, creditsAlpha)
+	}
+}
+
+func (e *EbitenRenderer) drawCompletionSummaryScrim(screen *ebiten.Image, w, h int) {
+	scrim := color.RGBA{15, 15, 26, 140}
+	vector.DrawFilledRect(screen, 0, 0, float32(w), float32(h), scrim, false)
 }
 
 // drawHeaderFromSnapshot draws the header (currently empty - deck number moved to objectives panel)
@@ -174,11 +236,8 @@ func (e *EbitenRenderer) playerPositionDebugText(g *state.Game) string {
 }
 
 // advanceMaintenanceCamera sets the map camera center. With the maintenance room list open,
-// the camera eases toward the selected room center (~1s smootherstep). Jitter fixes: drive pan
-// duration off menuAnimTimeNano (avoid UnixMilli stalls during consecutive Updates); stabilize the
-// menu overlay during pan (menu.go); and in drawMap use a rounded integer screen translation —
-// fractional GeoM Translate + nearest filtering is glitchy on Ebitengine (~#1171).
-// Normal play follows the player with no animation.
+// the camera eases toward the selected room center (~1s smootherstep). Normal play uses
+// playerMoveTransition in drawMap (visual row/col + matching camera pan, ~140ms ease-out).
 func (e *EbitenRenderer) advanceMaintenanceCamera() {
 	const maintCameraPanMs = 1000
 
@@ -242,10 +301,9 @@ func (e *EbitenRenderer) advanceMaintenanceCamera() {
 	}
 
 	e.maintPanCameraTweenActive = false
-	e.cameraCenterRow = targetRow
-	e.cameraCenterCol = targetCol
-	e.cameraTargetRow = targetRow
-	e.cameraTargetCol = targetCol
+	// Normal play: camera is synced to the render snapshot in RenderFrame only.
+	// Do not follow live g.CurrentCell here — Update runs between RenderFrame ticks
+	// and would desync the camera from the snapshot during slow frames (visible jitter).
 }
 
 // smootherstep maps [0,1] → [0,1] with zero first and second derivatives at the endpoints (Wikipedia / Perlin).
@@ -279,9 +337,18 @@ func (e *EbitenRenderer) mapCameraStart(g *state.Game) (startRow, startCol int) 
 		centerCol := int(math.Round(e.cameraCenterCol))
 		return centerRow - e.viewportRows/2, centerCol - e.viewportCols/2
 	}
-	topLeftRow := e.cameraCenterRow - float64(e.viewportRows)/2
-	topLeftCol := e.cameraCenterCol - float64(e.viewportCols)/2
-	return int(math.Floor(topLeftRow)), int(math.Floor(topLeftCol))
+	return mapCameraStartAt(e.cameraCenterRow, e.cameraCenterCol, e.viewportRows, e.viewportCols)
+}
+
+func (e *EbitenRenderer) playVisualCamera(snap *renderSnapshot) (camRow, camCol, visualRow, visualCol float64, startRow, startCol int) {
+	nowMs := e.menuAnimClockMilli
+	if nowMs == 0 {
+		nowMs = time.Now().UnixMilli()
+	}
+	visualRow, visualCol = e.playerMove.visualPosition(snap.level, snap.playerRow, snap.playerCol, snap.seq, nowMs)
+	camRow, camCol = visualRow, visualCol
+	startRow, startCol = mapCameraStartAt(camRow, camCol, e.viewportRows, e.viewportCols)
+	return camRow, camCol, visualRow, visualCol, startRow, startCol
 }
 
 // drawMap renders the game map
@@ -290,23 +357,20 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 		return
 	}
 
-	// Camera center is advanced in advanceMaintenanceCamera (Update tick) — see comment there.
-	startRow, startCol := e.mapCameraStart(g)
-
+	// Camera: maintenance pan uses Update-driven tween; normal play follows smooth player motion.
 	panningMaint := maintCameraPanTweening(g, e.cameraCenterRow, e.cameraCenterCol, e.cameraTargetRow, e.cameraTargetCol)
-	mapScrX, mapScrY := mapCameraScreenOrigin(screenWidth, screenHeight, e.cameraCenterRow, e.cameraCenterCol, startRow, startCol, e.tileSize)
-	if g.MaintenanceMenuRoom != "" && !panningMaint {
-		mapScrX = math.Round(mapScrX)
-		mapScrY = math.Round(mapScrY)
+
+	var camRow, camCol, visualRow, visualCol float64
+	var startRow, startCol int
+	if g.MaintenanceMenuRoom != "" {
+		camRow = e.cameraCenterRow
+		camCol = e.cameraCenterCol
+		startRow, startCol = e.mapCameraStart(g)
+		visualRow, visualCol = float64(snap.playerRow), float64(snap.playerCol)
+	} else {
+		camRow, camCol, visualRow, visualCol, startRow, startCol = e.playVisualCamera(snap)
 	}
 
-	if maintPanDebugOn() && g.MaintenanceMenuRoom != "" {
-		e.maintPanDrawCount++
-		if e.maintPanDrawCount == 2 {
-			maintPanLogf("second Draw() in same Update tick animClockMs=%d mapScr=%.0f,%.0f cam=%.4f,%.4f",
-				e.menuAnimClockMilli, mapScrX, mapScrY, e.cameraCenterRow, e.cameraCenterCol)
-		}
-	}
 	// Ensure map buffer exists and is correctly sized
 	bufW := e.viewportCols * e.tileSize
 	bufH := e.viewportRows * e.tileSize
@@ -317,15 +381,35 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 		e.mapBuffer = ebiten.NewImage(bufW, bufH)
 		e.mapBufferWidth = bufW
 		e.mapBufferHeight = bufH
+		e.invalidateMapDrawCache()
 	}
 
-	// Draw tiles to offscreen buffer at integer coordinates - eliminates per-tile
-	// sub-pixel jitter. The single blit with fractional offset is smooth.
-	e.mapBuffer.Fill(colorBackground)
-	pg := &snap.powerGrid
-	for vRow := 0; vRow < e.viewportRows; vRow++ {
-		for vCol := 0; vCol < e.viewportCols; vCol++ {
-			e.drawTileToBuffer(e.mapBuffer, startRow, startCol, vRow, vCol, g, snap, pg)
+	var mapScrX, mapScrY float64
+	if blitX, blitY, hit := e.mapDrawCacheHit(snap.seq, camRow, camCol, startRow, startCol, bufW, bufH); hit {
+		mapScrX, mapScrY = blitX, blitY
+	} else {
+		// Draw tiles to offscreen buffer at integer coordinates - eliminates per-tile
+		// sub-pixel jitter. The single blit with fractional offset is smooth.
+		e.mapBuffer.Fill(colorBackground)
+		pg := &snap.powerGrid
+		for vRow := 0; vRow < e.viewportRows; vRow++ {
+			for vCol := 0; vCol < e.viewportCols; vCol++ {
+				e.drawTileToBuffer(e.mapBuffer, startRow, startCol, vRow, vCol, g, snap, pg)
+			}
+		}
+		mapScrX, mapScrY = mapCameraScreenOrigin(screenWidth, screenHeight, camRow, camCol, startRow, startCol, e.tileSize)
+		if g.MaintenanceMenuRoom != "" && !panningMaint {
+			mapScrX = math.Round(mapScrX)
+			mapScrY = math.Round(mapScrY)
+		}
+		e.storeMapDrawCache(snap.seq, camRow, camCol, startRow, startCol, mapScrX, mapScrY, bufW, bufH)
+	}
+
+	if maintPanDebugOn() && g.MaintenanceMenuRoom != "" {
+		e.maintPanDrawCount++
+		if e.maintPanDrawCount == 2 {
+			maintPanLogf("second Draw() in same Update tick animClockMs=%d mapScr=%.0f,%.0f cam=%.4f,%.4f",
+				e.menuAnimClockMilli, mapScrX, mapScrY, e.cameraCenterRow, e.cameraCenterCol)
 		}
 	}
 
@@ -334,7 +418,8 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 	op.GeoM.Translate(mapScrX, mapScrY)
 	screen.DrawImage(e.mapBuffer, op)
 
-	e.drawFOVRays(screen, g, mapScrX, mapScrY, startRow, startCol)
+	pg := &snap.powerGrid
+	e.drawFOVRays(screen, g, snap, mapScrX, mapScrY, startRow, startCol)
 	e.drawPowerGridOverlay(screen, g, pg, mapScrX, mapScrY, startRow, startCol)
 
 	// Draw overlays using the same screen origin so labels/callouts match the quantized blit.
@@ -344,13 +429,17 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 	e.drawEnvironmentalPlaques(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawCallouts(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawLongUseProgress(screen, snap, mapXF, mapYF, startRow, startCol)
-	e.drawPlayerWithDebounce(screen, g, snap, mapXF, mapYF, startRow, startCol)
+	e.drawPlayerWithDebounce(screen, g, snap, mapXF, mapYF, visualRow, visualCol, startRow, startCol)
 	e.drawExitAnimation(screen, snap, mapXF, mapYF, startRow, startCol)
 }
 
 // drawTileToBuffer draws a single tile to the map buffer at integer coordinates.
 // Used for jitter-free camera transitions - all tiles at exact pixel positions.
 func (e *EbitenRenderer) drawTileToBuffer(buf *ebiten.Image, startRow, startCol, vRow, vCol int, g *state.Game, snap *renderSnapshot, pg *powerGridSnapshot) {
+	if g == nil || g.Grid == nil {
+		return
+	}
+
 	mapRow := startRow + vRow
 	mapCol := startCol + vCol
 
@@ -397,8 +486,8 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 			customBg = colorHazardBackground
 		} else if (g.HasMap || cell.Discovered) && gameworld.HasDoor(cell) {
 			roomName := gameworld.GetGameData(cell).Door.RoomName
-			if !setup.CellHasLivePower(g, cell) {
-				if setup.RoomManualEgressReleased(g, roomName) {
+			if !snapCellHasLivePower(snap, cell) {
+				if snapRoomManualEgressReleased(snap, roomName) {
 					customBg = focusPlateForForeground(colorDoorLocked)
 				} else {
 					customBg = colorHazardBackground
@@ -410,16 +499,16 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 				customBg = colorHazardBackground
 			}
 		} else if (g.HasMap || cell.Discovered) && gameworld.HasTerminal(cell) {
-			if cell.Room && !g.RoomCCTVPowered[cell.Name] {
+			if cell.Room && !snapRoomCCTVPowered(snap, cell.Name) {
 				customBg = colorHazardBackground
 			}
 		} else if (g.HasMap || cell.Discovered) && gameworld.HasHazardControl(cell) {
-			if cell.Room && !g.RoomCCTVPowered[cell.Name] {
+			if cell.Room && !snapRoomCCTVPowered(snap, cell.Name) {
 				customBg = colorHazardBackground
 			}
 		}
-		if customBg == nil && opts != nil && opts.Icon == IconWall && g.MaintenanceMenuRoom != "" &&
-			hasAdjacentRoomNamed(cell, g.MaintenanceMenuRoom) {
+		if customBg == nil && opts != nil && opts.Icon == IconWall && snapMaintenanceMenuRoom(snap) != "" &&
+			hasAdjacentRoomNamed(cell, snapMaintenanceMenuRoom(snap)) {
 			customBg = colorWallHighlight
 		}
 		if customBg == nil && powerGridOverlayActiveFromSnap(pg) {
@@ -636,24 +725,23 @@ func (e *EbitenRenderer) drawTileWithBgF(screen *ebiten.Image, icon string, x, y
 }
 
 // drawPlayerWithDebounce draws the player icon with debounce animation if active
-func (e *EbitenRenderer) drawPlayerWithDebounce(screen *ebiten.Image, g *state.Game, snap *renderSnapshot, mapX, mapY float64, startRow, startCol int) {
+func (e *EbitenRenderer) drawPlayerWithDebounce(screen *ebiten.Image, g *state.Game, snap *renderSnapshot, mapX, mapY, visualRow, visualCol float64, startRow, startCol int) {
 	e.debounceMutex.RLock()
 	direction := e.debounceDirection
 	startTime := e.debounceStartTime
 	e.debounceMutex.RUnlock()
 
-	// Calculate player position in viewport
-	playerVRow := snap.playerRow - startRow
-	playerVCol := snap.playerCol - startCol
+	playerVRow := visualRow - float64(startRow)
+	playerVCol := visualCol - float64(startCol)
 
-	// Skip if player not in viewport
-	if playerVRow < 0 || playerVRow >= e.viewportRows || playerVCol < 0 || playerVCol >= e.viewportCols {
+	// Skip if player not in viewport (small margin for mid-slide tiles)
+	if playerVRow < -0.5 || playerVRow >= float64(e.viewportRows)+0.5 ||
+		playerVCol < -0.5 || playerVCol >= float64(e.viewportCols)+0.5 {
 		return
 	}
 
-	// Calculate base position
-	baseX := mapX + float64(playerVCol*e.tileSize)
-	baseY := mapY + float64(playerVRow*e.tileSize)
+	baseX := mapX + playerVCol*float64(e.tileSize)
+	baseY := mapY + playerVRow*float64(e.tileSize)
 
 	// Calculate debounce offset
 	offsetX := 0
@@ -686,10 +774,11 @@ func (e *EbitenRenderer) drawPlayerWithDebounce(screen *ebiten.Image, g *state.G
 		}
 	}
 
-	// Draw player icon at offset position
+	// Draw player icon at offset position (rotate smoothly when facing changes)
 	playerX := baseX + float64(offsetX)
 	playerY := baseY + float64(offsetY)
-	e.drawTileWithBgF(screen, PlayerIcon, playerX, playerY, colorPlayer, false, nil)
+	angle := e.playerFacingRot.drawAngle(snap.playerFacing)
+	e.drawColoredCharRotatedF(screen, IconPlayerArrow, playerX, playerY, colorPlayer, angle)
 }
 
 // drawExitAnimation draws the exit transition animation with a meaningful message
@@ -795,42 +884,283 @@ func (e *EbitenRenderer) drawExitAnimation(screen *ebiten.Image, snap *renderSna
 	}
 }
 
-// drawCompletionOverlay draws the completion screen (GDD §10.2, §11): lift has no destination.
-func (e *EbitenRenderer) drawCompletionOverlay(screen *ebiten.Image, w, h int) {
-	overlayColor := color.RGBA{15, 15, 26, 255}
-	vector.DrawFilledRect(screen, 0, 0, float32(w), float32(h), overlayColor, false)
+// drawCompletionScrim dims the animated tile field so foreground text stays readable.
+func (e *EbitenRenderer) drawCompletionScrim(screen *ebiten.Image, w, h int) {
+	scrim := color.RGBA{15, 15, 26, 185}
+	vector.DrawFilledRect(screen, 0, 0, float32(w), float32(h), scrim, false)
+}
 
-	fontSize := e.getUIFontSize() * 1.5
-	face := e.getSansFontFace()
+func creditsMapTransitionFade(g *state.Game) (active bool, fade float64) {
+	if g == nil || g.CreditsTransitionStartMs == 0 {
+		return false, 1
+	}
+	elapsed := time.Now().UnixMilli() - g.CreditsTransitionStartMs
+	fade = float64(elapsed) / float64(state.CreditsMapFadeMs)
+	if fade >= 1 {
+		return false, 1
+	}
+	if fade < 0 {
+		fade = 0
+	}
+	return true, completionEaseOut(fade)
+}
+
+func completionEaseOut(t float64) float64 {
+	if t < 0 {
+		t = 0
+	}
+	if t > 1 {
+		t = 1
+	}
+	return 1 - math.Pow(1-t, 3)
+}
+
+func completionEaseIn(t float64) float64 {
+	if t < 0 {
+		t = 0
+	}
+	if t > 1 {
+		t = 1
+	}
+	return t * t * t
+}
+
+func creditsSlideOffset(screenHeight int, panelH float64, g *state.Game) float64 {
+	if g == nil || screenHeight <= 0 {
+		return 0
+	}
+	centerY := float64(screenHeight)/2 - panelH/2
+	offBottom := float64(screenHeight) - centerY + panelH
+	offTop := centerY + panelH
+
+	now := time.Now().UnixMilli()
+	if active, fade := creditsMapTransitionFade(g); active {
+		return (1 - fade) * offBottom
+	}
+
+	if g.CreditsExitStartMs != 0 {
+		elapsed := now - g.CreditsExitStartMs
+		t := completionEaseIn(float64(elapsed) / float64(state.CreditsSlideExitMs))
+		return -t * offTop
+	}
+
+	start := g.CreditsLineStartMs
+	if start == 0 {
+		return offBottom
+	}
+	elapsed := now - start
+	t := completionEaseOut(float64(elapsed) / float64(state.CreditsSlideEnterMs))
+	return (1 - t) * offBottom
+}
+
+func completionColorAlpha(col color.RGBA, alpha float64) color.RGBA {
+	if alpha < 0 {
+		alpha = 0
+	}
+	if alpha > 1 {
+		alpha = 1
+	}
+	return color.RGBA{
+		R: col.R,
+		G: col.G,
+		B: col.B,
+		A: uint8(float64(col.A) * alpha),
+	}
+}
+
+func drawCenteredTextTop(screen *ebiten.Image, line string, face *text.GoTextFace, cx, topY float64, col color.Color) {
+	if line == "" || face == nil {
+		return
+	}
+	width, _ := text.Measure(line, face, 0)
+	op := &text.DrawOptions{}
+	op.GeoM.Translate(cx-width/2, topY)
+	op.ColorScale.ScaleWithColor(col)
+	text.Draw(screen, line, face, op)
+}
+
+func (e *EbitenRenderer) drawCompletionSummary(screen *ebiten.Image, g *state.Game, w, h int, contentAlpha float64) {
+	titleSize := e.getUIFontSize() * 1.5
+	bodySize := e.getUIFontSize()
+	titleFace := e.getSansFontFace()
+	bodyFace := e.getSansFontFace()
 
 	line1 := gotext.Get("ENERGY_GRADIENT_EQUALIZED")
 	line2 := gotext.Get("NO_FURTHER_WORK_REQUESTS_DETECTED")
-	line3 := gotext.Get("PRESS_ANY_KEY_RETURN_TITLE")
+	prompt := gotext.Get("PRESS_ANY_KEY_CONTINUE")
 
-	m1, _ := text.Measure(line1, face, 0)
-	m2, _ := text.Measure(line2, face, 0)
-	m3, _ := text.Measure(line3, face, 0)
+	stats := g.RunStatsSnapshot
+	statLines := []string{
+		fmt.Sprintf(gotext.Get("STAT_DECKS_CLEARED"), stats.DecksCompleted),
+		fmt.Sprintf(gotext.Get("STAT_MOVEMENTS"), stats.Movements),
+		fmt.Sprintf(gotext.Get("STAT_INTERACTIONS"), stats.Interactions),
+		state.FormatRunDuration(stats.ElapsedSeconds),
+	}
+
+	mainColor := completionColorAlpha(color.RGBA{220, 170, 255, 255}, contentAlpha)
+	subColor := completionColorAlpha(color.RGBA{200, 200, 220, 255}, contentAlpha)
+	statColor := completionColorAlpha(color.RGBA{180, 190, 210, 255}, contentAlpha)
+	promptColor := completionColorAlpha(color.RGBA{140, 150, 170, 255}, contentAlpha)
+	borderColor := completionColorAlpha(color.RGBA{120, 100, 180, 200}, contentAlpha)
+	panelBg := completionColorAlpha(color.RGBA{30, 30, 50, 220}, contentAlpha)
+
+	_, line1H := text.Measure(line1, titleFace, 0)
+	_, line2H := text.Measure(line2, titleFace, 0)
+	_, promptH := text.Measure(prompt, bodyFace, 0)
+
+	titleGap := titleSize * 0.35
+	statGap := bodySize * 0.45
+	sectionGap := bodySize * 0.55
+	promptGap := bodySize * 0.65
+
+	statHeights := make([]float64, len(statLines))
+	for i, line := range statLines {
+		_, statHeights[i] = text.Measure(line, bodyFace, 0)
+	}
+
+	contentHeight := line1H + titleGap + line2H + sectionGap
+	for i, sh := range statHeights {
+		contentHeight += sh
+		if i < len(statHeights)-1 {
+			contentHeight += statGap
+		}
+	}
+	contentHeight += promptGap + promptH
+
+	contentWidth := 0.0
+	for _, line := range append([]string{line1, line2}, statLines...) {
+		if width, _ := text.Measure(line, bodyFace, 0); float64(width) > contentWidth {
+			contentWidth = float64(width)
+		}
+	}
+	if w1, _ := text.Measure(line1, titleFace, 0); float64(w1) > contentWidth {
+		contentWidth = float64(w1)
+	}
+	if w2, _ := text.Measure(line2, titleFace, 0); float64(w2) > contentWidth {
+		contentWidth = float64(w2)
+	}
+	if promptWidth, _ := text.Measure(prompt, bodyFace, 0); float64(promptWidth) > contentWidth {
+		contentWidth = float64(promptWidth)
+	}
+
+	const panelPadX = 48.0
+	const panelPadY = 36.0
+	panelW := float32(contentWidth + panelPadX*2)
+	panelH := float32(contentHeight + panelPadY*2)
+	panelX := float32(float64(w)/2 - float64(panelW)/2)
+	panelY := float32(float64(h)/2 - float64(panelH)/2)
+	drawRoundedRectWithShadow(screen, panelX, panelY, panelW, panelH, 14, 2, panelBg, borderColor, float32(contentAlpha))
 
 	cx := float64(w) / 2
-	cy := float64(h) / 2
+	topY := float64(panelY) + panelPadY
 
-	mainColor := color.RGBA{220, 170, 255, 255}
-	subColor := color.RGBA{200, 200, 220, 255}
+	drawCenteredTextTop(screen, line1, titleFace, cx, topY, mainColor)
+	topY += line1H + titleGap
+	drawCenteredTextTop(screen, line2, titleFace, cx, topY, subColor)
+	topY += line2H + sectionGap
+	for i, line := range statLines {
+		drawCenteredTextTop(screen, line, bodyFace, cx, topY, statColor)
+		topY += statHeights[i]
+		if i < len(statLines)-1 {
+			topY += statGap
+		}
+	}
+	topY += promptGap
+	drawCenteredTextTop(screen, prompt, bodyFace, cx, topY, promptColor)
+}
 
-	op := &text.DrawOptions{}
-	op.GeoM.Translate(cx-float64(m1)/2, cy-fontSize*2+fontSize)
-	op.ColorScale.ScaleWithColor(mainColor)
-	text.Draw(screen, line1, face, op)
+func (e *EbitenRenderer) drawCompletionCredits(screen *ebiten.Image, g *state.Game, w, h int, contentAlpha float64) {
+	lines := state.CompletionCreditLineIDs
+	if len(lines) == 0 || g == nil {
+		return
+	}
+	lineIndex := g.CreditsLineIndex
+	if lineIndex < 0 {
+		lineIndex = 0
+	}
+	if lineIndex >= len(lines) {
+		lineIndex = len(lines) - 1
+	}
 
-	op2 := &text.DrawOptions{}
-	op2.GeoM.Translate(cx-float64(m2)/2, cy+fontSize)
-	op2.ColorScale.ScaleWithColor(mainColor)
-	text.Draw(screen, line2, face, op2)
+	bodySize := e.getUIFontSize() * 0.95
+	titleFace := e.getSansBoldTitleFontFace()
+	bodyFace := e.getSansFontFace()
 
-	op3 := &text.DrawOptions{}
-	op3.GeoM.Translate(cx-float64(m3)/2, cy+fontSize*2+fontSize)
-	op3.ColorScale.ScaleWithColor(subColor)
-	text.Draw(screen, line3, face, op3)
+	creditText := completionCreditText(lineIndex)
+	prompt := gotext.Get("PRESS_ANY_KEY_SKIP_CREDITS")
+	progress := fmt.Sprintf("%d / %d", lineIndex+1, len(lines))
+
+	mainColor := completionColorAlpha(color.RGBA{220, 170, 255, 255}, contentAlpha)
+	subColor := completionColorAlpha(color.RGBA{140, 150, 170, 255}, contentAlpha)
+	accentColor := completionColorAlpha(color.RGBA{160, 130, 220, 255}, contentAlpha)
+	borderColor := completionColorAlpha(color.RGBA{120, 100, 180, 200}, contentAlpha)
+	panelBg := completionColorAlpha(color.RGBA{30, 30, 50, 220}, contentAlpha)
+
+	creditWidth, creditH := text.Measure(creditText, titleFace, 0)
+	promptWidth, promptH := text.Measure(prompt, bodyFace, 0)
+	progressWidth, progressH := text.Measure(progress, bodyFace, 0)
+	contentWidth := math.Max(float64(creditWidth), math.Max(float64(promptWidth), float64(progressWidth)))
+
+	const panelPadX = 56.0
+	const panelPadY = 42.0
+	topRuleGap := bodySize * 0.6
+	titleBlockPad := bodySize * 0.5
+	ruleAfterTitle := bodySize * 0.4
+	promptGap := bodySize * 1.15
+	progressGap := bodySize * 0.7
+
+	contentHeight := topRuleGap + creditH + titleBlockPad + ruleAfterTitle + promptH + promptGap + progressH
+	panelW := float32(contentWidth + panelPadX*2)
+	panelH := float64(contentHeight + panelPadY*2)
+	slideOffset := creditsSlideOffset(h, panelH, g)
+	panelX := float32(float64(w)/2 - float64(panelW)/2)
+	panelY := float32(float64(h)/2 - panelH/2 + slideOffset)
+	drawRoundedRectWithShadow(screen, panelX, panelY, panelW, float32(panelH), 14, 2, panelBg, borderColor, float32(contentAlpha))
+
+	cx := float64(w) / 2
+	innerTop := float64(panelY) + panelPadY
+	topRuleY := innerTop + topRuleGap*0.3
+	creditY := innerTop + topRuleGap
+	bottomRuleY := creditY + creditH + titleBlockPad
+	promptY := bottomRuleY + ruleAfterTitle
+	progressY := promptY + promptH + progressGap
+
+	ruleW := float32(contentWidth * 0.55)
+	vector.StrokeLine(screen, float32(cx)-ruleW/2, float32(topRuleY), float32(cx)+ruleW/2, float32(topRuleY), 1.5, accentColor, false)
+	vector.StrokeLine(screen, float32(cx)-ruleW/2, float32(bottomRuleY), float32(cx)+ruleW/2, float32(bottomRuleY), 1.5, accentColor, false)
+
+	drawCenteredTextTop(screen, creditText, titleFace, cx, creditY, mainColor)
+	drawCenteredTextTop(screen, prompt, bodyFace, cx, promptY, subColor)
+	drawCenteredTextTop(screen, progress, bodyFace, cx, progressY, subColor)
+
+	// Progress dots beneath the panel (move with the slide).
+	dotSpacing := float32(14)
+	dotStartX := float32(cx) - float32(len(lines)-1)*dotSpacing/2
+	dotY := panelY + float32(panelH) + 18
+	for i := range lines {
+		dotColor := accentColor
+		if i == lineIndex {
+			dotColor = mainColor
+		} else if i < lineIndex {
+			dotColor = completionColorAlpha(color.RGBA{180, 160, 230, 255}, contentAlpha)
+		}
+		vector.DrawFilledCircle(screen, dotStartX+float32(i)*dotSpacing, dotY, 3, dotColor, false)
+	}
+}
+
+func completionCreditText(lineIndex int) string {
+	switch lineIndex {
+	case 0:
+		return gotext.Get("CREDITS_GAME_TITLE")
+	case 1:
+		return gotext.Get("CREDITS_CREATED_BY")
+	case 2:
+		return gotext.Get("CREDITS_ENGINE")
+	case 3:
+		return gotext.Get("CREDITS_THANK_YOU")
+	default:
+		return gotext.Get("CREDITS_THANK_YOU")
+	}
 }
 
 // drawRoomLabels renders persistent room name labels at the leftmost point of each room
@@ -906,7 +1236,7 @@ func (e *EbitenRenderer) drawRoomLabels(screen *ebiten.Image, snap *renderSnapsh
 
 // drawEnvironmentalPlaques renders small diegetic corridor signage inside tiles (Story 5.1).
 func (e *EbitenRenderer) drawEnvironmentalPlaques(screen *ebiten.Image, snap *renderSnapshot, mapX, mapY float64, startRow, startCol int) {
-	if len(snap.envPlaques) == 0 {
+	if !e.EnvPlaquesEnabled() || len(snap.envPlaques) == 0 {
 		return
 	}
 

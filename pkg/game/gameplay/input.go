@@ -20,11 +20,8 @@ import (
 
 // ProcessIntent handles a high-level input intent from the tiered input system.
 func ProcessIntent(g *state.Game, intent engineinput.Intent) {
-	// Completion screen: any key returns to title
 	if g.GameComplete {
-		if intent.Action != engineinput.ActionNone {
-			g.QuitToTitle = true
-		}
+		ProcessCompletionInput(g, intent)
 		return
 	}
 
@@ -114,6 +111,7 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 	case engineinput.ActionInteract:
 		log.Printf("[Interact] ProcessIntent: ActionInteract (game loop tick)")
 		if cell, kind, ok := findAdjacentLongUseTarget(g); ok {
+			FaceTowardAdjacentCell(g, cell)
 			switch kind {
 			case LongUseGeneratorPowerUp:
 				CheckAdjacentGeneratorAtCell(g, cell)
@@ -150,9 +148,7 @@ func RunGameplayMenu(g *state.Game) {
 		// After bindings menu closes, return to gameplay menu
 		// (User can press F10 again to reopen gameplay menu)
 	case gamemenu.GameplayMenuActionQuitToTitle:
-		// Signal to quit to title - this will be handled by the game loop
-		// We'll set a flag on the game state
-		g.QuitToTitle = true
+		QuitToTitleMenu(g)
 	}
 }
 

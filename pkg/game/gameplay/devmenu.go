@@ -2,7 +2,10 @@ package gameplay
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 
+	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/devtools"
 	"darkstation/pkg/game/levelseed"
 	gamemenu "darkstation/pkg/game/menu"
@@ -23,6 +26,7 @@ const (
 	DevMenuActionTogglePlayerPosition
 	DevMenuActionTriggerOverload
 	DevMenuActionLoadSeed
+	DevMenuActionJumpToDeck
 )
 
 // DevMenuItem is a selectable row in the developer menu.
@@ -54,6 +58,8 @@ func (d *DevMenuItem) GetHelpText() string {
 		return "Force power overload in the current room (trips generators, shorts other loads)"
 	case DevMenuActionLoadSeed:
 		return "Regenerate the current deck from a hexadecimal seed (for map reproduction)"
+	case DevMenuActionJumpToDeck:
+		return fmt.Sprintf("Jump to any deck (1–%d); loads saved state or generates if not yet visited", deck.TotalDecks)
 	default:
 		return ""
 	}
@@ -158,6 +164,28 @@ func (h *DevMenuHandler) OnActivate(item gamemenu.MenuItem, index int) (bool, st
 		msg := fmt.Sprintf("Loaded seed %s on deck %d", levelseed.Format(seed), h.g.Level)
 		renderer.ShowDeveloperMessage(msg)
 		return true, msg
+	case DevMenuActionJumpToDeck:
+		deckText, ok := gamemenu.RunTextInputDialog(h.g, gamemenu.TextInputOptions{
+			Title:   "Jump to deck",
+			Prompt:  fmt.Sprintf("Enter deck number (1–%d)", deck.TotalDecks),
+			Initial: fmt.Sprintf("%d", h.g.Level),
+		})
+		if !ok {
+			return false, "Deck entry cancelled"
+		}
+		target, err := strconv.Atoi(strings.TrimSpace(deckText))
+		if err != nil {
+			return false, "Invalid deck number"
+		}
+		if target == h.g.Level {
+			return false, fmt.Sprintf("Already on deck %d", target)
+		}
+		if err := JumpToDeck(h.g, target); err != nil {
+			return false, err.Error()
+		}
+		msg := fmt.Sprintf("Jumped to deck %d", h.g.Level)
+		renderer.ShowDeveloperMessage(msg)
+		return true, msg
 	default:
 		return false, ""
 	}
@@ -221,6 +249,7 @@ func (h *DevMenuHandler) GetMenuItems() []gamemenu.MenuItem {
 		&DevMenuItem{Label: fpsDisplayMenuLabel(), Action: DevMenuActionToggleFPSDisplay, G: h.g},
 		&DevMenuItem{Label: playerPositionMenuLabel(), Action: DevMenuActionTogglePlayerPosition, G: h.g},
 		&DevMenuItem{Label: levelSeedMenuLabel(h.g), Action: DevMenuActionLoadSeed, G: h.g},
+		&DevMenuItem{Label: "Jump to deck", Action: DevMenuActionJumpToDeck, G: h.g},
 		&DevMenuItem{Label: "Trigger overload", Action: DevMenuActionTriggerOverload, G: h.g},
 		&gamemenu.CloseMenuItem{Label: "Close"},
 	}
