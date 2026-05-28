@@ -340,17 +340,14 @@ func (h *MaintenanceMenuHandler) HandleMaintenanceIntent(intent engineinput.Inte
 
 func (h *MaintenanceMenuHandler) getControlsMenuItems() []MenuItem {
 	flavourLine := deck.TerminalFlavourText(h.g.CurrentDeckID)
-	_, roomConsumption, _, _ := buildRoomDevices(h.g, h.selectedRoomName, h.maintenanceTerm)
-	gridSupply, gridUsed, gridFree := setup.GridPowerSummary(h.g, h.cell)
+	gridSupply, gridUsed, _ := setup.GridPowerSummary(h.g, h.cell)
+	_, roomConsumption := roomPowerSummary(h.g, h.selectedRoomName)
 
 	items := []MenuItem{
 		&InfoMenuItem{Label: "SUBTLE{" + flavourLine + "}"},
 		&ViewingRoomMenuItem{Parent: h},
 		&InfoMenuItem{Label: ""},
-		&InfoMenuItem{Label: fmt.Sprintf("Supply:\t%s", renderer.FormatPowerWatts(gridSupply, false))},
-		&InfoMenuItem{Label: fmt.Sprintf("Used:\t%s", renderer.FormatPowerWatts(gridUsed, false))},
-		&InfoMenuItem{Label: fmt.Sprintf("Free:\t%s", renderer.FormatPowerWatts(gridFree, false))},
-		&InfoMenuItem{Label: fmt.Sprintf("Room load:\t%s", renderer.FormatPowerLoad(roomConsumption, setup.RoomConsideredPowered(h.g, h.selectedRoomName), false))},
+		&InfoMenuItem{Label: renderer.FormatPowerBarLineWithHighlight("Grid power", gridSupply, gridUsed, roomConsumption)},
 		&InfoMenuItem{Label: ""},
 		&RoomCircuitPresetMenuItem{Parent: h},
 		&PingTerminalsMenuItem{},
@@ -362,7 +359,7 @@ func (h *MaintenanceMenuHandler) getControlsMenuItems() []MenuItem {
 }
 
 func (h *MaintenanceMenuHandler) getDiagnosticsMenuItems() []MenuItem {
-	devices, roomConsumption, _, _ := buildRoomDevices(h.g, h.selectedRoomName, h.maintenanceTerm)
+	devices, _, _, _ := buildRoomDevices(h.g, h.selectedRoomName, h.maintenanceTerm)
 	flavourLine := deck.TerminalFlavourText(h.g.CurrentDeckID)
 	instrLines := maintenanceInstrumentMenuLines(h.g, h.selectedRoomName)
 
@@ -387,8 +384,9 @@ func (h *MaintenanceMenuHandler) getDiagnosticsMenuItems() []MenuItem {
 			items = append(items, &DeviceMenuItem{Device: device})
 		}
 	}
+	roomSupply, roomConsumption := roomPowerSummary(h.g, h.selectedRoomName)
 	items = append(items,
-		&InfoMenuItem{Label: fmt.Sprintf("Consumption:\t%s", renderer.FormatPowerLoad(roomConsumption, setup.RoomConsideredPowered(h.g, h.selectedRoomName), false))},
+		&InfoMenuItem{Label: renderer.FormatPowerBarLine("Room power", roomSupply, roomConsumption)},
 		&InfoMenuItem{Label: ""},
 		&RefreshPowerGridMenuItem{Parent: h},
 		&AdvancedPowerMenuItem{Parent: h},

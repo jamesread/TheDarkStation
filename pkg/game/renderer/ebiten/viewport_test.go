@@ -3,6 +3,7 @@ package ebiten
 import (
 	"testing"
 
+	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/state"
 )
 
@@ -82,6 +83,22 @@ func TestMapCameraStart_symmetricAtRest(t *testing.T) {
 	}
 	if playerVRow != e.viewportRows/2 {
 		t.Fatalf("playerVRow = %d, want %d", playerVRow, e.viewportRows/2)
+	}
+}
+
+func TestSyncPlayModeCamera_seedsMaintenancePanOrigin(t *testing.T) {
+	grid := world.NewGrid(20, 40)
+	g := &state.Game{Grid: grid, CurrentCell: grid.GetCell(12, 34)}
+	e := &EbitenRenderer{snapSeq: 1, menuAnimClockMilli: 1_000_000}
+	e.syncPlayModeCamera(g)
+	if !e.cameraPlaySynced {
+		t.Fatal("cameraPlaySynced = false, want true")
+	}
+	if e.cameraCenterRow != 12 || e.cameraCenterCol != 34 {
+		t.Fatalf("camera center = (%.0f, %.0f), want (12, 34)", e.cameraCenterRow, e.cameraCenterCol)
+	}
+	if e.cameraTargetRow != 12 || e.cameraTargetCol != 34 {
+		t.Fatalf("camera target = (%.0f, %.0f), want (12, 34)", e.cameraTargetRow, e.cameraTargetCol)
 	}
 }
 

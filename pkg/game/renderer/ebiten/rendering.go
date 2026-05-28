@@ -235,6 +235,26 @@ func (e *EbitenRenderer) playerPositionDebugText(g *state.Game) string {
 	return fmt.Sprintf("X: %d Y: %d", g.CurrentCell.Col, g.CurrentCell.Row)
 }
 
+// syncPlayModeCamera keeps maintenance pan origin aligned with the on-screen play camera.
+// During normal play drawMap uses playerMove.visualPosition directly; these fields are only
+// read when the maintenance menu opens. Without syncing they stay at zero and the first
+// maint pan eases from map origin.
+func (e *EbitenRenderer) syncPlayModeCamera(g *state.Game) {
+	if g == nil || g.CurrentCell == nil {
+		return
+	}
+	nowMs := e.menuAnimClockMilli
+	if nowMs == 0 {
+		nowMs = time.Now().UnixMilli()
+	}
+	row, col := e.playerMove.visualPosition(g.Level, g.CurrentCell.Row, g.CurrentCell.Col, e.snapSeq, nowMs)
+	e.cameraCenterRow = row
+	e.cameraCenterCol = col
+	e.cameraTargetRow = row
+	e.cameraTargetCol = col
+	e.cameraPlaySynced = true
+}
+
 // advanceMaintenanceCamera sets the map camera center. With the maintenance room list open,
 // the camera eases toward the selected room center (~1s smootherstep). Normal play uses
 // playerMoveTransition in drawMap (visual row/col + matching camera pan, ~140ms ease-out).
@@ -257,6 +277,9 @@ func (e *EbitenRenderer) advanceMaintenanceCamera() {
 	}
 
 	if g.MaintenanceMenuRoom != "" {
+		if !e.cameraPlaySynced {
+			e.syncPlayModeCamera(g)
+		}
 		const posEps = 1e-6
 		if math.Abs(e.cameraTargetRow-targetRow) > posEps || math.Abs(e.cameraTargetCol-targetCol) > posEps {
 			e.cameraFromRow = e.cameraCenterRow

@@ -77,6 +77,8 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 
 	if g.MaintenanceMenuRoom != "" {
 		e.playerMove.snapTo(g.Level, g.CurrentCell.Row, g.CurrentCell.Col, e.snapSeq)
+	} else {
+		e.syncPlayModeCamera(g)
 	}
 
 	// Update tracked player position (clearing is now done via ClearCalloutsIfMoved)

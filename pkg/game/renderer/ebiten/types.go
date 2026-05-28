@@ -256,6 +256,7 @@ type EbitenRenderer struct {
 	cameraFromRow             float64
 	cameraFromCol             float64
 	cameraTransitionStartNano int64 // Unix ns when maintenance room pan started (with menuAnimTimeNano source)
+	cameraPlaySynced          bool  // true after play-mode camera has been seeded from the player (avoids maint pan from 0,0)
 
 	// Offscreen map buffer - render tiles here at integer coords, then blit with fractional
 	// offset. Eliminates per-tile sub-pixel jitter during camera transitions.

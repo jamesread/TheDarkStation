@@ -266,9 +266,12 @@ func CheckAdjacentGeneratorAtCell(g *state.Game, cell *world.Cell) bool {
 		}
 	}
 	individual, gridTotal, gridCount := setup.GeneratorGridSupplyAtCell(g, cell)
+	_, gridUsed, _ := setup.GridPowerSummary(g, cell)
 	calloutText.WriteString("\n")
-	calloutText.WriteString(fmt.Sprintf("This generator: %s\n", renderer.FormatPowerWatts(individual, false)))
-	calloutText.WriteString(fmt.Sprintf("Grid supply: %s\n", renderer.FormatPowerWatts(gridTotal, false)))
+	calloutText.WriteString(fmt.Sprintf("Generator output: ACTION{%s}\n", renderer.FormatPowerWatts(individual, false)))
+	calloutText.WriteString("\n")
+	calloutText.WriteString(renderer.FormatPowerBarLine("Grid power", gridTotal, gridUsed))
+	calloutText.WriteString("\n")
 	if gridCount > 1 {
 		calloutText.WriteString(fmt.Sprintf("SUBTLE{Separate power grids on deck: }ACTION{%d}", gridCount))
 	}

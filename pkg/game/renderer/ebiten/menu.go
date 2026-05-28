@@ -482,6 +482,22 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 
 	y += lineHeight
 
+	menuRowOffset := func(index int) float64 {
+		if index <= 0 {
+			return 0
+		}
+		off := 0.0
+		fs := int(e.getUIFontSize())
+		for i := 0; i < index && i < len(items); i++ {
+			if renderer.IsPowerBarLine(items[i].GetLabel()) {
+				off += float64(powerBarMenuRowHeight(fs))
+			} else {
+				off += float64(lineHeight)
+			}
+		}
+		return off
+	}
+
 	// Calculate animated highlight position and width
 	const animDuration = 150 // milliseconds
 	var highlightY float64
@@ -498,7 +514,7 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		if elapsed >= animDuration {
 			// Animation complete - use target position and width
 			highlightIndex = animTargetIndex
-			highlightY = float64(y+animTargetIndex*lineHeight) + fontSize
+			highlightY = float64(y) + menuRowOffset(animTargetIndex) + fontSize
 			highlightWidth = animTargetWidth
 			// Don't mark complete here - let RenderMenu handle it on next update to avoid deadlock
 		} else {
@@ -507,8 +523,8 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 			// Use ease-in-out for smooth animation
 			easedProgress := easeInOut(progress)
 
-			startY := float64(y+animStartIndex*lineHeight) + fontSize
-			targetY := float64(y+animTargetIndex*lineHeight) + fontSize
+			startY := float64(y) + menuRowOffset(animStartIndex) + fontSize
+			targetY := float64(y) + menuRowOffset(animTargetIndex) + fontSize
 			highlightY = startY + (targetY-startY)*easedProgress
 			highlightWidth = animStartWidth + (animTargetWidth-animStartWidth)*easedProgress
 			highlightIndex = animTargetIndex // Use target index for item check
@@ -516,7 +532,7 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	} else {
 		// No animation - use current selected position and width
 		highlightIndex = selected
-		highlightY = float64(y+selected*lineHeight) + fontSize
+		highlightY = float64(y) + menuRowOffset(selected) + fontSize
 		if selected >= 0 && selected < len(items) {
 			highlightWidth = e.getMenuItemWidth(items[selected])
 		} else {
@@ -584,11 +600,16 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	}
 
 	// Second pass: draw menu items on top of the highlights
-	for i, item := range items {
+	rowY := y
+	for _, item := range items {
 		label := item.GetLabel()
+		rowParamY := rowY
 
-		// Use a shared origin for text and rectangle calculations (see above).
-		rowParamY := y + i*lineHeight
+		if renderer.IsPowerBarLine(label) {
+			rowH := e.drawPowerBarMenuRow(screen, x, rowParamY, panelW, paddingX, label, 1.0)
+			rowY += rowH
+			continue
+		}
 
 		// Maintenance terminal: draw label, value, and optional watts in columns if tab-separated
 		if valueColumnX > x {
@@ -637,6 +658,7 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 						e.drawColoredText(screen, wattsPart, wattsX, rowParamY, labelColor)
 					}
 				}
+				rowY += lineHeight
 				continue
 			}
 		}
@@ -653,6 +675,7 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 			}
 			e.drawColoredText(screen, label, x, rowParamY, labelColor)
 		}
+		rowY += lineHeight
 	}
 
 	// Draw version information in bottom right corner (only for main menu)
@@ -687,6 +710,9 @@ func (e *EbitenRenderer) getMarkupWidth(s string) float64 {
 // getMenuItemWidth calculates the width of a menu item's label text (accounting for markup)
 func (e *EbitenRenderer) getMenuItemWidth(item gamemenu.MenuItem) float64 {
 	label := item.GetLabel()
+	if renderer.IsPowerBarLine(label) {
+		return 220
+	}
 	// Parse markup to get actual text segments
 	segments := e.parseMarkup(label)
 
@@ -721,8 +747,14 @@ func (e *EbitenRenderer) calculateMenuHeight(items []gamemenu.MenuItem, title st
 	// Spacing before menu items (this is an extra lineHeight added after help text)
 	height += lineHeight
 
-	// Menu items
-	height += float64(len(items)) * lineHeight
+	// Menu items (power bar rows are taller)
+	for _, item := range items {
+		if renderer.IsPowerBarLine(item.GetLabel()) {
+			height += float64(powerBarMenuRowHeight(int(fontSize)))
+		} else {
+			height += lineHeight
+		}
+	}
 
 	// Add extra space at bottom to account for text baseline and ensure last item is fully visible
 	// The last menu item's text extends below its baseline, so we need a bit more room

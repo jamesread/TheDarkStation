@@ -8,6 +8,8 @@ import (
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
+
+	"darkstation/pkg/game/renderer"
 )
 
 // AddCallout adds a floating message callout near a specific cell
@@ -172,6 +174,12 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 		hasTitle := len(lines) > 0 && hasTitleMarkup(lines[0])
 		maxTextWidth := 0.0
 		for lineIdx, line := range lines {
+			if renderer.IsPowerBarLine(line) {
+				if w := 200.0; w > maxTextWidth {
+					maxTextWidth = w
+				}
+				continue
+			}
 			lineSegments := e.parseMarkup(line)
 			lineWidth := 0.0
 			face := e.getSansFontFace()
@@ -188,61 +196,37 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 		textWidth := maxTextWidth
 		firstLineHeight := int(titleFontSize) + 4
 		otherLineHeight := int(fontSize) + 4
-		var boxHeight int
-		if hasTitle {
-			boxHeight = firstLineHeight
-			if len(lines) > 1 {
-				boxHeight += (len(lines) - 1) * otherLineHeight
+		calloutLineH := func(line string) int {
+			if renderer.IsPowerBarLine(line) {
+				return powerBarRowHeight(int(fontSize))
 			}
-		} else {
-			boxHeight = len(lines) * otherLineHeight
+			return otherLineHeight
+		}
+		var boxHeight int
+		for i, line := range lines {
+			if i == 0 && hasTitle {
+				boxHeight += firstLineHeight
+				continue
+			}
+			boxHeight += calloutLineH(line)
 		}
 		boxHeight += padding * 2
 
-		// Determine base position (to the right or left of cell)
 		boxWidth := int(textWidth) + padding*2
-		baseCalloutX := cellX + float64(e.tileSize) + 8
 
-		// If callout would go off right edge, position to the left instead
-		if baseCalloutX+float64(boxWidth) > mapX+float64(e.viewportCols*e.tileSize) {
-			baseCalloutX = cellX - float64(boxWidth) - 8
-		}
-
-		// Check if callout would overlap with player icon
-		// Player position in viewport coordinates
 		playerVRow := snap.playerRow - startRow
 		playerVCol := snap.playerCol - startCol
 		playerX := mapX + float64(playerVCol*e.tileSize)
 		playerY := mapY + float64(playerVRow*e.tileSize)
 
-		// Calculate callout box bounds
-		baseCalloutY := cellY + float64((e.tileSize-boxHeight)/2)
-		calloutBoxLeft := float32(baseCalloutX)
-		calloutBoxRight := float32(baseCalloutX + float64(boxWidth))
-		calloutBoxTop := float32(baseCalloutY)
-		calloutBoxBottom := float32(baseCalloutY + float64(boxHeight))
-
-		// Check if callout overlaps with player icon (player icon is roughly centered in its tile)
-		playerIconLeft := float32(playerX + float64(e.tileSize/4))
-		playerIconRight := float32(playerX + float64(e.tileSize*3/4))
-		playerIconTop := float32(playerY + float64(e.tileSize/4))
-		playerIconBottom := float32(playerY + float64(e.tileSize*3/4))
-
-		overlapsPlayer := calloutBoxLeft < playerIconRight && calloutBoxRight > playerIconLeft &&
-			calloutBoxTop < playerIconBottom && calloutBoxBottom > playerIconTop
-
-		// If overlapping, move callout back a column and down a row
-		if overlapsPlayer {
-			// Move back a column (left if on right side, right if on left side)
-			if baseCalloutX > cellX+float64(e.tileSize) {
-				// Callout is on the right, move it further right (back a column)
-				baseCalloutX = cellX
-			} else {
-				// Callout is on the left, move it further left (back a column)
-			}
-			// Move down a row
-			baseCalloutY = cellY + float64(e.tileSize) + float64((e.tileSize-boxHeight)/2)
-		}
+		baseCalloutX, baseCalloutY := calloutBasePosition(
+			cellX, cellY,
+			e.tileSize, boxWidth, boxHeight,
+			snap.playerRow, snap.playerCol, callout.Row, callout.Col,
+			playerX, playerY,
+			mapX, mapY,
+			e.viewportCols, e.viewportRows,
+		)
 
 		// Apply slide animation offset (vertical only)
 		calloutX := float32(baseCalloutX)
@@ -292,16 +276,33 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 			vector.DrawFilledRect(screen, arrowX, arrowY-2, arrowSize, 4, borderColor, false)
 		}
 
-		// Draw text - first line uses title font when the line has title markup (TITLE/UNPOWERED/POWERED/…)
-		lineFontSize := fontSize
+		startY := int(calloutY) + padding - int(fontSize)
 		if hasTitle {
-			lineFontSize = titleFontSize
+			startY = int(calloutY) + padding - int(titleFontSize)
 		}
-		startY := int(calloutY) + padding - int(lineFontSize)
+		curY := startY
+		innerW := boxWidth - padding*2
 
 		for i, line := range lines {
+			if i == 0 && hasTitle {
+				lineSegments := e.parseMarkup(line)
+				fadedSegments := make([]textSegment, len(lineSegments))
+				for j, seg := range lineSegments {
+					fadedSegments[j] = textSegment{
+						text:  seg.text,
+						color: e.applyAlpha(seg.color, alpha),
+					}
+				}
+				e.drawColoredTextSegmentsWithFace(screen, fadedSegments, int(calloutX)+padding, curY, titleFace)
+				curY += firstLineHeight
+				continue
+			}
+			if barLabel, supply, consumption, highlight, ok := renderer.ParsePowerBarLine(line); ok {
+				curY += e.drawPowerBarRow(screen, int(calloutX)+padding, curY, innerW, barLabel, supply, consumption, highlight, alpha, true)
+				continue
+			}
 			lineSegments := e.parseMarkup(line)
-			if i > 0 && hasTitle {
+			if hasTitle {
 				lineSegments = normalizeCalloutBodySegments(lineSegments)
 			}
 			fadedSegments := make([]textSegment, len(lineSegments))
@@ -311,19 +312,8 @@ func (e *EbitenRenderer) drawCallouts(screen *ebiten.Image, snap *renderSnapshot
 					color: e.applyAlpha(seg.color, alpha),
 				}
 			}
-			face := e.getSansFontFace()
-			if i == 0 && hasTitle {
-				face = titleFace
-			}
-			var textY int
-			if i == 0 {
-				textY = startY
-			} else if hasTitle {
-				textY = startY + firstLineHeight + (i-1)*otherLineHeight
-			} else {
-				textY = startY + i*otherLineHeight
-			}
-			e.drawColoredTextSegmentsWithFace(screen, fadedSegments, int(calloutX)+padding, textY, face)
+			e.drawColoredTextSegmentsWithFace(screen, fadedSegments, int(calloutX)+padding, curY, e.getSansFontFace())
+			curY += calloutLineH(line)
 		}
 	}
 }
