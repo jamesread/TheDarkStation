@@ -19,7 +19,7 @@ import (
 	"darkstation/pkg/game/state"
 )
 
-const levelGenTotalSteps = 11
+const levelGenTotalSteps = 12
 
 // GenerateGrid creates a new grid using the default generator
 func GenerateGrid(level int) *world.Grid {
@@ -115,7 +115,10 @@ func clearLevelProgress(g *state.Game) {
 	g.RoomPowerOnline = make(map[string]bool)
 	g.ManualEgressReleased = make(map[string]bool)
 	g.PowerPropPending = nil
+	g.RoomPowerOffPending = nil
 	g.LongUse = nil
+	g.HazardClear = nil
+	g.HazardTour = nil
 
 	g.MovementCount = 0
 	g.InteractionsCount = 0
@@ -124,6 +127,9 @@ func clearLevelProgress(g *state.Game) {
 	g.InteractionPlayerRow = -1
 	g.InteractionPlayerCol = -1
 	g.PlayerFacing = state.FaceNorth
+
+	g.AlwaysLitApplied = false
+	g.InvalidateLivePowerCache()
 
 	g.ExitAnimating = false
 	g.ExitAnimStartTime = 0
@@ -143,7 +149,10 @@ func clearCrossDeckPowerState(g *state.Game) {
 	g.PowerConsumption = 0
 	g.PowerOverloadWarned = false
 	g.PowerPropPending = nil
+	g.RoomPowerOffPending = nil
 	g.LongUse = nil
+	g.HazardClear = nil
+	g.HazardTour = nil
 	ClearGeneratorPowerGridOverlay(g)
 }
 
@@ -152,11 +161,8 @@ func refreshDeckPower(g *state.Game) {
 	if g == nil || g.Grid == nil {
 		return
 	}
-	g.RebuildGeneratorsFromGrid()
-	g.UpdatePowerSupply()
-	setup.SchedulePowerPropagation(g, setup.PowerNowMs())
-	setup.ApplyGridConductivePower(g)
-	g.PowerConsumption = g.CalculatePowerConsumption()
+	setup.SyncInitialPowerState(g)
+	setup.EnsureInitialPowerBalance(g)
 }
 
 // SetupLevel configures the current level with items and keys.
@@ -181,6 +187,8 @@ func setupLevel(g *state.Game, report func(string)) {
 	report("Placing environmental hazards")
 	if g.Level >= 2 && !minimalSystems {
 		levelgen.PlaceHazards(g, avoid, lockedDoorCells)
+		levelgen.EnsureHazardControlsSolvable(g)
+		levelgen.EnsureHazardSolutionsDisjoint(g)
 	}
 
 	report("Furnishing rooms")
@@ -214,8 +222,22 @@ func setupLevel(g *state.Game, report func(string)) {
 	setup.ApplyMultiHopLinkage(g)
 	setup.ApplyPowerRelays(g)
 
+	report("Balancing power grid")
+	setup.EnsureInitialPowerBalance(g)
+
 	report("Finalizing deck")
 	MoveCell(g, g.Grid.StartCell())
+}
+
+func applyLoadedDeckFixups(g *state.Game) {
+	if g == nil {
+		return
+	}
+	if g.Level >= 2 {
+		levelgen.EnsureHazardControlsSolvable(g)
+		levelgen.EnsureHazardSolutionsDisjoint(g)
+	}
+	setup.EnsureInitialPowerBalance(g)
 }
 
 // ResetLevel resets the current deck using the same seed; updates per-deck store (Phase 3.4).
@@ -265,6 +287,7 @@ func AdvanceLevel(g *state.Game) {
 	// Load stored state or generate on first entry (Phase 3.4)
 	if ds := g.DeckStates[nextID]; ds != nil && ds.Grid != nil {
 		g.LoadDeckState(nextID)
+		applyLoadedDeckFixups(g)
 		refreshDeckPower(g)
 		UpdateLightingExploration(g)
 	} else {
@@ -301,6 +324,7 @@ func JumpToDeck(g *state.Game, targetLevel int) error {
 	targetID := targetLevel - 1
 	if ds := g.DeckStates[targetID]; ds != nil && ds.Grid != nil {
 		g.LoadDeckState(targetID)
+		applyLoadedDeckFixups(g)
 		refreshDeckPower(g)
 		UpdateLightingExploration(g)
 	} else {

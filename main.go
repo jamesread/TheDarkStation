@@ -41,9 +41,6 @@ func initGettext() {
 }
 
 func main() {
-	// Log version information on startup
-	log.Printf("Starting TheDarkCastle version %s (commit: %s, date: %s)", version, commit, date)
-
 	startLevel := flag.Int("level", 1, "starting level/deck number (for developer testing)")
 	flag.Parse()
 
@@ -59,10 +56,13 @@ func main() {
 
 	// Set version information for renderers
 	renderer.SetVersion(version, commit, date)
+	log.Printf("Starting TheDarkCastle (built %s, commit: %s)", renderer.BuildLabel, commit)
 
 	// Initialize the Ebiten renderer
 	ebitRenderer := ebitenRenderer.New()
 	ebitRenderer.SetLongUseAdvancer(gameplay.AdvanceLongUseIfActive)
+	ebitRenderer.SetHazardClearAdvancer(gameplay.AdvanceHazardClearIfActive)
+	ebitRenderer.SetHazardTourAdvancer(gameplay.AdvanceHazardTourIfActive)
 	renderer.SetRenderer(ebitRenderer)
 	renderer.Init()
 
@@ -217,5 +217,11 @@ func mainLoop(g *state.Game) {
 	gameplay.ProcessIntent(g, renderer.Current.GetInput())
 	if gameplay.IsLongUseActive(g) {
 		gameplay.WaitForLongUseComplete(g)
+	}
+	if gameplay.IsHazardClearActive(g) {
+		gameplay.WaitForHazardClearComplete(g)
+	}
+	if gameplay.IsHazardTourActive(g) {
+		gameplay.WaitForHazardTourComplete(g)
 	}
 }

@@ -2,6 +2,19 @@
 
 This file contains important notes and patterns for AI agents working on this codebase.
 
+## Map coordinates
+
+When discussing level layout, hazards, doors, and entities with the player or in debug analysis, use **`x:… y:…`** (horizontal, then vertical):
+
+- **x** = column index (0-based, increases east/right)
+- **y** = row index (0-based, increases south/down)
+
+Example: gas at **x:37 y:30** is grid cell `(row=30, col=37)`.
+
+The map dump (`map.txt`, F8) uses the same **`x:… y:…`** format and includes an `llm_coordinate_note` explaining the mapping to `Cell.Row` / `Cell.Col` and `Grid.GetCell(row, col)`.
+
+The bottom-right build stamp uses **`BuildLabel`** (friendly local date/time to the minute, e.g. `28 May 2026, 14:35`). Position with the same bottom-aligned formula as below.
+
 ## Text Positioning in Ebiten Renderer
 
 ### Bottom-Aligned Text Positioning

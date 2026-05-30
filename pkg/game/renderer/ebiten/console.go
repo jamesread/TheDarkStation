@@ -31,7 +31,7 @@ func initCvars() {
 	cvarMap["draw.fps"] = "1"         // 1 = show FPS counter in top-right corner
 	cvarMap["draw.player_pos"] = "0"  // 1 = show player X/Y below FPS counter (top-right)
 	cvarMap["draw.env_plaques"] = "0" // 1 = corridor environmental signage (Story 5.1; positioning WIP)
-	cvarMap["version"] = renderer.Version
+	cvarMap["version"] = renderer.BuildLabel
 	if renderer.Commit != "unknown" && len(renderer.Commit) > 0 {
 		cvarMap["commit"] = renderer.Commit
 	}
@@ -68,6 +68,7 @@ func initColorCvarsLocked() {
 	cvarMap["colors.furniture"] = "255,150,255,255"
 	cvarMap["colors.furniture_check"] = "180,105,242,255"
 	cvarMap["colors.exit_locked"] = "255,100,100,255"
+	cvarMap["colors.exit_pending"] = "255,255,0,255"
 	cvarMap["colors.exit_unlocked"] = "100,255,100,255"
 	cvarMap["colors.subtle"] = "120,130,180,255"
 	cvarMap["colors.text"] = "200,210,245,255"
@@ -149,6 +150,7 @@ func loadColorsFromCvars() {
 	assign("colors.furniture", &colorFurniture)
 	assign("colors.furniture_check", &colorFurnitureCheck)
 	assign("colors.exit_locked", &colorExitLocked)
+	assign("colors.exit_pending", &colorExitPending)
 	assign("colors.exit_unlocked", &colorExitUnlocked)
 	assign("colors.subtle", &colorSubtle)
 	assign("colors.text", &colorText)

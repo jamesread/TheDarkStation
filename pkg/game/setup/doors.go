@@ -239,9 +239,7 @@ func EnsureEveryRoomHasDoor(g *state.Game, avoid *mapset.Set[*world.Cell], locke
 		if avoid.Has(cell) || lockedDoorCells.Has(cell) {
 			continue
 		}
-		door := entities.NewDoor(roomName)
-		door.Unlock()
-		gameworld.GetGameData(cell).Door = door
+		gameworld.GetGameData(cell).Door = entities.NewUnlockedDoor(roomName)
 		avoid.Put(cell)
 		roomsWithDoors.Put(roomName)
 	}

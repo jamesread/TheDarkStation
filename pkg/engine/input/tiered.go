@@ -105,7 +105,7 @@ var bindings = map[string]Action{
 	"?":    ActionHint,
 	"hint": ActionHint,
 
-	// Quit
+	// Quit / back
 	"quit":   ActionQuit,
 	"q":      ActionQuit,
 	"escape": ActionQuit,

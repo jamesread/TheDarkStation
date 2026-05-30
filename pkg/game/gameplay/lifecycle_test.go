@@ -350,6 +350,21 @@ func TestBuildGame_NoStartEgressDeadlock(t *testing.T) {
 	}
 }
 
+func TestBuildGame_NoInitialPowerOverload(t *testing.T) {
+	seeds := []int64{1, 42, 424242, 1779651561562416055, 999_999_999}
+	for level := 2; level <= 6; level++ {
+		for _, seed := range seeds {
+			g := state.NewGame()
+			g.Level = level
+			LoadLevelFromSeed(g, seed)
+			if setup.AnyArmedGridOverloaded(g) {
+				t.Errorf("level %d seed %d: grid overloaded at start (consumption=%d supply=%d)",
+					level, seed, setup.CalculatePowerConsumption(g), g.PowerSupply)
+			}
+		}
+	}
+}
+
 func TestResetLevel_ReinitializesRoomPower(t *testing.T) {
 	g := BuildGame(1)
 	if g == nil || g.Grid == nil {

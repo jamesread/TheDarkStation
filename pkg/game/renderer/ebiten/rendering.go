@@ -14,6 +14,7 @@ import (
 	"github.com/leonelquinteros/gotext"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -22,6 +23,8 @@ import (
 func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	// Fill background first
 	screen.Fill(colorBackground)
+	screenWidth, screenHeight := screen.Bounds().Dx(), screen.Bounds().Dy()
+	defer e.drawBuildLabel(screen, screenWidth, screenHeight)
 
 	if load := e.levelGenSnapshot(); load.active {
 		if e.monoFontSource != nil && e.sansFontSource != nil {
@@ -71,6 +74,8 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 		// Draw console overlay
 		e.drawConsole(screen)
 
+		e.drawConfirmDialog(screen)
+
 		// Debug overlays (top right): FPS, player X/Y
 		sw, sh := screen.Bounds().Dx(), screen.Bounds().Dy()
 		e.drawDebugTopRight(screen, sw, sh, g)
@@ -86,12 +91,10 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 		return
 	}
 
-	// Get actual screen size
-	screenWidth, screenHeight := screen.Bounds().Dx(), screen.Bounds().Dy()
-
 	if g.GameComplete {
 		e.drawGameCompleteScreen(screen, g, &snap, screenWidth, screenHeight, genericMenuActive)
 		e.drawTextInputDialog(screen)
+		e.drawConfirmDialog(screen)
 		e.drawConsole(screen)
 		e.drawDeveloperMessage(screen, screenWidth, screenHeight)
 		e.drawDebugTopRight(screen, screenWidth, screenHeight, g)
@@ -116,6 +119,7 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 
 	// Text input dialog (centered modal; e.g. load level seed)
 	e.drawTextInputDialog(screen)
+	e.drawConfirmDialog(screen)
 
 	// Draw console overlay
 	e.drawConsole(screen)
@@ -385,7 +389,33 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 
 	var camRow, camCol, visualRow, visualCol float64
 	var startRow, startCol int
-	if g.MaintenanceMenuRoom != "" {
+	if snap.hazardTour != nil {
+		nowMs := e.menuAnimClockMilli
+		if nowMs == 0 {
+			nowMs = time.Now().UnixMilli()
+		}
+		var ok bool
+		camRow, camCol, ok = snap.hazardTour.CameraAt(nowMs)
+		if !ok {
+			camRow, camCol, visualRow, visualCol, startRow, startCol = e.playVisualCamera(snap)
+		} else {
+			startRow, startCol = mapCameraStartAt(camRow, camCol, e.viewportRows, e.viewportCols)
+			visualRow, visualCol = float64(snap.playerRow), float64(snap.playerCol)
+		}
+	} else if snap.hazardClear != nil {
+		nowMs := e.menuAnimClockMilli
+		if nowMs == 0 {
+			nowMs = time.Now().UnixMilli()
+		}
+		var ok bool
+		camRow, camCol, ok = snap.hazardClear.CameraAt(nowMs)
+		if !ok {
+			camRow, camCol, visualRow, visualCol, startRow, startCol = e.playVisualCamera(snap)
+		} else {
+			startRow, startCol = mapCameraStartAt(camRow, camCol, e.viewportRows, e.viewportCols)
+			visualRow, visualCol = float64(snap.playerRow), float64(snap.playerCol)
+		}
+	} else if g.MaintenanceMenuRoom != "" {
 		camRow = e.cameraCenterRow
 		camCol = e.cameraCenterCol
 		startRow, startCol = e.mapCameraStart(g)
@@ -507,6 +537,9 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 	if cell != nil {
 		if (g.HasMap || cell.Discovered) && gameworld.HasBlockingHazard(cell) {
 			customBg = colorHazardBackground
+			if alpha := hazardClearVisualAlpha(snap, cell); alpha < 1 {
+				customBg = e.applyAlpha(colorHazardBackground, alpha)
+			}
 		} else if (g.HasMap || cell.Discovered) && gameworld.HasDoor(cell) {
 			roomName := gameworld.GetGameData(cell).Door.RoomName
 			if !snapCellHasLivePower(snap, cell) {
@@ -565,7 +598,7 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 			} else {
 				customBg = colorFocusBackground
 			}
-		} else if cell != nil && cell.ExitCell && (g.HasMap || cell.Discovered) && !cell.Locked && g.AllGeneratorsPowered() && g.AllHazardsCleared() {
+		} else if cell != nil && cell.ExitCell && (g.HasMap || cell.Discovered) && setup.ExitLiftReady(g) {
 			customBg = e.getPulsingExitBackgroundColor()
 		}
 	}

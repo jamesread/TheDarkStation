@@ -66,6 +66,9 @@ func CurrentCircuitPreset(g *state.Game, roomName string) CircuitPreset {
 	if g == nil {
 		return CircuitOff
 	}
+	if setup.RoomPowerOffScheduled(g, roomName) {
+		return CircuitOff
+	}
 	if g.RoomDoorsPowered[roomName] {
 		return CircuitFull
 	}
@@ -81,12 +84,25 @@ func ApplyCircuitPreset(g *state.Game, roomName string, preset CircuitPreset) st
 	doorsOn := preset == CircuitEssential || preset == CircuitFull
 	cctvOn := preset == CircuitFull
 
+	if !doorsOn {
+		if !g.RoomDoorsPowered[roomName] && !g.RoomCCTVPowered[roomName] {
+			setup.CancelRoomPowerOff(g, roomName)
+			return ""
+		}
+		if setup.RoomPowerOffScheduled(g, roomName) {
+			setup.ScheduleRoomPowerOff(g, roomName, setup.PowerNowMs())
+			secs := int(setup.RoomPowerOffDelay.Seconds())
+			return fmt.Sprintf("Power shutdown timer reset — %d seconds to leave the room", secs)
+		}
+		setup.ScheduleRoomPowerOff(g, roomName, setup.PowerNowMs())
+		secs := int(setup.RoomPowerOffDelay.Seconds())
+		return fmt.Sprintf("Power shutting down in %d seconds — leave the room now", secs)
+	}
+
+	setup.CancelRoomPowerOff(g, roomName)
+
 	g.RoomDoorsPowered[roomName] = doorsOn
 	g.RoomCCTVPowered[roomName] = cctvOn
-
-	if !doorsOn {
-		setup.ClearRoomPropagatedPower(g, roomName)
-	}
 
 	help := ""
 	setup.NotifyPowerGridChanged(g)

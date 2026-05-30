@@ -4,6 +4,8 @@ package gameplay
 import (
 	"testing"
 
+	"github.com/zyedidia/generic/mapset"
+
 	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
@@ -159,6 +161,96 @@ func TestCanEnter_PoweredDoorAllowsMovement(t *testing.T) {
 	ok, _ := CanEnter(g, cellRight, false)
 	if !ok {
 		t.Error("CanEnter with powered door room should return true")
+	}
+}
+
+func TestCanEnter_LockedUnpoweredDoorBlocksWithoutKeycard(t *testing.T) {
+	g, _, doorCell := makeMinimalGameWithGrid(t)
+	gameworld.GetGameData(doorCell).Door = entities.NewDoor("Secure")
+	g.RoomDoorsPowered["Secure"] = false
+
+	ok, _ := CanEnter(g, doorCell, false)
+	if ok {
+		t.Fatal("locked unpowered door should block without keycard")
+	}
+	if !gameworld.HasLockedDoor(doorCell) {
+		t.Fatal("door should remain locked")
+	}
+}
+
+func TestCanEnter_LockedUnpoweredDoorAllowsWithKeycard(t *testing.T) {
+	g, _, doorCell := makeMinimalGameWithGrid(t)
+	gameworld.GetGameData(doorCell).Door = entities.NewDoor("Secure")
+	g.RoomDoorsPowered["Secure"] = false
+	g.OwnedItems.Put(world.NewItem("Secure Keycard"))
+
+	ok, _ := CanEnter(g, doorCell, false)
+	if !ok {
+		t.Fatal("locked unpowered door should allow entry with keycard")
+	}
+	if gameworld.HasLockedDoor(doorCell) {
+		t.Fatal("door should unlock after keycard use")
+	}
+}
+
+func TestCanEnter_KeycardUnlockedDoorAllowsPassageWhenUnpowered(t *testing.T) {
+	g, inside, doorCell := makeMinimalGameWithGrid(t)
+	gameworld.GetGameData(doorCell).Door = entities.NewDoor("Secure")
+	g.RoomDoorsPowered["Secure"] = false
+	g.OwnedItems.Put(world.NewItem("Secure Keycard"))
+
+	ok, _ := CanEnter(g, doorCell, false)
+	if !ok {
+		t.Fatal("precondition: should enter through locked door with keycard")
+	}
+
+	g.CurrentCell = inside
+	g.OwnedItems = mapset.New[*world.Item]()
+
+	ok, _ = CanEnter(g, doorCell, false)
+	if !ok {
+		t.Fatal("unlocked keycard door should stay passable when unpowered")
+	}
+}
+
+func TestCanEnter_UnpoweredNonKeycardDoorStillBlocks(t *testing.T) {
+	g, _, doorCell := makeMinimalGameWithGrid(t)
+	gameworld.GetGameData(doorCell).Door = entities.NewUnlockedDoor("Hall")
+	g.RoomDoorsPowered["Hall"] = false
+
+	ok, _ := CanEnter(g, doorCell, false)
+	if ok {
+		t.Fatal("standard unlocked door should still block when unpowered")
+	}
+}
+
+func TestCanEnter_ExitLiftStates(t *testing.T) {
+	g, cellLeft, exitCell := makeMinimalGameWithGrid(t)
+	g.Grid.SetExitCell(exitCell)
+	g.RoomDoorsPowered["0:0"] = true
+	g.RoomDoorsPowered["0:1"] = true
+
+	ok, _ := CanEnter(g, exitCell, false)
+	if ok {
+		t.Fatal("exit should block when exit room has no grid power")
+	}
+
+	gen := entities.NewGenerator("G", 1)
+	gen.InsertBatteriesAndStart(1)
+	gameworld.GetGameData(cellLeft).Generator = gen
+	g.AddGenerator(gen)
+	setup.PropagateRoomPowerOnlineFromGenerators(g)
+
+	ok, _ = CanEnter(g, exitCell, false)
+	if !ok {
+		t.Fatal("exit should allow entry when exit room has grid power and no hazards")
+	}
+
+	hazardCell := g.Grid.GetCell(0, 0)
+	gameworld.GetGameData(hazardCell).Hazard = entities.NewHazard(entities.HazardVacuum)
+	ok, _ = CanEnter(g, exitCell, false)
+	if ok {
+		t.Fatal("exit should block when hazards remain")
 	}
 }
 

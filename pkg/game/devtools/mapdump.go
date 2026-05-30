@@ -17,6 +17,11 @@ import (
 
 const mapDumpFilename = "map.txt"
 
+// formatXY writes player-facing coordinates: x = column, y = row (see dump metadata).
+func formatXY(col, row int) string {
+	return fmt.Sprintf("x:%d y:%d", col, row)
+}
+
 // cellSymbol returns the single-character symbol for a cell (no player/exit overlay).
 // If revealedOnly is true, non-revealed cells return '#'; otherwise they show their type.
 func cellSymbol(g *state.Game, cell *world.Cell, revealedOnly bool) rune {
@@ -116,11 +121,21 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 	fmt.Fprintf(f, "level_seed: %s\n", levelseed.Format(g.LevelSeed))
 	fmt.Fprintf(f, "grid_rows: %d\n", rows)
 	fmt.Fprintf(f, "grid_cols: %d\n", cols)
-	fmt.Fprintf(f, "coordinate_system: row,col (0-based, row=vertical, col=horizontal)\n")
-	fmt.Fprintf(f, "player_row: %d\n", playerRow)
-	fmt.Fprintf(f, "player_col: %d\n", playerCol)
-	fmt.Fprintf(f, "player_cell: %d,%d\n", playerRow, playerCol)
-	fmt.Fprintf(f, "start_cell: %d,%d\n", startRow, startCol)
+	fmt.Fprintf(f, "coordinate_system: x,y (0-based)\n")
+	fmt.Fprintln(f, "llm_coordinate_note: |")
+	fmt.Fprintln(f, "  Positions in this dump use x (column, east/right) and y (row, south/down).")
+	fmt.Fprintln(f, "  Go source maps these to Cell.Col==x and Cell.Row==y; Grid.GetCell(row, col) is GetCell(y, x).")
+	fmt.Fprintln(f, "  ASCII map rows are y values (top line is y=0); characters within a row increase x left-to-right.")
+	if playerRow >= 0 && playerCol >= 0 {
+		fmt.Fprintf(f, "player: %s\n", formatXY(playerCol, playerRow))
+	} else {
+		fmt.Fprintln(f, "player: (none)")
+	}
+	if startRow >= 0 && startCol >= 0 {
+		fmt.Fprintf(f, "start: %s\n", formatXY(startCol, startRow))
+	} else {
+		fmt.Fprintln(f, "start: (none)")
+	}
 	if startCell != nil && startCell.Name != "" {
 		fmt.Fprintf(f, "start_room: %q\n", startCell.Name)
 	}
@@ -165,8 +180,8 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 		fmt.Fprintln(f, "blocked_egress_doors:")
 		for _, door := range report.BlockedEgressDoors {
 			controllable := setup.CanPowerRoomDoorsFromReachable(g, setup.InitialReachableCells(g), door.TargetRoom)
-			fmt.Fprintf(f, "  row: %d col: %d from_room: %q target_room: %q remote_controllable: %v\n",
-				door.Row, door.Col, door.FromRoom, door.TargetRoom, controllable)
+			fmt.Fprintf(f, "  %s from_room: %q target_room: %q remote_controllable: %v\n",
+				formatXY(door.Col, door.Row), door.FromRoom, door.TargetRoom, controllable)
 		}
 	}
 	if len(report.Warnings) == 0 {
@@ -216,8 +231,8 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 		}
 		m := data.MaintenanceTerm
 		selectable := setup.SelectableRoomsForTerminal(g, g.Grid, m.RoomName)
-		fmt.Fprintf(f, "  row: %d col: %d room: %q powered: %v selectable_rooms: %q\n",
-			row, col, m.RoomName, m.Powered, selectable)
+		fmt.Fprintf(f, "  %s room: %q powered: %v selectable_rooms: %q\n",
+			formatXY(col, row), m.RoomName, m.Powered, selectable)
 	})
 	fmt.Fprintln(f, "")
 
@@ -244,18 +259,18 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 				extra = fmt.Sprintf(" door->%q locked=%v", d.RoomName, d.Locked)
 			}
 			if !ok {
-				fmt.Fprintf(f, "  %s: row: %d col: %d room: %q blocked: %s%s\n",
-					dir.name, dir.n.Row, dir.n.Col, dir.n.Name, reason, extra)
+				fmt.Fprintf(f, "  %s: %s room: %q blocked: %s%s\n",
+					dir.name, formatXY(dir.n.Col, dir.n.Row), dir.n.Name, reason, extra)
 			} else {
-				fmt.Fprintf(f, "  %s: row: %d col: %d room: %q passable%s\n",
-					dir.name, dir.n.Row, dir.n.Col, dir.n.Name, extra)
+				fmt.Fprintf(f, "  %s: %s room: %q passable%s\n",
+					dir.name, formatXY(dir.n.Col, dir.n.Row), dir.n.Name, extra)
 			}
 		}
 		fmt.Fprintln(f, "")
 	}
 
 	// --- Entities: collect by type with coordinates and state ---
-	fmt.Fprintln(f, "--- Entities (all with row,col and state) ---")
+	fmt.Fprintln(f, "--- Entities (all with x,y coordinates and state) ---")
 
 	// Doors
 	fmt.Fprintln(f, "Doors:")
@@ -272,8 +287,8 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 		if ok, reason := setup.CanEnterCellAtInit(g, cell); !ok {
 			blockReason = string(reason)
 		}
-		fmt.Fprintf(f, "  row: %d col: %d room_name: %q locked: %v keycard: %q doors_powered: %v init_passable: %v block_reason: %q\n",
-			row, col, d.RoomName, d.Locked, d.KeycardName(), g.RoomDoorsPowered[d.RoomName], blockReason == "", blockReason)
+		fmt.Fprintf(f, "  %s room_name: %q locked: %v keycard: %q doors_powered: %v init_passable: %v block_reason: %q\n",
+			formatXY(col, row), d.RoomName, d.Locked, d.KeycardName(), g.RoomDoorsPowered[d.RoomName], blockReason == "", blockReason)
 	})
 	fmt.Fprintln(f, "")
 
@@ -288,7 +303,7 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 			return
 		}
 		gen := data.Generator
-		fmt.Fprintf(f, "  row: %d col: %d name: %q batteries_inserted: %d batteries_required: %d powered: %v\n", row, col, gen.Name, gen.BatteriesInserted, gen.BatteriesRequired, gen.IsPowered())
+		fmt.Fprintf(f, "  %s name: %q batteries_inserted: %d batteries_required: %d powered: %v\n", formatXY(col, row), gen.Name, gen.BatteriesInserted, gen.BatteriesRequired, gen.IsPowered())
 	})
 	fmt.Fprintln(f, "")
 
@@ -303,7 +318,7 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 			return
 		}
 		t := data.Terminal
-		fmt.Fprintf(f, "  row: %d col: %d name: %q used: %v target_room: %q\n", row, col, t.Name, t.Used, t.TargetRoom)
+		fmt.Fprintf(f, "  %s name: %q used: %v target_room: %q\n", formatXY(col, row), t.Name, t.Used, t.TargetRoom)
 	})
 	fmt.Fprintln(f, "")
 
@@ -331,7 +346,7 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 		case entities.RewardMap:
 			rewardStr = "map"
 		}
-		fmt.Fprintf(f, "  row: %d col: %d name: %q solved: %v solution: %q hint: %q reward: %s\n", row, col, p.Name, p.Solved, p.Solution, p.Hint, rewardStr)
+		fmt.Fprintf(f, "  %s name: %q solved: %v solution: %q hint: %q reward: %s\n", formatXY(col, row), p.Name, p.Solved, p.Solution, p.Hint, rewardStr)
 	})
 	fmt.Fprintln(f, "")
 
@@ -357,8 +372,8 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 		}
 		inStartRoom := m.RoomName == startRoomName
 		onPowerGrid := conductiveRooms[cell.Name]
-		fmt.Fprintf(f, "  row: %d col: %d name: %q room_name: %q used: %v powered: %v on_power_grid: %v (in_start_room: %v)\n",
-			row, col, m.Name, m.RoomName, m.Used, m.Powered, onPowerGrid, inStartRoom)
+		fmt.Fprintf(f, "  %s name: %q room_name: %q used: %v powered: %v on_power_grid: %v (in_start_room: %v)\n",
+			formatXY(col, row), m.Name, m.RoomName, m.Used, m.Powered, onPowerGrid, inStartRoom)
 	})
 	fmt.Fprintf(f, "  (powered terminals: %d; maint_bootstrap_ok: %v)\n", poweredCount, setup.MaintBootstrapOK(g))
 	fmt.Fprintln(f, "")
@@ -379,7 +394,7 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 		if hasItem {
 			itemName = furn.ContainedItem.Name
 		}
-		fmt.Fprintf(f, "  row: %d col: %d name: %q checked: %v has_contained_item: %v contained_item_name: %q description: %q\n", row, col, furn.Name, furn.Checked, hasItem, itemName, furn.Description)
+		fmt.Fprintf(f, "  %s name: %q checked: %v has_contained_item: %v contained_item_name: %q description: %q\n", formatXY(col, row), furn.Name, furn.Checked, hasItem, itemName, furn.Description)
 	})
 	fmt.Fprintln(f, "")
 
@@ -396,7 +411,7 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 		h := data.Hazard
 		info := entities.HazardTypes[h.Type]
 		typeName := info.Name
-		fmt.Fprintf(f, "  row: %d col: %d type: %s name: %q fixed: %v blocking: %v description: %q\n", row, col, typeName, h.Name, h.Fixed, h.IsBlocking(), h.Description)
+		fmt.Fprintf(f, "  %s type: %s name: %q fixed: %v blocking: %v description: %q\n", formatXY(col, row), typeName, h.Name, h.Fixed, h.IsBlocking(), h.Description)
 	})
 	fmt.Fprintln(f, "")
 
@@ -413,7 +428,7 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 		c := data.HazardControl
 		info := entities.HazardTypes[c.Type]
 		hazardFixed := c.Hazard != nil && c.Hazard.Fixed
-		fmt.Fprintf(f, "  row: %d col: %d name: %q type: %s activated: %v hazard_fixed: %v description: %q\n", row, col, c.Name, info.Name, c.Activated, hazardFixed, c.Description)
+		fmt.Fprintf(f, "  %s name: %q type: %s activated: %v hazard_fixed: %v description: %q\n", formatXY(col, row), c.Name, info.Name, c.Activated, hazardFixed, c.Description)
 	})
 	fmt.Fprintln(f, "")
 
@@ -424,7 +439,7 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 			return
 		}
 		cell.ItemsOnFloor.Each(func(item *world.Item) {
-			fmt.Fprintf(f, "  row: %d col: %d item_name: %q\n", row, col, item.Name)
+			fmt.Fprintf(f, "  %s item_name: %q\n", formatXY(col, row), item.Name)
 		})
 	})
 	fmt.Fprintln(f, "")
@@ -469,7 +484,7 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 	fmt.Fprintln(f, "Exit cell:")
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell != nil && cell.ExitCell {
-			fmt.Fprintf(f, "  row: %d col: %d\n", row, col)
+			fmt.Fprintf(f, "  %s\n", formatXY(col, row))
 		}
 	})
 	fmt.Fprintln(f, "")

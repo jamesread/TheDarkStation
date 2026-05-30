@@ -5,7 +5,7 @@ mo:
 	msgfmt -c -v po/default.pot -o mo/en_GB.utf8/LC_MESSAGES/default.mo
 
 build:
-	go build -o darkstation main.go
+	go build -ldflags "-X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)" -o darkstation .
 
 codestyle:
 	go fmt ./...

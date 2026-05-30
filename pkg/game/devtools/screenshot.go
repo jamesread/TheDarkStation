@@ -11,6 +11,7 @@ import (
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/renderer"
 	rendererebiten "darkstation/pkg/game/renderer/ebiten"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -245,10 +246,14 @@ func getCellHTMLInfo(g *state.Game, r *world.Cell) (string, string) {
 
 	// Exit cell (show if has map or discovered)
 	if r.ExitCell && (g.HasMap || r.Discovered) {
-		if r.Locked && !g.AllGeneratorsPowered() {
+		switch setup.ExitLiftState(g) {
+		case state.ExitLiftLockedUnpowered:
 			return "▲", "exit-locked"
+		case state.ExitLiftLockedIncomplete:
+			return "▲", "exit-pending"
+		default:
+			return "△", "exit-unlocked"
 		}
-		return "△", "exit-unlocked"
 	}
 
 	// Items on floor (show if has map or discovered)

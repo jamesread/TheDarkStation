@@ -20,9 +20,34 @@ func TestApplyCircuitPreset_OffAndOn(t *testing.T) {
 		t.Fatal("ON: expected doors and cctv on")
 	}
 
-	ApplyCircuitPreset(g, "RoomA", CircuitOff)
+	help := ApplyCircuitPreset(g, "RoomA", CircuitOff)
+	if !g.RoomDoorsPowered["RoomA"] || !g.RoomCCTVPowered["RoomA"] {
+		t.Fatal("OFF: circuits should stay on during shutdown delay")
+	}
+	if help == "" {
+		t.Fatal("expected shutdown help text")
+	}
+
+	now := setup.PowerNowMs()
+	setup.AdvanceRoomPowerOff(g, now+setup.RoomPowerOffDelay.Milliseconds())
 	if g.RoomDoorsPowered["RoomA"] || g.RoomCCTVPowered["RoomA"] {
-		t.Fatal("OFF: expected doors and cctv off")
+		t.Fatal("OFF: expected doors and cctv off after delay")
+	}
+}
+
+func TestApplyCircuitPreset_OffCancelledByOn(t *testing.T) {
+	g, _ := makeMenuTestGame(t)
+	ApplyCircuitPreset(g, "RoomA", CircuitFull)
+	ApplyCircuitPreset(g, "RoomA", CircuitOff)
+	if !setup.RoomPowerOffScheduled(g, "RoomA") {
+		t.Fatal("expected pending shutdown")
+	}
+	ApplyCircuitPreset(g, "RoomA", CircuitFull)
+	if setup.RoomPowerOffScheduled(g, "RoomA") {
+		t.Fatal("ON should cancel pending shutdown")
+	}
+	if !g.RoomDoorsPowered["RoomA"] || !g.RoomCCTVPowered["RoomA"] {
+		t.Fatal("expected circuits on after cancel")
 	}
 }
 

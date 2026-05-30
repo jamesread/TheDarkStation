@@ -69,7 +69,7 @@ func (h *MainMenuHandler) GetTitle() string {
 
 // GetInstructions returns the menu instructions.
 func (h *MainMenuHandler) GetInstructions(selected MenuItem) string {
-	return "Use up/down to select, Enter to activate, q to quit"
+	return "Use up/down to select, Enter to activate, Esc to quit"
 }
 
 // OnSelect is called when an item is selected.
@@ -92,6 +92,15 @@ func (h *MainMenuHandler) OnActivate(item MenuItem, index int) (shouldClose bool
 		return true, ""
 	}
 	return false, ""
+}
+
+// HandleQuitShortcut handles Escape on the main menu.
+func (h *MainMenuHandler) HandleQuitShortcut(g *state.Game) (closeMenu bool) {
+	if ConfirmQuitGame(g) {
+		h.shouldQuit = true
+		return true
+	}
+	return false
 }
 
 // OnExit is called when the menu is exited.

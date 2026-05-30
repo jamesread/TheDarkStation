@@ -286,5 +286,10 @@ func AnalyzeSolvability(g *state.Game) SolvabilityReport {
 	if !keycardsAccessible(g, reachable) {
 		report.Warnings = append(report.Warnings, "keycard not reachable at init (I3 violation)")
 	}
+	if AnyArmedGridOverloaded(g) {
+		report.Warnings = append(report.Warnings,
+			fmt.Sprintf("power grid overloaded at init: consumption %d W, supply %d W",
+				CalculatePowerConsumption(g), g.PowerSupply))
+	}
 	return report
 }

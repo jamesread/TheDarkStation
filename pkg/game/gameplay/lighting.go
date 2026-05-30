@@ -21,6 +21,7 @@ func UpdateLightingExploration(g *state.Game) {
 	if len(g.Generators) > 0 {
 		setup.AdvancePowerPropagation(g, nowMs)
 	}
+	setup.AdvanceRoomPowerOff(g, nowMs)
 
 	totalConsumption := g.CalculatePowerConsumption()
 	g.PowerConsumption = totalConsumption
@@ -38,6 +39,9 @@ func UpdateLightingExploration(g *state.Game) {
 }
 
 func applyAlwaysLit(g *state.Game) {
+	if g.AlwaysLitApplied || g.Grid == nil {
+		return
+	}
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil || !cell.Room {
 			return
@@ -46,4 +50,5 @@ func applyAlwaysLit(g *state.Game) {
 		data.LightsOn = true
 		data.Lighted = true
 	})
+	g.AlwaysLitApplied = true
 }

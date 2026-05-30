@@ -2,7 +2,6 @@
 package ebiten
 
 import (
-	"fmt"
 	"image/color"
 	"math"
 	"strings"
@@ -11,7 +10,6 @@ import (
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
-	"github.com/leonelquinteros/gotext"
 
 	gamemenu "darkstation/pkg/game/menu"
 	"darkstation/pkg/game/renderer"
@@ -126,16 +124,16 @@ func (e *EbitenRenderer) RenderMenu(g *state.Game, items []gamemenu.MenuItem, se
 	if e.genericMenuActive && e.genericMenuTitle != title {
 		// Menu is active and title changed - use current menu state
 		titleChanged = true
-		oldHeight = e.calculateMenuHeight(e.genericMenuItems, e.genericMenuTitle, e.genericMenuHelpText)
+		oldHeight = e.calculateMenuHeight(e.genericMenuLabels, e.genericMenuTitle, e.genericMenuHelpText)
 	} else if !e.genericMenuActive && len(e.prevMenuItems) > 0 && e.prevMenuTitle != title {
 		// Menu was cleared but we have previous state - use it for transition
 		titleChanged = true
-		oldHeight = e.calculateMenuHeight(e.prevMenuItems, e.prevMenuTitle, e.prevMenuHelpText)
+		oldHeight = e.calculateMenuHeight(e.prevMenuLabels, e.prevMenuTitle, e.prevMenuHelpText)
 	}
 
 	if titleChanged {
 		// Calculate required heights for both menus
-		newHeight := e.calculateMenuHeight(items, title, helpText)
+		newHeight := e.calculateMenuHeight(e.snapshotMenuLabels(items), title, helpText)
 
 		e.menuHeightAnimStartHeight = oldHeight
 		e.menuHeightAnimTargetHeight = newHeight
@@ -144,7 +142,7 @@ func (e *EbitenRenderer) RenderMenu(g *state.Game, items []gamemenu.MenuItem, se
 	} else if !e.genericMenuActive && len(e.prevMenuItems) == 0 {
 		// Menu just opened (no previous state) - no height animation, set target height immediately
 		e.menuHeightAnimating = false
-		e.menuHeightAnimTargetHeight = e.calculateMenuHeight(items, title, helpText)
+		e.menuHeightAnimTargetHeight = e.calculateMenuHeight(e.snapshotMenuLabels(items), title, helpText)
 	}
 
 	// Check if animations have completed and clean them up
@@ -172,11 +170,12 @@ func (e *EbitenRenderer) RenderMenu(g *state.Game, items []gamemenu.MenuItem, se
 	if e.genericMenuActive && e.genericMenuSelected != selected && e.genericMenuSelected >= 0 {
 		// Calculate widths for start and target items
 		var startWidth, targetWidth float64
-		if e.genericMenuSelected >= 0 && e.genericMenuSelected < len(e.genericMenuItems) {
-			startWidth = e.getMenuItemWidth(e.genericMenuItems[e.genericMenuSelected])
+		if e.genericMenuSelected >= 0 && e.genericMenuSelected < len(e.genericMenuLabels) {
+			startWidth = e.getMenuLabelWidth(e.genericMenuLabels[e.genericMenuSelected])
 		}
-		if selected >= 0 && selected < len(items) {
-			targetWidth = e.getMenuItemWidth(items[selected])
+		labels := e.snapshotMenuLabels(items)
+		if selected >= 0 && selected < len(labels) {
+			targetWidth = e.getMenuLabelWidth(labels[selected])
 		}
 
 		e.menuHighlightAnimStartIndex = e.genericMenuSelected
@@ -196,6 +195,7 @@ func (e *EbitenRenderer) RenderMenu(g *state.Game, items []gamemenu.MenuItem, se
 	e.genericMenuTitle = title
 	e.genericMenuItems = make([]gamemenu.MenuItem, len(items))
 	copy(e.genericMenuItems, items)
+	e.genericMenuLabels = e.snapshotMenuLabels(items)
 
 	// Initialize floating tiles background for main menu
 	if title == "The Dark Station" {
@@ -228,15 +228,23 @@ func (e *EbitenRenderer) ClearMenu() {
 	if e.genericMenuActive {
 		e.prevMenuItems = make([]gamemenu.MenuItem, len(e.genericMenuItems))
 		copy(e.prevMenuItems, e.genericMenuItems)
+		e.prevMenuLabels = append([]string(nil), e.genericMenuLabels...)
 		e.prevMenuTitle = e.genericMenuTitle
 		e.prevMenuHelpText = e.genericMenuHelpText
 	}
 	e.genericMenuActive = false
 	e.genericMenuItems = nil
+	e.genericMenuLabels = nil
 	e.genericMenuHelpText = ""
 	e.genericMenuTitle = ""
 	e.menuHighlightAnimating = false
 	// Clear previous state only after animation completes (handled in RenderMenu)
+}
+
+func (e *EbitenRenderer) isGenericMenuActive() bool {
+	e.genericMenuMutex.RLock()
+	defer e.genericMenuMutex.RUnlock()
+	return e.genericMenuActive
 }
 
 // drawGenericMenuOverlay draws a semi-transparent panel over most of the screen
@@ -245,6 +253,7 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	e.genericMenuMutex.RLock()
 	items := make([]gamemenu.MenuItem, len(e.genericMenuItems))
 	copy(items, e.genericMenuItems)
+	labels := append([]string(nil), e.genericMenuLabels...)
 	selected := e.genericMenuSelected
 	helpText := e.genericMenuHelpText
 	title := e.genericMenuTitle
@@ -278,7 +287,7 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	useVectorAA := !maintOverlayStable
 
 	// Calculate required height based on menu content
-	requiredHeight := e.calculateMenuHeight(items, title, helpText)
+	requiredHeight := e.calculateMenuHeight(labels, title, helpText)
 
 	// Animate height transition if menu changed
 	const heightAnimDuration = 200 // milliseconds
@@ -488,8 +497,8 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		}
 		off := 0.0
 		fs := int(e.getUIFontSize())
-		for i := 0; i < index && i < len(items); i++ {
-			if renderer.IsPowerBarLine(items[i].GetLabel()) {
+		for i := 0; i < index && i < len(labels); i++ {
+			if renderer.IsPowerBarLine(labels[i]) {
 				off += float64(powerBarMenuRowHeight(fs))
 			} else {
 				off += float64(lineHeight)
@@ -533,8 +542,8 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		// No animation - use current selected position and width
 		highlightIndex = selected
 		highlightY = float64(y) + menuRowOffset(selected) + fontSize
-		if selected >= 0 && selected < len(items) {
-			highlightWidth = e.getMenuItemWidth(items[selected])
+		if selected >= 0 && selected < len(labels) {
+			highlightWidth = e.getMenuLabelWidth(labels[selected])
 		} else {
 			highlightWidth = 0
 		}
@@ -564,8 +573,7 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	rightAlignPowerColumn := title == "Select room"
 	if strings.Contains(title, "Maintenance Terminal") || title == "Select room" {
 		var maxLabelW, maxValueW float64
-		for _, item := range items {
-			label := item.GetLabel()
+		for _, label := range labels {
 			before, after, ok := strings.Cut(label, "\t")
 			if !ok || before == "" {
 				continue
@@ -601,8 +609,11 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 
 	// Second pass: draw menu items on top of the highlights
 	rowY := y
-	for _, item := range items {
-		label := item.GetLabel()
+	for i, item := range items {
+		if i >= len(labels) {
+			break
+		}
+		label := labels[i]
 		rowParamY := rowY
 
 		if renderer.IsPowerBarLine(label) {
@@ -677,24 +688,6 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		}
 		rowY += lineHeight
 	}
-
-	// Draw version information in bottom right corner (only for main menu)
-	if title == "The Dark Station" {
-		versionText := fmt.Sprintf(gotext.Get("VERSION"), renderer.Version)
-		if renderer.Commit != "unknown" && len(renderer.Commit) > 0 {
-			versionText += fmt.Sprintf(" (%s)", renderer.Commit[:7])
-		}
-		versionWidth := e.getTextWidth(versionText)
-		margin := 16 // Margin from screen edges
-		versionX := screenWidth - int(versionWidth) - margin
-		// Position version text at bottom right corner
-		// Note: drawColoredText uses baseline positioning (adds fontSize to Y internally)
-		// To position text at bottom of screen: y = screenHeight - margin - (textHeight * 2)
-		// This accounts for baseline offset and text height below baseline
-		_, textHeight := text.Measure(versionText, face, 0)
-		versionY := screenHeight - margin - int(textHeight*2)
-		e.drawColoredText(screen, versionText, versionX, versionY, colorSubtle)
-	}
 }
 
 // getMarkupWidth returns the total width in pixels of a string that may contain markup (e.g. ACTION{}, POWERED{}).
@@ -707,9 +700,16 @@ func (e *EbitenRenderer) getMarkupWidth(s string) float64 {
 	return w
 }
 
-// getMenuItemWidth calculates the width of a menu item's label text (accounting for markup)
-func (e *EbitenRenderer) getMenuItemWidth(item gamemenu.MenuItem) float64 {
-	label := item.GetLabel()
+func (e *EbitenRenderer) snapshotMenuLabels(items []gamemenu.MenuItem) []string {
+	labels := make([]string, len(items))
+	for i, item := range items {
+		labels[i] = item.GetLabel()
+	}
+	return labels
+}
+
+// getMenuLabelWidth calculates the width of a menu label (accounting for markup).
+func (e *EbitenRenderer) getMenuLabelWidth(label string) float64 {
 	if renderer.IsPowerBarLine(label) {
 		return 220
 	}
@@ -725,7 +725,7 @@ func (e *EbitenRenderer) getMenuItemWidth(item gamemenu.MenuItem) float64 {
 }
 
 // calculateMenuHeight calculates the required height for a menu based on its content
-func (e *EbitenRenderer) calculateMenuHeight(items []gamemenu.MenuItem, title string, helpText string) float64 {
+func (e *EbitenRenderer) calculateMenuHeight(labels []string, title string, helpText string) float64 {
 	fontSize := e.getUIFontSize()
 	lineHeight := float64(int(fontSize) + 6)
 	paddingY := 24.0 * 2            // Top and bottom padding
@@ -748,8 +748,8 @@ func (e *EbitenRenderer) calculateMenuHeight(items []gamemenu.MenuItem, title st
 	height += lineHeight
 
 	// Menu items (power bar rows are taller)
-	for _, item := range items {
-		if renderer.IsPowerBarLine(item.GetLabel()) {
+	for _, label := range labels {
+		if renderer.IsPowerBarLine(label) {
 			height += float64(powerBarMenuRowHeight(int(fontSize)))
 		} else {
 			height += lineHeight

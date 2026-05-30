@@ -159,3 +159,52 @@ func TestShortOutIfOverload_unpowersOthersOnSameGrid(t *testing.T) {
 		t.Fatal("grid should be within supply after short-out")
 	}
 }
+
+func TestEnsureInitialPowerBalance_shedsExcessAtLevelStart(t *testing.T) {
+	grid := world.NewGrid(2, 12)
+	for r := 0; r < 2; r++ {
+		for c := 0; c < 12; c++ {
+			room := "Start"
+			if c >= 4 && c < 8 {
+				room = "Mid"
+			} else if c >= 8 {
+				room = "Far"
+			}
+			grid.MarkAsRoomWithName(r, c, room, "desc")
+			gameworld.InitGameData(grid.GetCell(r, c))
+		}
+	}
+	grid.BuildAllCellConnections()
+	gameworld.GetGameData(grid.GetCell(0, 0)).Door = &entities.Door{RoomName: "Start", Locked: false}
+	gameworld.GetGameData(grid.GetCell(0, 4)).Door = &entities.Door{RoomName: "Mid", Locked: false}
+	gameworld.GetGameData(grid.GetCell(0, 8)).Door = &entities.Door{RoomName: "Far", Locked: false}
+	for r := 0; r < 2; r++ {
+		for c := 0; c < 12; c++ {
+			gameworld.GetGameData(grid.GetCell(r, c)).Terminal = entities.NewCCTVTerminal("T")
+		}
+	}
+	gen := entities.NewGenerator("G1", 1)
+	gen.InsertBatteriesAndStart(1)
+	gameworld.GetGameData(grid.GetCell(0, 0)).Generator = gen
+
+	g := state.NewGame()
+	g.Grid = grid
+	g.AddGenerator(gen)
+	g.RoomDoorsPowered = map[string]bool{"Start": true, "Mid": true, "Far": true}
+	g.RoomCCTVPowered = map[string]bool{"Start": true, "Mid": true, "Far": true}
+	EnergizeArmedRoomsForTest(g)
+
+	if !AnyArmedGridOverloaded(g) {
+		t.Fatal("precondition: armed load should exceed 100W supply")
+	}
+
+	EnsureInitialPowerBalance(g)
+
+	if AnyArmedGridOverloaded(g) {
+		t.Fatalf("still overloaded after balance: consumption=%d supply=%d",
+			CalculatePowerConsumption(g), g.PowerSupply)
+	}
+	if !g.RoomDoorsPowered["Start"] {
+		t.Fatal("start room doors should stay armed")
+	}
+}

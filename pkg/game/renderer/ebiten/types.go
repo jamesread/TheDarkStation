@@ -16,6 +16,12 @@ import (
 // LongUseAdvanceFunc ticks an in-progress hold-to-use session from the Ebiten Update thread.
 type LongUseAdvanceFunc func(g *state.Game, held, released bool, nowMs int64)
 
+// HazardClearAdvanceFunc ticks an in-progress hazard clear cinematic from the Ebiten Update thread.
+type HazardClearAdvanceFunc func(g *state.Game, nowMs int64)
+
+// HazardTourAdvanceFunc ticks an in-progress exit hazard tour from the Ebiten Update thread.
+type HazardTourAdvanceFunc func(g *state.Game, nowMs int64)
+
 // Callout represents a floating message displayed near a cell
 type Callout struct {
 	Row       int    // Cell row
@@ -74,6 +80,8 @@ type renderSnapshot struct {
 	longUseProgress  float64
 	longUseTargetRow int
 	longUseTargetCol int
+	hazardClear      *state.HazardClearSession
+	hazardTour       *state.HazardTourSession
 	powerGrid        powerGridSnapshot
 	mapPower         mapPowerSnapshot
 }
@@ -180,6 +188,8 @@ type EbitenRenderer struct {
 	interactReleasedEdge bool
 	longUseAdvancer      LongUseAdvanceFunc
 	longUsePrevHeld      bool
+	hazardClearAdvancer  HazardClearAdvanceFunc
+	hazardTourAdvancer   HazardTourAdvanceFunc
 
 	// Flag indicating renderer is running
 	running bool
@@ -190,6 +200,7 @@ type EbitenRenderer struct {
 	// Generic menu overlay state
 	genericMenuActive   bool
 	genericMenuItems    []gamemenu.MenuItem
+	genericMenuLabels   []string // captured on game thread in RenderMenu; Draw must not call GetLabel()
 	genericMenuSelected int
 	genericMenuHelpText string
 	genericMenuTitle    string
@@ -197,6 +208,7 @@ type EbitenRenderer struct {
 
 	// Preserved menu state for smooth transitions
 	prevMenuItems    []gamemenu.MenuItem
+	prevMenuLabels   []string
 	prevMenuTitle    string
 	prevMenuHelpText string
 
@@ -276,6 +288,8 @@ type EbitenRenderer struct {
 	roomLabelsCache      []roomLabel
 	objectivesCacheKey   objectivesCacheKey
 	objectivesCache      []string
+	envPlaquesCacheKey   envPlaquesCacheKey
+	envPlaquesCache      []envPlaque
 
 	// Background animation for main menu (floating tiles)
 	floatingTiles      []floatingTile
@@ -312,6 +326,13 @@ type EbitenRenderer struct {
 	textInputResultCh chan textInputResult
 	textInputMutex    sync.RWMutex
 
+	// Confirmation dialog (quit confirmation, etc.)
+	confirmActive   bool
+	confirmTitle    string
+	confirmMessage  string
+	confirmResultCh chan bool
+	confirmMutex    sync.RWMutex
+
 	// Level generation loading overlay (updated on game thread, read in Draw).
 	levelGen     levelGenLoading
 	loadingMutex sync.RWMutex
@@ -347,6 +368,11 @@ type roomLabelsCacheKey struct {
 type objectivesCacheKey struct {
 	level, movementCount, interactionsCount int
 	unpoweredGenerators                     int
+}
+
+type envPlaquesCacheKey struct {
+	level, movementCount, interactionsCount int
+	envPlaquesEnabled                       bool
 }
 
 // floatingTile represents a single tile in the background animation

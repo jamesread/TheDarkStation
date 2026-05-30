@@ -100,7 +100,8 @@ func ProcessCompletionInput(g *state.Game, intent engineinput.Intent) {
 			return
 		}
 		if g.CreditsExitStartMs != 0 {
-			finishCreditsExit(g, time.Now().UnixMilli())
+			// Keypress during slide-out skips the remaining exit animation.
+			finishCreditsExit(g, g.CreditsExitStartMs+state.CreditsSlideExitMs)
 			return
 		}
 		if g.CreditsLineIndex >= len(state.CompletionCreditLineIDs)-1 {

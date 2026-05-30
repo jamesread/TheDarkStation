@@ -4,6 +4,8 @@ package menu
 import (
 	"fmt"
 
+	"github.com/leonelquinteros/gotext"
+
 	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/state"
@@ -57,6 +59,12 @@ type DynamicMenuHandler interface {
 // selection (for sub-menus like room selector that highlight the focused room).
 type MaintenanceRoomProvider interface {
 	GetMaintenanceRoom(selectedIndex int, items []MenuItem) string
+}
+
+// QuitShortcutHandler handles the global quit shortcut (Escape) while a menu is open.
+// closeMenu is true when the menu should close (e.g. quit confirmed on the main menu).
+type QuitShortcutHandler interface {
+	HandleQuitShortcut(g *state.Game) (closeMenu bool)
 }
 
 // MenuRenderer is an optional interface for renderers that can draw
@@ -186,7 +194,21 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 					return
 				}
 			}
-		case engineinput.ActionOpenMenu, engineinput.ActionQuit:
+		case engineinput.ActionQuit:
+			closeMenu := true
+			if qsh, ok := handler.(QuitShortcutHandler); ok {
+				closeMenu = qsh.HandleQuitShortcut(g)
+			}
+			if !closeMenu {
+				continue
+			}
+			g.ClearMessages()
+			if mr, ok := renderer.Current.(MenuRenderer); ok {
+				mr.ClearMenu()
+			}
+			handler.OnExit()
+			return
+		case engineinput.ActionOpenMenu:
 			// Exit menu
 			g.ClearMessages()
 			if mr, ok := renderer.Current.(MenuRenderer); ok {
@@ -329,7 +351,21 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 					return
 				}
 			}
-		case engineinput.ActionOpenMenu, engineinput.ActionQuit:
+		case engineinput.ActionQuit:
+			closeMenu := true
+			if qsh, ok := handler.(QuitShortcutHandler); ok {
+				closeMenu = qsh.HandleQuitShortcut(g)
+			}
+			if !closeMenu {
+				continue
+			}
+			g.ClearMessages()
+			if mr, ok := renderer.Current.(MenuRenderer); ok {
+				mr.ClearMenu()
+			}
+			handler.OnExit()
+			return
+		case engineinput.ActionOpenMenu:
 			g.ClearMessages()
 			if mr, ok := renderer.Current.(MenuRenderer); ok {
 				mr.ClearMenu()
@@ -350,12 +386,8 @@ func renderMenuFallback(g *state.Game, items []MenuItem, selected int, helpText 
 	g.ClearMessages()
 	logMessage(g, "=== %s ===", handler.GetTitle())
 
-	// Show version information
-	versionText := fmt.Sprintf("Version: %s", renderer.Version)
-	if renderer.Commit != "unknown" && len(renderer.Commit) > 0 {
-		versionText += fmt.Sprintf(" (%s)", renderer.Commit[:7])
-	}
-	logMessage(g, versionText)
+	// Show build stamp in the message log when a menu opens.
+	logMessage(g, fmt.Sprintf(gotext.Get("VERSION"), renderer.BuildLabel))
 
 	// Show instructions
 	var selectedItem MenuItem

@@ -8,6 +8,7 @@ import (
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/features"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -30,7 +31,11 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 	// Hazard (show if has map or discovered)
 	if gameworld.HasHazard(cell) && (g.HasMap || cell.Discovered) {
 		if data.Hazard.IsBlocking() {
-			return CellRenderOptions{Icon: data.Hazard.GetIcon(), Color: colorHazard, HasBackground: true}
+			var iconColor color.Color = colorHazard
+			if alpha := hazardClearVisualAlpha(snap, cell); alpha < 1 {
+				iconColor = e.applyAlpha(colorHazard, alpha)
+			}
+			return CellRenderOptions{Icon: data.Hazard.GetIcon(), Color: iconColor, HasBackground: true}
 		}
 	}
 
@@ -97,13 +102,15 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 
 	// Exit cell (show if has map or discovered)
 	if cell.ExitCell && (g.HasMap || cell.Discovered) {
-		if cell.Locked && !g.AllGeneratorsPowered() {
+		switch setup.ExitLiftState(g) {
+		case state.ExitLiftLockedUnpowered:
 			return CellRenderOptions{Icon: IconExitLocked, Color: colorExitLocked, HasBackground: true}
+		case state.ExitLiftLockedIncomplete:
+			return CellRenderOptions{Icon: IconExitLocked, Color: colorExitPending, HasBackground: true}
+		default:
+			pulseColor := e.getPulsingExitColor()
+			return CellRenderOptions{Icon: IconExitUnlocked, Color: pulseColor, HasBackground: true}
 		}
-		// Unlocked exit - apply continuous pulsing animation for icon
-		pulseColor := e.getPulsingExitColor()
-		// Background will be drawn with pulsing color separately
-		return CellRenderOptions{Icon: IconExitUnlocked, Color: pulseColor, HasBackground: true}
 	}
 
 	// Corridor power relay (discovered corridors only)
@@ -154,6 +161,26 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 
 	// Unknown/void
 	return CellRenderOptions{Icon: IconVoid, Color: colorBackground, HasBackground: false}
+}
+
+func hazardClearVisualAlpha(snap *renderSnapshot, cell *world.Cell) float64 {
+	if snap == nil || snap.hazardClear == nil || cell == nil {
+		return 1
+	}
+	hc := snap.hazardClear
+	if cell.Row != hc.HazardRow || cell.Col != hc.HazardCol {
+		return 1
+	}
+	if hc.Phase != state.HazardClearFlash && hc.Phase != state.HazardClearFade {
+		return 1
+	}
+	if hc.VisualAlpha <= 0 {
+		return 0
+	}
+	if hc.VisualAlpha >= 1 {
+		return 1
+	}
+	return hc.VisualAlpha
 }
 
 // getFloorIcon returns the appropriate floor icon for a room

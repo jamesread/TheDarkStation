@@ -5,6 +5,7 @@ import (
 
 	"darkstation/pkg/engine/input"
 	"darkstation/pkg/game/state"
+	"time"
 )
 
 // TextStyle represents different text styling options
@@ -85,6 +86,7 @@ func SetVersion(v, c, d string) {
 	Version = v
 	Commit = c
 	Date = d
+	BuildLabel = FormatBuildLabel(d, time.Now())
 }
 
 // SetRenderer sets the active renderer

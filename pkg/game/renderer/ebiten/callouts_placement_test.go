@@ -4,18 +4,18 @@ import "testing"
 
 func TestCalloutBasePosition_PlayerEastOfAnchor(t *testing.T) {
 	const (
-		tileSize   = 32
-		boxWidth   = 120
-		boxHeight  = 80
-		cellX      = 100.0
-		cellY      = 100.0
-		mapX       = 0.0
-		mapY       = 0.0
-		viewport   = 20
-		anchorRow  = 5
-		anchorCol  = 5
-		playerRow  = 5
-		playerCol  = 6
+		tileSize  = 32
+		boxWidth  = 120
+		boxHeight = 80
+		cellX     = 100.0
+		cellY     = 100.0
+		mapX      = 0.0
+		mapY      = 0.0
+		viewport  = 20
+		anchorRow = 5
+		anchorCol = 5
+		playerRow = 5
+		playerCol = 6
 	)
 	playerX := cellX + float64(tileSize)
 	playerY := cellY

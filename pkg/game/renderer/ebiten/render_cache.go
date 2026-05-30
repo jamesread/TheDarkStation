@@ -117,6 +117,29 @@ func (e *EbitenRenderer) refreshObjectives(g *state.Game) []string {
 	return objectives
 }
 
+func (e *EbitenRenderer) buildEnvPlaquesCacheKey(g *state.Game) envPlaquesCacheKey {
+	if g == nil {
+		return envPlaquesCacheKey{}
+	}
+	return envPlaquesCacheKey{
+		level:             g.Level,
+		movementCount:     g.MovementCount,
+		interactionsCount: g.InteractionsCount,
+		envPlaquesEnabled: e.EnvPlaquesEnabled(),
+	}
+}
+
+func (e *EbitenRenderer) refreshEnvPlaques(g *state.Game) []envPlaque {
+	key := e.buildEnvPlaquesCacheKey(g)
+	if key == e.envPlaquesCacheKey && e.envPlaquesCache != nil {
+		return e.envPlaquesCache
+	}
+	plaques := e.computeEnvPlaques(g)
+	e.envPlaquesCacheKey = key
+	e.envPlaquesCache = plaques
+	return plaques
+}
+
 func (e *EbitenRenderer) mapDrawCacheHit(snapSeq uint64, camRow, camCol float64, startRow, startCol, bufW, bufH int) (blitX, blitY float64, ok bool) {
 	c := &e.mapDrawCache
 	if !c.valid || c.snapSeq != snapSeq {

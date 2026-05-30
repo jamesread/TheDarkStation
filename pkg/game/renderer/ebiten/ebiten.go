@@ -52,6 +52,16 @@ func (e *EbitenRenderer) SetLongUseAdvancer(fn LongUseAdvanceFunc) {
 	e.longUseAdvancer = fn
 }
 
+// SetHazardClearAdvancer registers the gameplay hook that advances hazard clear cinematics each Update tick.
+func (e *EbitenRenderer) SetHazardClearAdvancer(fn HazardClearAdvanceFunc) {
+	e.hazardClearAdvancer = fn
+}
+
+// SetHazardTourAdvancer registers the gameplay hook that advances exit hazard tours each Update tick.
+func (e *EbitenRenderer) SetHazardTourAdvancer(fn HazardTourAdvanceFunc) {
+	e.hazardTourAdvancer = fn
+}
+
 // Init initializes the Ebiten renderer
 func (e *EbitenRenderer) Init() {
 	ebiten.SetWindowSize(e.windowWidth, e.windowHeight)

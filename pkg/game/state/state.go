@@ -29,6 +29,7 @@ type DeckState struct {
 	RoomLightsPowered    map[string]bool
 	RoomPowerOnline      map[string]bool
 	PowerPropPending     []PowerPropEntry
+	RoomPowerOffPending  map[string]int64
 	Generators           []*entities.Generator
 	ManualEgressReleased map[string]bool // room name -> manual door release active (no grid power)
 	OwnedItems           world.ItemSet   // keycards and other deck-local pickup inventory
@@ -93,6 +94,9 @@ type Game struct {
 	// PowerPropPending schedules room activations when propagation is staggered (unused at 0 delay).
 	PowerPropPending []PowerPropEntry
 
+	// RoomPowerOffPending maps room name -> Unix ms when door/CCTV circuits shut down after maint OFF.
+	RoomPowerOffPending map[string]int64
+
 	// ObservationCueVisited prevents duplicate corridor-stamp callouts per cell (Story 5.2).
 	ObservationCueVisited map[string]struct{}
 
@@ -123,6 +127,19 @@ type Game struct {
 
 	// LongUse holds an in-progress hold-to-use interaction (nil when inactive).
 	LongUse *LongUseSession
+
+	// HazardClear runs a camera cinematic when clearing an environmental hazard.
+	HazardClear *HazardClearSession
+
+	// HazardTour runs a camera tour of blocking hazards when the exit lift is powered but blocked.
+	HazardTour *HazardTourSession
+
+	// livePowerCellsCache caches CellsReachableFromPoweredGenerators for the current routing state.
+	livePowerCellsCache *mapset.Set[*world.Cell]
+	livePowerCacheValid bool
+
+	// AlwaysLitApplied skips redundant full-grid lighting passes while rooms stay always lit.
+	AlwaysLitApplied bool
 }
 
 // LongUseSession tracks a hold-to-use interaction in progress.
@@ -389,6 +406,7 @@ func (g *Game) AdvanceLevel() {
 	g.RoomLightsPowered = make(map[string]bool)
 	g.RoomPowerOnline = make(map[string]bool)
 	g.PowerPropPending = nil
+	g.RoomPowerOffPending = nil
 }
 
 // copyPowerMaps returns copies of the given power maps (for per-deck state).
@@ -422,6 +440,17 @@ func copyBoolMap(m map[string]bool) map[string]bool {
 	return out
 }
 
+func copyInt64Map(m map[string]int64) map[string]int64 {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]int64, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
 func copyOwnedItems(items world.ItemSet) world.ItemSet {
 	out := mapset.New[*world.Item]()
 	items.Each(func(item *world.Item) {
@@ -443,6 +472,7 @@ func (g *Game) SaveCurrentDeckState() {
 	onlineCopy := copyBoolMap(g.RoomPowerOnline)
 	manualEgressCopy := copyBoolMap(g.ManualEgressReleased)
 	pendingCopy := append([]PowerPropEntry(nil), g.PowerPropPending...)
+	offPendingCopy := copyInt64Map(g.RoomPowerOffPending)
 	genCopy := make([]*entities.Generator, len(g.Generators))
 	for i, gen := range g.Generators {
 		genCopy[i] = &entities.Generator{
@@ -461,6 +491,7 @@ func (g *Game) SaveCurrentDeckState() {
 		RoomLightsPowered:    lightsCopy,
 		RoomPowerOnline:      onlineCopy,
 		PowerPropPending:     pendingCopy,
+		RoomPowerOffPending:  offPendingCopy,
 		ManualEgressReleased: manualEgressCopy,
 		Generators:           genCopy,
 		OwnedItems:           copyOwnedItems(g.OwnedItems),
@@ -490,6 +521,11 @@ func (g *Game) LoadDeckState(deckID int) {
 		g.ManualEgressReleased = make(map[string]bool)
 	}
 	g.PowerPropPending = append([]PowerPropEntry(nil), ds.PowerPropPending...)
+	if ds.RoomPowerOffPending != nil {
+		g.RoomPowerOffPending = copyInt64Map(ds.RoomPowerOffPending)
+	} else {
+		g.RoomPowerOffPending = nil
+	}
 	g.OwnedItems = copyOwnedItems(ds.OwnedItems)
 	g.RebuildGeneratorsFromGrid()
 	g.HasMap = false

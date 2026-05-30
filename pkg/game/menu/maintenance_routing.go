@@ -15,6 +15,9 @@ import (
 const (
 	maintModeControls    = "controls"
 	maintModeDiagnostics = "diagnostics"
+
+	// cycleADHint uses Basic Latin so it renders in Go Regular (UI sans); Unicode ◀▶ often missing.
+	cycleADHint = "< A/D >"
 )
 
 // MaintenanceMenuExtraInput is implemented by MaintenanceMenuHandler for map keys and mode toggle.
@@ -30,7 +33,7 @@ type ViewingRoomMenuItem struct {
 func (v *ViewingRoomMenuItem) GetLabel() string {
 	label := fmt.Sprintf("Viewing:\tACTION{%s}", RoomLabelWithPowerDraw(v.Parent.g, v.Parent.selectedRoomName))
 	if v.Parent.canCycleRooms() {
-		return label + "\tSUBTLE{◀ A/D ▶}"
+		return label + "\tSUBTLE{" + cycleADHint + "}"
 	}
 	return label + "\tSUBTLE{(only room)}"
 }
@@ -86,7 +89,7 @@ func (r *RoomCircuitPresetMenuItem) GetLabel() string {
 		impactPart = "\tSUBTLE{" + impact + "}"
 	}
 	if r.IsSelectable() {
-		return fmt.Sprintf("Power Grid:\t%s%s\tSUBTLE{◀ A/D ▶}\t(Enter=cycle, 1/2=apply)", preset, impactPart)
+		return fmt.Sprintf("Power Grid:\t%s%s\tSUBTLE{%s}\t(Enter=cycle, 1/2=apply)", preset, impactPart, cycleADHint)
 	}
 	return fmt.Sprintf("Power Grid:\t%s%s\t(1/2=apply)", preset, impactPart)
 }
@@ -101,6 +104,13 @@ func (r *RoomCircuitPresetMenuItem) GetHelpText() string {
 			return "No control path to this room from here"
 		}
 		return "Activate this room's maintenance terminal first"
+	}
+	if pending, remaining := setup.RoomPowerOffPending(r.Parent.g, r.Parent.selectedRoomName, setup.PowerNowMs()); pending {
+		secs := (remaining + 999) / 1000
+		if secs < 1 {
+			secs = 1
+		}
+		return fmt.Sprintf("Shutting down in %d seconds — leave the room now", secs)
 	}
 	next := CurrentCircuitPreset(r.Parent.g, r.Parent.selectedRoomName).NextPreset()
 	return PreviewCircuitToggleImpact(r.Parent.g, r.Parent.selectedRoomName, next)

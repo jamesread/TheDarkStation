@@ -25,6 +25,10 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		return
 	}
 
+	if IsGameplayCinematicActive(g) {
+		return
+	}
+
 	switch intent.Action {
 	case engineinput.ActionNone:
 		return
@@ -39,8 +43,10 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		return
 
 	case engineinput.ActionQuit:
-		fmt.Println(gotext.Get("GOODBYE"))
-		os.Exit(0)
+		if gamemenu.ConfirmQuitGame(g) {
+			fmt.Println(gotext.Get("GOODBYE"))
+			os.Exit(0)
+		}
 
 	case engineinput.ActionScreenshot:
 		filename := devtools.SaveScreenshotHTML(g)

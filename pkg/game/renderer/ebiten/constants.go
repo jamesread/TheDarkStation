@@ -31,8 +31,9 @@ var (
 	colorMaintenanceBg   = color.RGBA{58, 38, 12, 255}    // Dark orange tile plate (pairs with colorMaintenance)
 	colorFurniture       = color.RGBA{255, 150, 255, 255} // Bright pink
 	colorFurnitureCheck  = color.RGBA{180, 105, 242, 255} // Violet-purple (checked; natural hue shift from pink)
-	colorExitLocked      = color.RGBA{255, 100, 100, 255} // Bright red
-	colorExitUnlocked    = color.RGBA{100, 255, 100, 255} // Bright green
+	colorExitLocked      = color.RGBA{255, 100, 100, 255} // Bright red — lift locked (generators down)
+	colorExitPending     = color.RGBA{255, 255, 0, 255}   // Bright yellow — lift locked (hazards remain)
+	colorExitUnlocked    = color.RGBA{100, 255, 100, 255} // Bright green — lift ready
 	colorSubtle          = color.RGBA{120, 130, 180, 255} // Soft blue-purple-gray
 	colorUnpoweredSubtle = color.RGBA{90, 95, 120, 255}   // Muted gray for unpowered due to dependency (room terminal off)
 	colorLocation        = color.RGBA{160, 170, 210, 255} // Softer blue-gray for location/room labels
@@ -62,8 +63,8 @@ const (
 	IconUnvisited          = "●"
 	IconVisited            = "○"
 	IconVoid               = " "
-	IconExitLocked         = "▲" // Locked lift (unpowered)
-	IconExitUnlocked       = "△" // Unlocked lift (powered)
+	IconExitLocked         = "▲" // Locked lift (unpowered or incomplete)
+	IconExitUnlocked       = "△" // Ready lift
 	IconKey                = "K" // Keycard on floor (ASCII; Unicode ⚷ often missing in mono fallback fonts)
 	IconMap                = "M" // Station map pickup (ASCII: readable in all mono fonts)
 	IconItem               = "?" // Generic item on floor

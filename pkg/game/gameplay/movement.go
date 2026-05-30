@@ -24,62 +24,28 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 		return false, &missingItems
 	}
 
-	// Check for door (block if room's doors are unpowered)
+	// Door checks: power first, then keycard. Keycard overrides unpowered locked doors;
+	// keycard-gated doors stay passable without power once unlocked.
 	if gameworld.HasDoor(r) {
 		rData := gameworld.GetGameData(r)
 		roomName := rData.Door.RoomName
-		if !setup.CellHasLivePower(g, r) && !manualEgressReleased(g, roomName) {
-			if logReason {
-				msg := "UNPOWERED{Unpowered door}"
-				if g.RoomDoorsPowered[roomName] {
-					msg = "UNPOWERED{Door — power routing}"
+		unpowered := !setup.CellHasLivePower(g, r) && !manualEgressReleased(g, roomName)
+
+		if unpowered {
+			if gameworld.HasLockedDoor(r) {
+				if !unlockDoorWithKeycard(g, r, rData, logReason) {
+					return false, &missingItems
 				}
-				renderer.AddCallout(r.Row, r.Col, fmt.Sprintf("%s\n%s\nSUBTLE{Hold USE — manual egress release}", msg, rData.Door.DoorName()), renderer.CalloutColorDoor, 0)
-			}
-			return false, &missingItems
-		}
-	}
-
-	// Check for locked door
-	if gameworld.HasLockedDoor(r) {
-		rData := gameworld.GetGameData(r)
-		keycardName := rData.Door.KeycardName()
-		hasKeycard := false
-		var keycardItem *world.Item
-
-		g.OwnedItems.Each(func(item *world.Item) {
-			if item.Name == keycardName {
-				hasKeycard = true
-				keycardItem = item
-			}
-		})
-
-		if hasKeycard {
-			// Unlock ALL doors that require this keycard (a room may have multiple entry points)
-			doorsUnlocked := 0
-			g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-				cellData := gameworld.GetGameData(cell)
-				if gameworld.HasLockedDoor(cell) && cellData.Door.KeycardName() == keycardName {
-					cellData.Door.Unlock()
-					doorsUnlocked++
+			} else if !rData.Door.KeycardGated {
+				if logReason {
+					showUnpoweredDoorCallout(g, r, rData, roomName)
 				}
-			})
-			g.OwnedItems.Remove(keycardItem)
-			// Show unlock message as callout with proper item colors
-			var calloutMsg string
-			if doorsUnlocked > 1 {
-				calloutMsg = fmt.Sprintf("Used KEYCARD{%s} to unlock ACTION{%d} doors to ROOM{%s}!", keycardName, doorsUnlocked, rData.Door.RoomName)
-			} else {
-				calloutMsg = fmt.Sprintf("Used KEYCARD{%s} to unlock the %s!", keycardName, rData.Door.DoorName())
+				return false, &missingItems
 			}
-			renderer.AddCallout(r.Row, r.Col, calloutMsg, renderer.CalloutColorKeycard, 0)
-		} else {
-			if logReason {
-				logMessage(g, "This door requires a %s", renderer.StyledKeycard(keycardName))
-				// Contextual tooltip next to the locked door
-				renderer.AddCallout(r.Row, r.Col, fmt.Sprintf("TITLE{Door Locked}\nNeeds: KEYCARD{%s}", keycardName), renderer.CalloutColorDoor, 0)
+		} else if gameworld.HasLockedDoor(r) {
+			if !unlockDoorWithKeycard(g, r, rData, logReason) {
+				return false, &missingItems
 			}
-			return false, &missingItems
 		}
 	}
 
@@ -127,7 +93,9 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 			})
 
 			if fixItem != nil {
-				// Use the item to fix the hazard
+				if StartHazardClearFromItem(g, r, hazard, fixItem.Name) {
+					return false, &missingItems
+				}
 				hazard.Fix()
 				g.OwnedItems.Remove(fixItem)
 				info := entities.HazardTypes[hazard.Type]
@@ -151,18 +119,22 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 		}
 	}
 
-	// Check for powered generators and cleared hazards (only for exit cell)
-	if r.ExitCell {
-		if !g.AllGeneratorsPowered() {
-			if logReason {
-				unpowered := g.UnpoweredGeneratorCount()
-				logMessage(g, "The lift requires all generators to be powered!")
-				logMessage(g, "ACTION{%d} generator(s) still need power.", unpowered)
-			}
-			return false, &missingItems
-		}
-		if !g.AllHazardsCleared() {
-			if logReason {
+	// Check for exit lift readiness (only for exit cell)
+	if r.ExitCell && !setup.ExitLiftReady(g) {
+		if logReason {
+			switch setup.ExitLiftState(g) {
+			case state.ExitLiftLockedUnpowered:
+				exit := setup.ExitCell(g)
+				roomName := ""
+				if exit != nil {
+					roomName = exit.Name
+				}
+				if roomName != "" && g.RoomDoorsPowered != nil && g.RoomDoorsPowered[roomName] {
+					logMessage(g, "The lift has no routing power.")
+				} else {
+					logMessage(g, "The lift room has no door power.")
+				}
+			case state.ExitLiftLockedIncomplete:
 				numHazards := 0
 				g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 					if gameworld.HasBlockingHazard(cell) {
@@ -172,11 +144,59 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 				logMessage(g, "The lift requires all environmental hazards to be cleared!")
 				logMessage(g, "ACTION{%d} environmental hazard(s) remain.", numHazards)
 			}
-			return false, &missingItems
 		}
+		return false, &missingItems
 	}
 
 	return true, &missingItems
+}
+
+func showUnpoweredDoorCallout(g *state.Game, r *world.Cell, rData *gameworld.GameCellData, roomName string) {
+	msg := "UNPOWERED{Unpowered door}"
+	if g.RoomDoorsPowered[roomName] {
+		msg = "UNPOWERED{Door — power routing}"
+	}
+	renderer.AddCallout(r.Row, r.Col, fmt.Sprintf("%s\n%s\nSUBTLE{Hold USE — manual egress release}", msg, rData.Door.DoorName()), renderer.CalloutColorDoor, 0)
+}
+
+// unlockDoorWithKeycard unlocks all doors for the keycard on r when the player has it.
+// Returns false when the door is locked and the player lacks the keycard.
+func unlockDoorWithKeycard(g *state.Game, r *world.Cell, rData *gameworld.GameCellData, logReason bool) bool {
+	keycardName := rData.Door.KeycardName()
+	var keycardItem *world.Item
+
+	g.OwnedItems.Each(func(item *world.Item) {
+		if item.Name == keycardName {
+			keycardItem = item
+		}
+	})
+
+	if keycardItem == nil {
+		if logReason {
+			logMessage(g, "This door requires a %s", renderer.StyledKeycard(keycardName))
+			renderer.AddCallout(r.Row, r.Col, fmt.Sprintf("TITLE{Door Locked}\nNeeds: KEYCARD{%s}", keycardName), renderer.CalloutColorDoor, 0)
+		}
+		return false
+	}
+
+	doorsUnlocked := 0
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		cellData := gameworld.GetGameData(cell)
+		if gameworld.HasLockedDoor(cell) && cellData.Door.KeycardName() == keycardName {
+			cellData.Door.Unlock()
+			doorsUnlocked++
+		}
+	})
+	g.OwnedItems.Remove(keycardItem)
+
+	var calloutMsg string
+	if doorsUnlocked > 1 {
+		calloutMsg = fmt.Sprintf("Used KEYCARD{%s} to unlock ACTION{%d} doors to ROOM{%s}!", keycardName, doorsUnlocked, rData.Door.RoomName)
+	} else {
+		calloutMsg = fmt.Sprintf("Used KEYCARD{%s} to unlock the %s!", keycardName, rData.Door.DoorName())
+	}
+	renderer.AddCallout(r.Row, r.Col, calloutMsg, renderer.CalloutColorKeycard, 0)
+	return true
 }
 
 // MoveCell moves the player to a new cell

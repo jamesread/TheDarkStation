@@ -416,6 +416,15 @@ func CellsReachableFromPoweredGenerators(g *state.Game) *mapset.Set[*world.Cell]
 	if g == nil || g.Grid == nil {
 		return &empty
 	}
+	if cached, ok := g.CachedLivePowerCells(); ok {
+		return cached
+	}
+	union := computeCellsReachableFromPoweredGenerators(g)
+	g.StoreLivePowerCellsCache(&union)
+	return &union
+}
+
+func computeCellsReachableFromPoweredGenerators(g *state.Game) mapset.Set[*world.Cell] {
 	union := mapset.New[*world.Cell]()
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil || !cell.Room || !isConductivePowerSeed(g, cell) {
@@ -425,7 +434,7 @@ func CellsReachableFromPoweredGenerators(g *state.Game) *mapset.Set[*world.Cell]
 			union.Put(c)
 		})
 	})
-	return &union
+	return union
 }
 
 // CellHasLivePower reports whether propagated power has reached a specific grid cell.
@@ -706,12 +715,10 @@ func RoomHasLivePower(g *state.Game, roomName string) bool {
 	if g == nil || g.Grid == nil || roomName == "" {
 		return false
 	}
+	live := CellsReachableFromPoweredGenerators(g)
 	found := false
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if found || cell == nil || cell.Name != roomName {
-			return
-		}
-		if CellHasLivePower(g, cell) {
+	live.Each(func(cell *world.Cell) {
+		if !found && cell != nil && cell.Name == roomName {
 			found = true
 		}
 	})

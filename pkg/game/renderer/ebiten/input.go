@@ -52,6 +52,12 @@ func (e *EbitenRenderer) Update() error {
 		return nil
 	}
 
+	// Confirmation dialog (blocks game intents while open)
+	if e.isConfirmDialogActive() {
+		e.handleConfirmDialogInput()
+		return nil
+	}
+
 	// Update floating tiles for main menu and completion screens.
 	if e.floatingTilesAnimationActive() {
 		w, h := ebiten.WindowSize()
@@ -95,6 +101,10 @@ func (e *EbitenRenderer) Update() error {
 
 	e.advanceLongUseFromInput()
 
+	e.advanceHazardClear()
+
+	e.advanceHazardTour()
+
 	return nil
 }
 
@@ -113,6 +123,32 @@ func (e *EbitenRenderer) advanceLongUseFromInput() {
 	released := e.longUsePrevHeld && !held
 	e.longUsePrevHeld = held
 	e.longUseAdvancer(g, held, released, e.menuAnimClockMilli)
+}
+
+func (e *EbitenRenderer) advanceHazardClear() {
+	if e.hazardClearAdvancer == nil {
+		return
+	}
+	e.gameMutex.RLock()
+	g := e.game
+	e.gameMutex.RUnlock()
+	if g == nil || g.HazardClear == nil {
+		return
+	}
+	e.hazardClearAdvancer(g, e.menuAnimClockMilli)
+}
+
+func (e *EbitenRenderer) advanceHazardTour() {
+	if e.hazardTourAdvancer == nil {
+		return
+	}
+	e.gameMutex.RLock()
+	g := e.game
+	e.gameMutex.RUnlock()
+	if g == nil || g.HazardTour == nil {
+		return
+	}
+	e.hazardTourAdvancer(g, e.menuAnimClockMilli)
 }
 
 // handleZoom handles =/- for font/tile size adjustment
@@ -279,7 +315,7 @@ func (e *EbitenRenderer) checkGamepadInput() engineinput.Intent {
 
 		// Face buttons:
 		// - A / Cross: interact
-		// - B / Circle: quit
+		// - B / Circle: back in menus; quit (with confirmation) during gameplay
 		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton0) {
 			return engineinput.Intent{Action: engineinput.ActionInteract}
 		}
@@ -542,11 +578,19 @@ func (e *EbitenRenderer) checkInput() engineinput.Intent {
 		return engineinput.Intent{Action: engineinput.ActionResetLevel}
 	}
 
-	// Quit
-	if inpututil.IsKeyJustPressed(ebiten.KeyQ) || inpututil.IsKeyJustPressed(ebiten.KeyBackspace) || inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+	// Back (Q) while a menu is open — same role as gamepad B / Escape in menus.
+	if e.isGenericMenuActive() && inpututil.IsKeyJustPressed(ebiten.KeyQ) {
 		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
 			Device: engineinput.DeviceKeyboard,
-			Code:   "quit",
+			Code:   "q",
+		}))
+	}
+
+	// Quit (Escape; confirmation required during gameplay)
+	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "escape",
 		}))
 	}
 

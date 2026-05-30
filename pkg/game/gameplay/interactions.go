@@ -67,7 +67,7 @@ func logInteractDebugSnapshot(g *state.Game, phase string) {
 
 // countAdjacentInteractionCandidates returns how many orthogonal neighbors have at least one
 // interaction type that CheckAdjacentInteractables considers (same Has* gates as the scan).
-func countAdjacentInteractionCandidates(neighbors []*world.Cell) int {
+func countAdjacentInteractionCandidates(g *state.Game, neighbors []*world.Cell) int {
 	n := 0
 	for _, cell := range neighbors {
 		if cell == nil {
@@ -79,7 +79,8 @@ func countAdjacentInteractionCandidates(neighbors []*world.Cell) int {
 			gameworld.HasUnsolvedPuzzle(cell) ||
 			gameworld.HasInactiveHazardControl(cell) ||
 			gameworld.HasPowerRelay(cell) ||
-			gameworld.HasMaintenanceTerminal(cell) {
+			gameworld.HasMaintenanceTerminal(cell) ||
+			(cell.ExitCell && setup.ExitLiftState(g) == state.ExitLiftLockedIncomplete) {
 			n++
 		}
 	}
@@ -116,7 +117,7 @@ func CheckAdjacentInteractables(g *state.Game) bool {
 		g.CurrentCell.West,
 	}
 
-	if countAdjacentInteractionCandidates(neighbors) <= 1 {
+	if countAdjacentInteractionCandidates(g, neighbors) <= 1 {
 		g.LastInteractedRow = -1
 		g.LastInteractedCol = -1
 	}
@@ -161,7 +162,22 @@ func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLa
 		}
 	}
 
-	// Pass 2: furniture, terminals, puzzles, hazard controls, maintenance
+	// Pass 2: blocked exit lift (hazard tour when lift is powered but hazards remain)
+	for _, cell := range neighbors {
+		if skipCell(cell) {
+			continue
+		}
+		if CheckAdjacentExitLiftAtCell(g, cell) {
+			FaceTowardAdjacentCell(g, cell)
+			g.LastInteractedRow = cell.Row
+			g.LastInteractedCol = cell.Col
+			g.InteractionsCount++
+			log.Printf("[Interact] handled: exit lift hazard tour at (%d,%d)", cell.Row, cell.Col)
+			return true
+		}
+	}
+
+	// Pass 3: furniture, terminals, puzzles, hazard controls, maintenance
 	for _, cell := range neighbors {
 		if skipCell(cell) {
 			continue
@@ -268,7 +284,7 @@ func CheckAdjacentGeneratorAtCell(g *state.Game, cell *world.Cell) bool {
 	individual, gridTotal, gridCount := setup.GeneratorGridSupplyAtCell(g, cell)
 	_, gridUsed, _ := setup.GridPowerSummary(g, cell)
 	calloutText.WriteString("\n")
-	calloutText.WriteString(fmt.Sprintf("Generator output: ACTION{%s}\n", renderer.FormatPowerWatts(individual, false)))
+	calloutText.WriteString(fmt.Sprintf("Generator output: %s\n", renderer.FormatPowerLoad(individual, gen.IsPowered(), false)))
 	calloutText.WriteString("\n")
 	calloutText.WriteString(renderer.FormatPowerBarLine("Grid power", gridTotal, gridUsed))
 	calloutText.WriteString("\n")
@@ -534,11 +550,12 @@ func CheckAdjacentHazardControlsAtCell(g *state.Game, cell *world.Cell) bool {
 	}
 
 	control := gameworld.GetGameData(cell).HazardControl
-	control.Activate()
-
-	info := entities.HazardTypes[control.Type]
-	logMessage(g, "Activated %s: %s", renderer.StyledHazardCtrl(control.Name), info.FixedMessage)
-	renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("TITLE{%s activated!}", control.Name), renderer.CalloutColorHazardCtrl, 0)
+	if !StartHazardClearFromControl(g, cell, control) {
+		control.Activate()
+		info := entities.HazardTypes[control.Type]
+		logMessage(g, "Activated %s: %s", renderer.StyledHazardCtrl(control.Name), info.FixedMessage)
+		renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("TITLE{%s activated!}", control.Name), renderer.CalloutColorHazardCtrl, 0)
+	}
 	return true
 }
 

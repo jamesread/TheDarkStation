@@ -58,7 +58,7 @@ go build -o darkstation main.go
 - **N/S/E/W** or **Arrow Keys** - Move in cardinal directions
 - **H/J/K/L** - Vim-style movement
 - **?** - Show a hint
-- **quit** or **q** - Exit the game
+- **Escape** - Exit the game (confirmation required)
 
 ## How to Play
 

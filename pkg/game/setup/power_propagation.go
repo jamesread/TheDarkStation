@@ -75,6 +75,7 @@ func ClearAllPropagatedPower(g *state.Game) {
 	if g == nil {
 		return
 	}
+	g.InvalidateLivePowerCache()
 	EnsureRoomPowerOnlineMap(g)
 	for name := range g.RoomPowerOnline {
 		g.RoomPowerOnline[name] = false
@@ -92,6 +93,7 @@ func NotifyPowerGridChanged(g *state.Game) {
 	if g == nil {
 		return
 	}
+	g.InvalidateLivePowerCache()
 	SchedulePowerPropagation(g, PowerNowMs())
 	g.UpdatePowerSupply()
 	g.PowerConsumption = g.CalculatePowerConsumption()
@@ -104,6 +106,7 @@ func PropagateRoomPowerOnlineFromGenerators(g *state.Game) {
 	if g == nil || g.Grid == nil {
 		return
 	}
+	g.InvalidateLivePowerCache()
 	EnsureRoomPowerOnlineMap(g)
 	if !anyGeneratorPowered(g) {
 		ClearAllPropagatedPower(g)

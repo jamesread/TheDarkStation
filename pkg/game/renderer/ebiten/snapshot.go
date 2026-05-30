@@ -99,7 +99,7 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 
 	// Compute persistent room labels (for rooms the player has visited)
 	e.snapshot.roomLabels = e.refreshRoomLabels(g)
-	e.snapshot.envPlaques = e.computeEnvPlaques(g)
+	e.snapshot.envPlaques = e.refreshEnvPlaques(g)
 
 	// Copy owned items
 	// Collect and sort items deterministically
@@ -216,6 +216,24 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 		e.snapshot.longUseProgress = 0
 		e.snapshot.longUseTargetRow = 0
 		e.snapshot.longUseTargetCol = 0
+	}
+
+	if g.HazardClear != nil {
+		s := *g.HazardClear
+		e.snapshot.hazardClear = &s
+	} else {
+		e.snapshot.hazardClear = nil
+	}
+
+	if g.HazardTour != nil {
+		s := *g.HazardTour
+		e.snapshot.hazardTour = &s
+		if row, col, ok := s.HighlightCell(); ok {
+			e.snapshot.focusedCellRow = row
+			e.snapshot.focusedCellCol = col
+		}
+	} else {
+		e.snapshot.hazardTour = nil
 	}
 
 	capturePowerGridSnapshot(g, &e.snapshot)

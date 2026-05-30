@@ -392,3 +392,92 @@ func roomHasCellOnGrid(g *state.Game, roomName string, grid *mapset.Set[*world.C
 	})
 	return found
 }
+
+const initialPowerBalanceMaxPasses = 64
+
+// SyncInitialPowerState refreshes supply, propagated online rooms, and consumption totals.
+func SyncInitialPowerState(g *state.Game) {
+	if g == nil {
+		return
+	}
+	g.RebuildGeneratorsFromGrid()
+	g.UpdatePowerSupply()
+	PropagateRoomPowerOnlineFromGenerators(g)
+	ApplyGridConductivePower(g)
+	g.PowerConsumption = CalculatePowerConsumption(g)
+}
+
+// EnsureInitialPowerBalance sheds armed load on overloaded grids after level generation so
+// consumption does not exceed supply when the player starts (spawn generator bootstrap and
+// solvability door power can over-arm circuits on a single grid).
+func EnsureInitialPowerBalance(g *state.Game) {
+	if g == nil || g.Grid == nil {
+		return
+	}
+	SyncInitialPowerState(g)
+	if !AnyArmedGridOverloaded(g) {
+		return
+	}
+
+	startRoom := ""
+	if start := g.Grid.StartCell(); start != nil {
+		startRoom = start.Name
+	}
+
+	for pass := 0; pass < initialPowerBalanceMaxPasses && AnyArmedGridOverloaded(g); pass++ {
+		changed := false
+		for _, grid := range armedGridComponentsForBalance(g, nil) {
+			if ConsumptionOnArmedGrid(g, grid) <= ArmedGridSupply(g, grid) {
+				continue
+			}
+			protected := protectedRoomForInitialPowerBalance(g, grid, startRoom)
+			if protected == "" {
+				continue
+			}
+			if ShortOutIfOverload(g, protected) {
+				changed = true
+				continue
+			}
+			if g.RoomCCTVPowered[protected] {
+				g.RoomCCTVPowered[protected] = false
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+		SyncInitialPowerState(g)
+	}
+}
+
+func protectedRoomForInitialPowerBalance(g *state.Game, grid *mapset.Set[*world.Cell], startRoom string) string {
+	if g == nil || grid == nil {
+		return ""
+	}
+	if startRoom != "" && roomHasCellOnGrid(g, startRoom, grid) {
+		return startRoom
+	}
+	var poweredGenRoom string
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if poweredGenRoom != "" || cell == nil || !grid.Has(cell) {
+			return
+		}
+		gen := gameworld.GetGameData(cell).Generator
+		if gen != nil && gen.IsPowered() && cell.Name != "" && cell.Name != "Corridor" {
+			poweredGenRoom = cell.Name
+		}
+	})
+	if poweredGenRoom != "" {
+		return poweredGenRoom
+	}
+	var anyRoom string
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if anyRoom != "" || cell == nil || !grid.Has(cell) {
+			return
+		}
+		if cell.Name != "" && cell.Name != "Corridor" {
+			anyRoom = cell.Name
+		}
+	})
+	return anyRoom
+}
