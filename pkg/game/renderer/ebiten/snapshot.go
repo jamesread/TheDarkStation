@@ -9,6 +9,7 @@ import (
 
 	"github.com/leonelquinteros/gotext"
 
+	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/features"
 	gamemenu "darkstation/pkg/game/menu"
@@ -131,14 +132,13 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 	// Movement hint ("Press WASD...") does not change cell background.
 	e.snapshot.focusedCellRow = -1
 	e.snapshot.focusedCellCol = -1
-	const movementHintMessage = "Press WASD or arrow keys to move"
 	e.calloutsMutex.RLock()
 	nowUnixMilli := time.Now().UnixMilli()
 	var mostRecentCallout *Callout
 	for i := range e.callouts {
 		callout := &e.callouts[i]
 		if callout.ExpiresAt == 0 || callout.ExpiresAt > nowUnixMilli {
-			if callout.Message == movementHintMessage {
+			if engineinput.IsMovementHintMessage(callout.Message) {
 				continue // Don't use movement hint for focus background
 			}
 			if mostRecentCallout == nil || callout.CreatedAt > mostRecentCallout.CreatedAt {

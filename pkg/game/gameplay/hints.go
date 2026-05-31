@@ -4,6 +4,7 @@ package gameplay
 import (
 	"fmt"
 
+	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/state"
@@ -20,7 +21,7 @@ func ShowMovementHint(g *state.Game) {
 
 	// Show hint next to the player
 	if g.CurrentCell != nil {
-		renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, "Press WASD or arrow keys to move", renderer.CalloutColorInfo, 0)
+		renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, engineinput.HintMove(), renderer.CalloutColorInfo, 0)
 	}
 }
 
@@ -45,7 +46,7 @@ func ShowInteractableHints(g *state.Game) {
 			continue
 		}
 		if gameworld.HasGenerator(cell) {
-			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
+			renderer.AddCallout(cell.Row, cell.Col, engineinput.HintInteractPrefix(), renderer.CalloutColorInfo, 3000)
 			return
 		}
 	}
@@ -64,27 +65,27 @@ func ShowInteractableHints(g *state.Game) {
 				renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
 			} else {
 				// Furniture not checked yet: show interaction hint (only for first 3 interactions)
-				renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
+				renderer.AddCallout(cell.Row, cell.Col, engineinput.HintInteractPrefix(), renderer.CalloutColorInfo, 3000)
 			}
 			return // Only show one hint at a time
 		}
 		if gameworld.HasUnusedTerminal(cell) {
 			// Terminal is unused, show hint
-			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
+			renderer.AddCallout(cell.Row, cell.Col, engineinput.HintInteractPrefix(), renderer.CalloutColorInfo, 3000)
 			return
 		}
 		if gameworld.HasUnsolvedPuzzle(cell) {
 			// Puzzle is unsolved, show hint
-			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
+			renderer.AddCallout(cell.Row, cell.Col, engineinput.HintInteractPrefix(), renderer.CalloutColorInfo, 3000)
 			return
 		}
 		if gameworld.HasInactiveHazardControl(cell) {
 			// Hazard control is inactive, show hint
-			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
+			renderer.AddCallout(cell.Row, cell.Col, engineinput.HintInteractPrefix(), renderer.CalloutColorInfo, 3000)
 			return
 		}
 		if gameworld.HasMaintenanceTerminal(cell) {
-			renderer.AddCallout(cell.Row, cell.Col, "Press E/Enter to interact", renderer.CalloutColorInfo, 3000)
+			renderer.AddCallout(cell.Row, cell.Col, engineinput.HintInteractPrefix(), renderer.CalloutColorInfo, 3000)
 			return
 		}
 	}

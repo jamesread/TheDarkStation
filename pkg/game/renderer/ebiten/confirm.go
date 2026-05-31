@@ -8,6 +8,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/text/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 
+	engineinput "darkstation/pkg/engine/input"
 	gamemenu "darkstation/pkg/game/menu"
 	"darkstation/pkg/game/state"
 )
@@ -59,22 +60,26 @@ func (e *EbitenRenderer) handleConfirmDialogInput() {
 	if inpututil.IsKeyJustPressed(ebiten.KeyY) ||
 		inpututil.IsKeyJustPressed(ebiten.KeyEnter) ||
 		inpututil.IsKeyJustPressed(ebiten.KeyKPEnter) {
+		e.notePrimaryDevice(engineinput.DeviceKeyboard)
 		send(true)
 		return
 	}
 
 	if inpututil.IsKeyJustPressed(ebiten.KeyN) ||
 		inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+		e.notePrimaryDevice(engineinput.DeviceKeyboard)
 		send(false)
 		return
 	}
 
 	for _, id := range ebiten.AppendGamepadIDs(nil) {
 		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton0) {
+			e.notePrimaryDevice(engineinput.DeviceGamepad)
 			send(true)
 			return
 		}
 		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton1) {
+			e.notePrimaryDevice(engineinput.DeviceGamepad)
 			send(false)
 			return
 		}
@@ -109,7 +114,7 @@ func (e *EbitenRenderer) drawConfirmDialog(screen *ebiten.Image) {
 
 	titleWidth := int(e.getTextWidth(title))
 	messageWidth := int(e.getTextWidth(message))
-	help := "Y or Enter: Yes | N or Esc: No"
+	help := engineinput.HintConfirmYesNo()
 	helpWidth := int(e.getTextWidth(help))
 
 	contentWidth := titleWidth

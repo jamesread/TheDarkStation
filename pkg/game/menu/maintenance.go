@@ -4,6 +4,7 @@ package menu
 import (
 	"fmt"
 
+	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/entities"
@@ -143,7 +144,7 @@ func (h *MessageResultMenuHandler) GetTitle() string {
 
 // GetInstructions returns instructions.
 func (h *MessageResultMenuHandler) GetInstructions(selected MenuItem) string {
-	return "Press Enter to close. Escape or Menu to close."
+	return engineinput.HintPressConfirm() + " to close. " + engineinput.HintMenuCloseShort() + "."
 }
 
 // OnSelect is called when selection changes.
@@ -186,7 +187,7 @@ func (h *PingResultsMenuHandler) GetTitle() string {
 
 // GetInstructions returns the menu instructions.
 func (h *PingResultsMenuHandler) GetInstructions(selected MenuItem) string {
-	return "Press Enter to close. Escape or Menu to close."
+	return engineinput.HintPressConfirm() + " to close. " + engineinput.HintMenuCloseShort() + "."
 }
 
 // OnSelect is called when an item is selected.
@@ -290,7 +291,7 @@ func (r *RoomPowerToggleMenuItem) IsSelectable() bool {
 // GetHelpText returns help text; explains dependency when control is unavailable.
 func (r *RoomPowerToggleMenuItem) GetHelpText() string {
 	if canToggleRoomPower(r.G, r.ControllerRoom, r.RoomName) {
-		return "Press Enter to toggle power"
+		return engineinput.HintPressConfirmTo("toggle power")
 	}
 	if r.ControllerRoom != "" && r.ControllerRoom != r.RoomName {
 		return "No control path to this room from here"
@@ -322,7 +323,7 @@ func (m *MaintenanceTerminalPowerMenuItem) IsSelectable() bool {
 
 // GetHelpText returns help text.
 func (m *MaintenanceTerminalPowerMenuItem) GetHelpText() string {
-	return "Press Enter to toggle power"
+	return engineinput.HintPressConfirmTo("toggle power")
 }
 
 // RoomSelectorMenuItem opens a sub-menu to select which room's maintenance view to display.
@@ -342,7 +343,7 @@ func (r *RoomSelectorMenuItem) IsSelectable() bool {
 
 // GetHelpText returns help text.
 func (r *RoomSelectorMenuItem) GetHelpText() string {
-	return "Press Enter to select a different room"
+	return engineinput.HintPressConfirmTo("select a different room")
 }
 
 // roomSelectItem is a selectable room in the room selector sub-menu.
@@ -369,7 +370,7 @@ func (r *roomSelectItem) IsSelectable() bool {
 }
 
 func (r *roomSelectItem) GetHelpText() string {
-	return "Press Enter to view this room's maintenance"
+	return engineinput.HintPressConfirmTo("view this room's maintenance")
 }
 
 // RoomSelectorMenuHandler handles the room selection sub-menu.
@@ -385,7 +386,7 @@ func (h *RoomSelectorMenuHandler) GetTitle() string {
 
 // GetInstructions returns the menu instructions.
 func (h *RoomSelectorMenuHandler) GetInstructions(selected MenuItem) string {
-	return "Press Enter to view that room. Escape or Menu to close."
+	return engineinput.HintPressConfirmTo("view that room") + ". " + engineinput.HintMenuCloseShort() + "."
 }
 
 // OnSelect is called when selection changes.
@@ -572,7 +573,7 @@ func (h *MaintenanceMenuHandler) GetMaintenanceRoom(selectedIndex int, items []M
 
 // GetInstructions returns the menu instructions.
 func (h *MaintenanceMenuHandler) GetInstructions(selected MenuItem) string {
-	base := "Up/Down: select | Enter: activate | A/D: cycle option | 1/2/3: circuit preset | Tab: mode | Esc: close"
+	base := engineinput.HintMaintMenuInstructions()
 	if selected != nil {
 		if ht := selected.GetHelpText(); ht != "" {
 			return ht + " — " + base

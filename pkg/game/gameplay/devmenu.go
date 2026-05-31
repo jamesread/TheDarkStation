@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/devtools"
 	"darkstation/pkg/game/levelseed"
@@ -80,7 +81,7 @@ func (h *DevMenuHandler) GetTitle() string {
 }
 
 func (h *DevMenuHandler) GetInstructions(selected gamemenu.MenuItem) string {
-	return "Up/Down: select | Enter: activate | q or Esc: close"
+	return engineinput.HintDevMenuInstructions()
 }
 
 func (h *DevMenuHandler) OnSelect(item gamemenu.MenuItem, index int) {}

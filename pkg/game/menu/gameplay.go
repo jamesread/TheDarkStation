@@ -1,6 +1,8 @@
 // Package menu provides gameplay menu implementation using the generic menu system.
 package menu
 
+import engineinput "darkstation/pkg/engine/input"
+
 // GameplayMenuAction represents the action type for gameplay menu items.
 type GameplayMenuAction int
 
@@ -57,7 +59,7 @@ func (h *GameplayMenuHandler) GetTitle() string {
 
 // GetInstructions returns the menu instructions.
 func (h *GameplayMenuHandler) GetInstructions(selected MenuItem) string {
-	return "Use up/down to select, Enter to activate, F10/Start or q to close"
+	return engineinput.HintMenuInstructionsGameplay()
 }
 
 // OnSelect is called when an item is selected.

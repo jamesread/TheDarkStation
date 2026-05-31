@@ -97,6 +97,7 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 		e.drawConfirmDialog(screen)
 		e.drawConsole(screen)
 		e.drawDeveloperMessage(screen, screenWidth, screenHeight)
+		e.drawTransientNotification(screen, screenWidth, screenHeight)
 		e.drawDebugTopRight(screen, screenWidth, screenHeight, g)
 		return
 	}
@@ -126,6 +127,8 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 
 	// Developer message (bottom-left; map dump, etc.)
 	e.drawDeveloperMessage(screen, screenWidth, screenHeight)
+
+	e.drawTransientNotification(screen, screenWidth, screenHeight)
 
 	// Debug overlays (top right): FPS, player X/Y
 	e.drawDebugTopRight(screen, screenWidth, screenHeight, g)

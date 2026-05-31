@@ -42,6 +42,10 @@ e.drawColoredText(screen, versionText, versionX, versionY, colorSubtle)
 
 **See:** `pkg/game/renderer/ebiten/menu.go` - version text positioning in main menu
 
+## Input device hints
+
+The active primary device (`pkg/engine/input`: keyboard vs gamepad) drives on-screen control text via `HintMove()`, `HintInteractPrefix()`, menu helpers in `hints.go`, etc. The Ebiten renderer switches primary on new input from either device, shows a short top-center notification, and refreshes tutorial callouts. Intent polling prefers the primary device first (gamepad-first when controller is active).
+
 ## Revisit Policy (GDD, Plan Phase 5.4)
 
 The player **cannot revisit** previous decks. The lift is **forward-only**: it has a single destination (the next deck) and no "return" option. The final deck has **no destination** (lift does not advance); reaching it triggers completion. This preserves the intended feel of "moving deeper" and sequential discovery. Per-deck state is stored so the data model could support revisit later; the UI and graph do not expose it.

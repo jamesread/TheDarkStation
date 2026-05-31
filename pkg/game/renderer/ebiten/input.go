@@ -73,20 +73,12 @@ func (e *EbitenRenderer) Update() error {
 	// Track hold state before dispatching interact so the long-use loop sees the key down on the same frame.
 	e.trackInteractHold()
 
-	// Keyboard before gamepad so E/Enter is not lost to stick drift or held movement.
-	// (See checkInput: interact is also handled before WASD movement within keyboard.)
-	if intent := e.checkInput(); intent.Action != engineinput.ActionNone {
+	e.pollPrimaryDeviceActivity()
+
+	intent := e.pollGameplayIntent()
+	if intent.Action != engineinput.ActionNone {
 		if intent.Action == engineinput.ActionInteract {
-			log.Printf("[Interact] input: dispatch ActionInteract via keyboard path")
-		}
-		select {
-		case e.inputChan <- intent:
-		default:
-			log.Printf("[Interact] input: WARNING dropped intent (inputChan full) action=%v", intent.Action)
-		}
-	} else if intent := e.checkGamepadInput(); intent.Action != engineinput.ActionNone {
-		if intent.Action == engineinput.ActionInteract {
-			log.Printf("[Interact] input: dispatch ActionInteract via gamepad path")
+			log.Printf("[Interact] input: dispatch ActionInteract")
 		}
 		select {
 		case e.inputChan <- intent:
@@ -300,6 +292,20 @@ func (e *EbitenRenderer) shouldRepeatKey(isPressed func() bool, code string) boo
 		}
 		return false
 	}
+}
+
+// pollGameplayIntent returns the next intent, preferring the active primary input device.
+func (e *EbitenRenderer) pollGameplayIntent() engineinput.Intent {
+	if engineinput.GetPrimaryDevice() == engineinput.PrimaryGamepad {
+		if intent := e.checkGamepadInput(); intent.Action != engineinput.ActionNone {
+			return intent
+		}
+		return e.checkInput()
+	}
+	if intent := e.checkInput(); intent.Action != engineinput.ActionNone {
+		return intent
+	}
+	return e.checkGamepadInput()
 }
 
 // checkGamepadInput checks for controller/gamepad input and returns the corresponding Intent.

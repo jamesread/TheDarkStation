@@ -15,9 +15,6 @@ import (
 const (
 	maintModeControls    = "controls"
 	maintModeDiagnostics = "diagnostics"
-
-	// cycleADHint uses Basic Latin so it renders in Go Regular (UI sans); Unicode ◀▶ often missing.
-	cycleADHint = "< A/D >"
 )
 
 // MaintenanceMenuExtraInput is implemented by MaintenanceMenuHandler for map keys and mode toggle.
@@ -33,7 +30,7 @@ type ViewingRoomMenuItem struct {
 func (v *ViewingRoomMenuItem) GetLabel() string {
 	label := fmt.Sprintf("Viewing:\tACTION{%s}", RoomLabelWithPowerDraw(v.Parent.g, v.Parent.selectedRoomName))
 	if v.Parent.canCycleRooms() {
-		return label + "\tSUBTLE{" + cycleADHint + "}"
+		return label + "\tSUBTLE{" + engineinput.HintMaintCycle() + "}"
 	}
 	return label + "\tSUBTLE{(only room)}"
 }
@@ -71,7 +68,7 @@ func (m *ModeToggleMenuItem) GetLabel() string {
 func (m *ModeToggleMenuItem) IsSelectable() bool { return true }
 
 func (m *ModeToggleMenuItem) GetHelpText() string {
-	return "Press Enter or Tab to switch panel"
+	return engineinput.HintPressConfirmOrTab()
 }
 
 // RoomCircuitPresetMenuItem cycles and applies OFF / ON for the viewed room.
@@ -89,7 +86,7 @@ func (r *RoomCircuitPresetMenuItem) GetLabel() string {
 		impactPart = "\tSUBTLE{" + impact + "}"
 	}
 	if r.IsSelectable() {
-		return fmt.Sprintf("Power Grid:\t%s%s\tSUBTLE{%s}\t(Enter=cycle, 1/2=apply)", preset, impactPart, cycleADHint)
+		return fmt.Sprintf("Power Grid:\t%s%s\tSUBTLE{%s}\t(%s=cycle, 1/2=apply)", preset, impactPart, engineinput.HintMaintCycle(), engineinput.HintConfirm())
 	}
 	return fmt.Sprintf("Power Grid:\t%s%s\t(1/2=apply)", preset, impactPart)
 }
@@ -145,7 +142,7 @@ func (r *RefreshPowerGridMenuItem) GetLabel() string {
 func (r *RefreshPowerGridMenuItem) IsSelectable() bool { return true }
 
 func (r *RefreshPowerGridMenuItem) GetHelpText() string {
-	return "Press Enter to re-apply terminal feed from powered generators via the conductive grid"
+	return engineinput.HintPressConfirmTo("re-apply terminal feed from powered generators via the conductive grid")
 }
 
 // AdvancedPowerMenuItem opens granular door/light/CCTV toggles (diagnostics).
@@ -160,7 +157,7 @@ func (a *AdvancedPowerMenuItem) GetLabel() string {
 func (a *AdvancedPowerMenuItem) IsSelectable() bool { return true }
 
 func (a *AdvancedPowerMenuItem) GetHelpText() string {
-	return "Press Enter for per-system toggles"
+	return engineinput.HintPressConfirmTo("open per-system toggles")
 }
 
 // AdvancedPowerMenuHandler is a short sub-menu for granular toggles.
@@ -175,7 +172,7 @@ func (h *AdvancedPowerMenuHandler) GetTitle() string {
 }
 
 func (h *AdvancedPowerMenuHandler) GetInstructions(selected MenuItem) string {
-	return "Press Enter to toggle. Escape or Menu to return."
+	return engineinput.HintPressConfirmTo("toggle") + ". " + engineinput.HintMenuCloseShort() + "."
 }
 
 func (h *AdvancedPowerMenuHandler) OnSelect(item MenuItem, index int) {}

@@ -22,6 +22,9 @@ type HazardClearAdvanceFunc func(g *state.Game, nowMs int64)
 // HazardTourAdvanceFunc ticks an in-progress exit hazard tour from the Ebiten Update thread.
 type HazardTourAdvanceFunc func(g *state.Game, nowMs int64)
 
+// HintRefresher updates on-map control callouts after the primary input device changes.
+type HintRefresher func(g *state.Game)
+
 // Callout represents a floating message displayed near a cell
 type Callout struct {
 	Row       int    // Cell row
@@ -190,6 +193,7 @@ type EbitenRenderer struct {
 	longUsePrevHeld      bool
 	hazardClearAdvancer  HazardClearAdvanceFunc
 	hazardTourAdvancer   HazardTourAdvanceFunc
+	hintRefresher        HintRefresher
 
 	// Flag indicating renderer is running
 	running bool
@@ -299,6 +303,11 @@ type EbitenRenderer struct {
 	developerMessage      string
 	developerMessageAt    int64
 	developerMessageMutex sync.RWMutex
+
+	// Transient notification (top-center; e.g. input device switch)
+	notificationMessage string
+	notificationAt      int64
+	notificationMutex   sync.RWMutex
 
 	// Developer debug overlays (map area border, FOV rays, etc.)
 	drawMapAreaBorder  bool

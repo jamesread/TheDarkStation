@@ -63,6 +63,10 @@ func main() {
 	ebitRenderer.SetLongUseAdvancer(gameplay.AdvanceLongUseIfActive)
 	ebitRenderer.SetHazardClearAdvancer(gameplay.AdvanceHazardClearIfActive)
 	ebitRenderer.SetHazardTourAdvancer(gameplay.AdvanceHazardTourIfActive)
+	ebitRenderer.SetHintRefresher(func(g *state.Game) {
+		gameplay.ShowInteractableHints(g)
+		gameplay.ShowMovementHint(g)
+	})
 	renderer.SetRenderer(ebitRenderer)
 	renderer.Init()
 

@@ -62,6 +62,11 @@ func (e *EbitenRenderer) SetHazardTourAdvancer(fn HazardTourAdvanceFunc) {
 	e.hazardTourAdvancer = fn
 }
 
+// SetHintRefresher registers a hook to refresh on-map control callouts when the primary input device changes.
+func (e *EbitenRenderer) SetHintRefresher(fn HintRefresher) {
+	e.hintRefresher = fn
+}
+
 // Init initializes the Ebiten renderer
 func (e *EbitenRenderer) Init() {
 	ebiten.SetWindowSize(e.windowWidth, e.windowHeight)

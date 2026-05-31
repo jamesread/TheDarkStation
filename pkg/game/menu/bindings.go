@@ -104,29 +104,25 @@ func (h *BindingsMenuHandler) GetTitle() string {
 
 // GetInstructions returns the menu instructions.
 func (h *BindingsMenuHandler) GetInstructions(selected MenuItem) string {
-	exitHint := "F10/Start or q to exit"
-	if h.fromMainMenu {
-		exitHint = "Enter to go back, F10/Start or q to exit"
-	}
+	exitHint := engineinput.HintBindingsExit(h.fromMainMenu)
 
 	if selected == nil {
-		return fmt.Sprintf("Use up/down to select, %s.", exitHint)
+		return fmt.Sprintf("%s, %s.", engineinput.HintMenuSelect(), exitHint)
 	}
 
-	// Check if it's the Back menu item
 	if _, ok := selected.(*BackMenuItem); ok {
-		return fmt.Sprintf("Press Enter to return to the main menu, %s.", exitHint)
+		return fmt.Sprintf("%s, %s.", engineinput.HintMenuBackToMain(), exitHint)
 	}
 
 	bindingItem, ok := selected.(*BindingMenuItem)
 	if !ok {
-		return fmt.Sprintf("Use up/down to select, %s.", exitHint)
+		return fmt.Sprintf("%s, %s.", engineinput.HintMenuSelect(), exitHint)
 	}
 
 	if !bindingItem.NonRebindable {
-		return fmt.Sprintf("Use up/down to select, Enter to edit, %s.", exitHint)
+		return fmt.Sprintf("%s, %s, %s.", engineinput.HintMenuSelect(), engineinput.HintMenuEditBinding(), exitHint)
 	}
-	return fmt.Sprintf("Use up/down to select, %s.", exitHint)
+	return fmt.Sprintf("%s, %s.", engineinput.HintMenuSelect(), exitHint)
 }
 
 // OnSelect is called when an item is selected.

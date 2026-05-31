@@ -4,6 +4,7 @@ package menu
 import (
 	"os"
 
+	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/game/state"
 )
 
@@ -69,7 +70,7 @@ func (h *MainMenuHandler) GetTitle() string {
 
 // GetInstructions returns the menu instructions.
 func (h *MainMenuHandler) GetInstructions(selected MenuItem) string {
-	return "Use up/down to select, Enter to activate, Esc to quit"
+	return engineinput.HintMenuInstructionsMain()
 }
 
 // OnSelect is called when an item is selected.
