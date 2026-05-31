@@ -35,15 +35,16 @@ import (
 // New creates a new Ebiten renderer
 func New() *EbitenRenderer {
 	return &EbitenRenderer{
-		windowWidth:    1024,
-		windowHeight:   768,
-		tileSize:       24,
-		viewportRows:   21,
-		viewportCols:   35,
-		inputChan:      make(chan engineinput.Intent, 10),
-		running:        false,
-		stickState:     make(map[ebiten.GamepadID]struct{ x, y float64 }),
-		keyRepeatState: make(map[string]keyRepeatInfo),
+		windowWidth:         1024,
+		windowHeight:        768,
+		tileSize:            24,
+		viewportRows:        21,
+		viewportCols:        35,
+		inputChan:           make(chan engineinput.Intent, 10),
+		running:             false,
+		stickState:          make(map[ebiten.GamepadID]struct{ x, y float64 }),
+		bindingCaptureStick: make(map[ebiten.GamepadID]struct{ x, y float64 }),
+		keyRepeatState:      make(map[string]keyRepeatInfo),
 	}
 }
 

@@ -75,6 +75,16 @@ func (e *EbitenRenderer) Update() error {
 
 	e.pollPrimaryDeviceActivity()
 
+	if e.isBindingCaptureActive() {
+		if code, done := e.pollBindingCapture(); done {
+			select {
+			case e.inputChan <- engineinput.Intent{Code: code}:
+			default:
+			}
+		}
+		return nil
+	}
+
 	intent := e.pollGameplayIntent()
 	if intent.Action != engineinput.ActionNone {
 		if intent.Action == engineinput.ActionInteract {
@@ -317,27 +327,26 @@ func (e *EbitenRenderer) checkGamepadInput() engineinput.Intent {
 	ids = ebiten.AppendGamepadIDs(ids[:0])
 
 	for _, id := range ids {
-		// Face buttons and Start before analog sticks so A (interact) is not lost to drift/hold.
-
-		// Face buttons:
-		// - A / Cross: interact
-		// - B / Circle: back in menus; quit (with confirmation) during gameplay
-		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton0) {
-			return engineinput.Intent{Action: engineinput.ActionInteract}
-		}
-		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton1) {
-			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+		// Face and shoulder buttons — check bindings before analog sticks.
+		for btn := ebiten.GamepadButton0; btn <= ebiten.GamepadButton9; btn++ {
+			if !inpututil.IsGamepadButtonJustPressed(id, btn) {
+				continue
+			}
+			code := gamepadButtonToBindingCode(btn)
+			if code == "" {
+				continue
+			}
+			intent := engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
 				Device: engineinput.DeviceGamepad,
-				Code:   "gamepad_b",
+				Code:   code,
 			}))
-		}
-
-		// Start opens menu
-		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton7) {
-			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
-				Device: engineinput.DeviceGamepad,
-				Code:   "gamepad_start",
-			}))
+			if intent.Action == engineinput.ActionNone {
+				continue
+			}
+			if intent.Action == engineinput.ActionInteract {
+				log.Printf("[Interact] input: dispatch ActionInteract (gamepad %s)", code)
+			}
+			return intent
 		}
 
 		// Analog stick (left stick) movement

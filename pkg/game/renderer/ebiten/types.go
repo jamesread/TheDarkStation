@@ -184,6 +184,11 @@ type EbitenRenderer struct {
 	// Input channel for communication between Ebiten and game loop
 	inputChan chan engineinput.Intent
 
+	// Binding capture state (rebinding menu).
+	bindingCaptureMutex  sync.Mutex
+	bindingCaptureActive bool
+	bindingCaptureStick  map[ebiten.GamepadID]struct{ x, y float64 }
+
 	// Interact hold state (updated each Update, polled during long-use hold loops).
 	interactHoldMutex    sync.Mutex
 	interactHeld         bool

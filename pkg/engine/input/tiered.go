@@ -52,6 +52,7 @@ const (
 // Intent is the 4th‑layer, high‑level description of what the player wants to do.
 type Intent struct {
 	Action Action
+	Code   string // device-specific binding code (used during rebinding capture)
 }
 
 // RawInput is the 1st‑layer event emitted directly from an input device.
@@ -220,31 +221,22 @@ func GetBindingsByAction() map[Action][]string {
 	return result
 }
 
-// SetSingleBinding replaces all bindings for the given action with a single code.
+// SetSingleBinding replaces keyboard or gamepad bindings for the given action with a single code.
+// Keyboard and gamepad bindings are updated independently so players can configure both.
 func SetSingleBinding(action Action, code string) {
-	// Remove any existing code mapped to this action
+	if code == "" || isReservedBindingCode(code) {
+		return
+	}
 	for c, a := range bindings {
-		// Always keep the core arrow-key bindings so they can't be remapped away.
-		if c == "arrow_up" || c == "arrow_down" || c == "arrow_left" || c == "arrow_right" {
+		if isReservedBindingCode(c) {
 			continue
 		}
-		// Keep reserved interaction bindings (E / Enter / gamepad A)
-		if c == "e" || c == "enter" || c == "gamepad_a" {
-			continue
-		}
-		// Don't allow reserved actions themselves to have their bindings cleared
 		if a == ActionAction || a == ActionInteract {
 			continue
 		}
-		if a == action {
+		if a == action && sameBindingDevice(c, code) {
 			delete(bindings, c)
 		}
 	}
-	// Don't allow arrows or reserved interaction codes to be rebound through the menu – they are reserved.
-	if code != "" &&
-		code != "arrow_up" && code != "arrow_down" &&
-		code != "arrow_left" && code != "arrow_right" &&
-		code != "e" && code != "enter" && code != "gamepad_a" {
-		bindings[code] = action
-	}
+	bindings[code] = action
 }

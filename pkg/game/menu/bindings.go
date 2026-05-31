@@ -20,7 +20,11 @@ func (b *BindingMenuItem) GetLabel() string {
 	name := engineinput.ActionName(b.Action)
 	byAction := engineinput.GetBindingsByAction()
 	codes := byAction[b.Action]
-	codeText := strings.Join(codes, ", ")
+	labels := make([]string, 0, len(codes))
+	for _, code := range codes {
+		labels = append(labels, engineinput.FormatBindingCode(code))
+	}
+	codeText := strings.Join(labels, ", ")
 	if codeText == "" {
 		codeText = "(unbound)"
 	}
@@ -152,14 +156,11 @@ func (h *BindingsMenuHandler) OnActivate(item MenuItem, index int) (shouldClose 
 
 	actionName := engineinput.ActionName(action)
 
-	// Use renderer.GetInput() to read a raw-ish code string
-	code := renderer.GetInput()
+	code := renderer.CaptureBindingCode()
 	if code != "" {
 		engineinput.SetSingleBinding(action, code)
-		// Show confirmation message
-		helpText = fmt.Sprintf("Set binding for %s to %s", actionName, code)
+		helpText = fmt.Sprintf("Set binding for %s to %s", actionName, engineinput.FormatBindingCode(code))
 	} else {
-		// User cancelled or entered empty string - clear help text
 		helpText = ""
 	}
 

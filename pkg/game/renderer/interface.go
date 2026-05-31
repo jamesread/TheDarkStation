@@ -115,10 +115,26 @@ func RenderFrame(g *state.Game) {
 	}
 }
 
+// BindingCapturer is implemented by renderers that can capture raw binding codes.
+type BindingCapturer interface {
+	CaptureBindingCode() string
+}
+
+// CaptureBindingCode waits for the player to press a key or controller button to bind.
+func CaptureBindingCode() string {
+	if bc, ok := Current.(BindingCapturer); ok {
+		return bc.CaptureBindingCode()
+	}
+	return GetInput()
+}
+
 // GetInput gets user input from the current renderer
 func GetInput() string {
 	if Current != nil {
 		intent := Current.GetInput()
+		if intent.Code != "" {
+			return intent.Code
+		}
 		// Backwards-compatible helper: most callers only care about the action.
 		switch intent.Action {
 		case input.ActionMoveNorth:

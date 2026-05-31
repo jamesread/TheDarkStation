@@ -32,6 +32,9 @@ func ShowInteractableHints(g *state.Game) {
 	if g.InteractionsCount >= 3 {
 		return
 	}
+	if g.CurrentCell == nil {
+		return
+	}
 
 	// Match CheckAdjacentInteractables: prefer generators across all directions, then other types in N,S,E,W.
 	neighbors := []*world.Cell{

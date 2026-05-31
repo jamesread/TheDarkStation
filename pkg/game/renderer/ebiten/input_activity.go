@@ -24,13 +24,17 @@ func (e *EbitenRenderer) notePrimaryDevice(device engineinput.Device) {
 		return
 	}
 	e.showInputDeviceNotification()
+	if e.isBindingCaptureActive() || e.isGenericMenuActive() {
+		return
+	}
 	e.gameMutex.RLock()
 	g := e.game
 	refresher := e.hintRefresher
 	e.gameMutex.RUnlock()
-	if g != nil && refresher != nil {
-		refresher(g)
+	if g == nil || g.CurrentCell == nil || refresher == nil {
+		return
 	}
+	refresher(g)
 }
 
 func hasKeyboardActivityNew() bool {
