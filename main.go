@@ -77,7 +77,7 @@ func main() {
 	if err := ebitRenderer.RunWithGameLoop(func() {
 		for {
 			// Run the main menu (this blocks until user makes a selection)
-			menuAction := runMainMenuInLoop()
+			menuAction, perfMapScenario := runMainMenuInLoop()
 
 			// Build the game based on menu selection
 			var g *state.Game
@@ -85,10 +85,9 @@ func main() {
 			case gamemenu.MainMenuActionGenerate:
 				// Start normal game mode (level from -level flag or LEVEL env)
 				g = gameplay.BuildGame(*startLevel)
-			case gamemenu.MainMenuActionDebug:
-				// Open Developer map (normally opened on F9)
+			case gamemenu.MainMenuActionPerfMap:
 				g = state.NewGame()
-				devtools.SwitchToDevMap(g)
+				devtools.SwitchToPerfMap(g, perfMapScenario)
 			case gamemenu.MainMenuActionQuit:
 				// Quit (should have been handled in RunMainMenu, but just in case)
 				os.Exit(0)
@@ -121,7 +120,7 @@ func main() {
 
 // runMainMenuInLoop runs the main menu inside the Ebiten game loop
 // This allows the menu to render and receive input properly
-func runMainMenuInLoop() gamemenu.MainMenuAction {
+func runMainMenuInLoop() (gamemenu.MainMenuAction, string) {
 	// Create a minimal game state for the menu (needed for rendering)
 	g := state.NewGame()
 
@@ -142,9 +141,13 @@ func runMainMenuInLoop() gamemenu.MainMenuAction {
 			// After bindings menu closes, continue the main menu loop
 			continue
 		}
+		if action == gamemenu.MainMenuActionVideo {
+			gameplay.RunVideoMenu(g)
+			continue
+		}
 
 		// For other actions, return to let the caller handle them
-		return action
+		return action, handler.GetPerfMapScenario()
 	}
 }
 

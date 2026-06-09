@@ -1,6 +1,7 @@
 package gameplay
 
 import (
+	"strings"
 	"testing"
 
 	gamemenu "darkstation/pkg/game/menu"
@@ -10,41 +11,32 @@ import (
 func TestDevMenuHandler_GetMenuItems(t *testing.T) {
 	h := NewDevMenuHandler(state.NewGame())
 	items := h.GetMenuItems()
-	if len(items) != 12 {
-		t.Fatalf("expected 12 items, got %d", len(items))
+	if len(items) != 13 {
+		t.Fatalf("expected 13 items, got %d", len(items))
 	}
-	if items[0].GetLabel() != "Zoom: 24px (30×15 tiles)" {
+	if items[0].GetLabel() != "Zoom\tSUBTLE{24px (30×15 tiles)}" {
 		t.Fatalf("item 0 label = %q", items[0].GetLabel())
 	}
-	if items[2].GetLabel() != "Dump map" {
-		t.Fatalf("item 2 label = %q", items[2].GetLabel())
+	expected := map[DevMenuAction]string{
+		DevMenuActionDumpMap:              "Dump map",
+		DevMenuActionListCurrentCellChars: "list current cell chars",
+		DevMenuActionDevTestMap:           "Developer test map",
+		DevMenuActionToggleMapAreaBorder:  "Map area border",
+		DevMenuActionToggleFOVRays:        "FOV ray lines",
+		DevMenuActionToggleFPSDisplay:     "FPS display",
+		DevMenuActionTogglePlayerPosition: "Player position",
+		DevMenuActionLoadSeed:             "Load level seed",
+		DevMenuActionJumpToDeck:           "Jump to deck",
+		DevMenuActionTriggerOverload:      "Trigger overload",
 	}
-	if items[3].GetLabel() != "Developer test map" {
-		t.Fatalf("item 3 label = %q", items[3].GetLabel())
+	for action, wantPrefix := range expected {
+		item := findDevMenuItem(t, items, action)
+		if !strings.HasPrefix(item.GetLabel(), wantPrefix) {
+			t.Fatalf("action %v label = %q, want prefix %q", action, item.GetLabel(), wantPrefix)
+		}
 	}
-	if items[4].GetLabel() != "Map area border: OFF" {
-		t.Fatalf("item 4 label = %q", items[4].GetLabel())
-	}
-	if items[5].GetLabel() != "FOV ray lines: OFF" {
-		t.Fatalf("item 5 label = %q", items[5].GetLabel())
-	}
-	if items[6].GetLabel() != "FPS display: ON" {
-		t.Fatalf("item 6 label = %q", items[6].GetLabel())
-	}
-	if items[7].GetLabel() != "Player position: OFF" {
-		t.Fatalf("item 7 label = %q", items[7].GetLabel())
-	}
-	if items[8].GetLabel() != "Load level seed" {
-		t.Fatalf("item 8 label = %q", items[8].GetLabel())
-	}
-	if items[9].GetLabel() != "Jump to deck" {
-		t.Fatalf("item 9 label = %q", items[9].GetLabel())
-	}
-	if items[10].GetLabel() != "Trigger overload" {
-		t.Fatalf("item 10 label = %q", items[10].GetLabel())
-	}
-	if items[11].GetLabel() != "Close" {
-		t.Fatalf("item 11 label = %q", items[11].GetLabel())
+	if items[12].GetLabel() != "Close" {
+		t.Fatalf("item 12 label = %q", items[12].GetLabel())
 	}
 }
 
@@ -58,8 +50,8 @@ func TestDevMenuHandler_ToggleMapAreaBorder(t *testing.T) {
 	if help != "Map area border: OFF" {
 		t.Fatalf("help = %q", help)
 	}
-	if h.GetMenuItems()[4].GetLabel() != "Map area border: OFF" {
-		t.Fatalf("label after toggle without renderer = %q", h.GetMenuItems()[4].GetLabel())
+	if label := findDevMenuItem(t, h.GetMenuItems(), DevMenuActionToggleMapAreaBorder).GetLabel(); label != "Map area border\tUNPOWERED{OFF}" {
+		t.Fatalf("label after toggle without renderer = %q", label)
 	}
 }
 
@@ -73,8 +65,8 @@ func TestDevMenuHandler_ToggleFOVRays(t *testing.T) {
 	if help != "FOV ray lines: OFF" {
 		t.Fatalf("help = %q", help)
 	}
-	if h.GetMenuItems()[5].GetLabel() != "FOV ray lines: OFF" {
-		t.Fatalf("label after toggle without renderer = %q", h.GetMenuItems()[5].GetLabel())
+	if label := findDevMenuItem(t, h.GetMenuItems(), DevMenuActionToggleFOVRays).GetLabel(); label != "FOV ray lines\tUNPOWERED{OFF}" {
+		t.Fatalf("label after toggle without renderer = %q", label)
 	}
 }
 
@@ -88,8 +80,8 @@ func TestDevMenuHandler_ToggleFPSDisplay(t *testing.T) {
 	if help != "FPS display: ON" {
 		t.Fatalf("help = %q", help)
 	}
-	if h.GetMenuItems()[6].GetLabel() != "FPS display: ON" {
-		t.Fatalf("label after toggle without renderer = %q", h.GetMenuItems()[6].GetLabel())
+	if label := findDevMenuItem(t, h.GetMenuItems(), DevMenuActionToggleFPSDisplay).GetLabel(); label != "FPS display\tPOWERED{ON}" {
+		t.Fatalf("label after toggle without renderer = %q", label)
 	}
 }
 
@@ -103,8 +95,8 @@ func TestDevMenuHandler_TogglePlayerPosition(t *testing.T) {
 	if help != "Player position: OFF" {
 		t.Fatalf("help = %q", help)
 	}
-	if h.GetMenuItems()[7].GetLabel() != "Player position: OFF" {
-		t.Fatalf("label after toggle without renderer = %q", h.GetMenuItems()[7].GetLabel())
+	if label := findDevMenuItem(t, h.GetMenuItems(), DevMenuActionTogglePlayerPosition).GetLabel(); label != "Player position\tUNPOWERED{OFF}" {
+		t.Fatalf("label after toggle without renderer = %q", label)
 	}
 }
 
@@ -126,7 +118,19 @@ func TestLevelSeedMenuLabel(t *testing.T) {
 		t.Fatalf("label = %q", got)
 	}
 	g.LevelSeed = 42
-	if got := levelSeedMenuLabel(g); got != "Load level seed (2A)" {
+	if got := levelSeedMenuLabel(g); got != "Load level seed\tACTION{2A}" {
 		t.Fatalf("label = %q", got)
 	}
+}
+
+func findDevMenuItem(t *testing.T, items []gamemenu.MenuItem, action DevMenuAction) *DevMenuItem {
+	t.Helper()
+	for _, item := range items {
+		devItem, ok := item.(*DevMenuItem)
+		if ok && devItem.Action == action {
+			return devItem
+		}
+	}
+	t.Fatalf("missing dev menu item for action %v", action)
+	return nil
 }

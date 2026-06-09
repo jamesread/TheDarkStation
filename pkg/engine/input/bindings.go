@@ -53,6 +53,8 @@ func FormatBindingCode(code string) string {
 		return "Right Arrow"
 	case "escape":
 		return "Escape"
+	case "q":
+		return "Q"
 	case "enter":
 		return "Enter"
 	case "menu":
@@ -65,11 +67,11 @@ func FormatBindingCode(code string) string {
 func isReservedKeyboardBinding(code string) bool {
 	return code == "arrow_up" || code == "arrow_down" ||
 		code == "arrow_left" || code == "arrow_right" ||
-		code == "e" || code == "enter"
+		code == "e" || code == "enter" || code == "q"
 }
 
 func isReservedGamepadBinding(code string) bool {
-	return code == "gamepad_a"
+	return code == "gamepad_a" || code == "gamepad_b"
 }
 
 func isReservedBindingCode(code string) bool {

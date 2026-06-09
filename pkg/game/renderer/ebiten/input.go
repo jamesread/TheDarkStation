@@ -21,6 +21,7 @@ func (e *EbitenRenderer) Update() error {
 	e.menuAnimClockMilli = now.UnixMilli()
 	e.menuAnimTimeNano = now.UnixNano()
 	e.maintPanDrawCount = 0
+	e.advanceTimedGameState(now.UnixMilli())
 
 	// Log window opening on first update (confirms window is actually running)
 	if !e.windowOpenedLogged {
@@ -108,6 +109,21 @@ func (e *EbitenRenderer) Update() error {
 	e.advanceHazardTour()
 
 	return nil
+}
+
+func (e *EbitenRenderer) advanceTimedGameState(nowMs int64) {
+	e.gameMutex.RLock()
+	g := e.game
+	e.gameMutex.RUnlock()
+	if g == nil {
+		return
+	}
+	// Generator shutdown rewrites room-power maps and must stay on the main/menu
+	// game loop path; doing it from Ebiten's Update thread can race power
+	// consumption calculations. Repair timers only update repair objective state.
+	if g.AdvanceRepairTimers(nowMs) {
+		e.RenderFrame(g)
+	}
 }
 
 func (e *EbitenRenderer) advanceLongUseFromInput() {
@@ -263,6 +279,10 @@ func mapCameraScreenOrigin(screenWidth, screenHeight int, cameraRow, cameraCol f
 // shouldRepeatKey checks if a key/button should trigger (initial press or repeat)
 // Returns true if the key should trigger, false otherwise
 func (e *EbitenRenderer) shouldRepeatKey(isPressed func() bool, code string) bool {
+	return e.shouldRepeatKeyWithTiming(isPressed, code, keyRepeatInitialDelay, keyRepeatInterval)
+}
+
+func (e *EbitenRenderer) shouldRepeatKeyWithTiming(isPressed func() bool, code string, initialDelayMs, intervalMs int64) bool {
 	now := time.Now().UnixMilli()
 
 	e.keyRepeatStateMutex.Lock()
@@ -285,9 +305,9 @@ func (e *EbitenRenderer) shouldRepeatKey(isPressed func() bool, code string) boo
 		timeSinceFirstPress := now - state.firstPressed
 		timeSinceLastRepeat := now - state.lastRepeat
 
-		if timeSinceFirstPress >= keyRepeatInitialDelay {
+		if timeSinceFirstPress >= initialDelayMs {
 			// Initial delay has passed, check repeat interval
-			if timeSinceLastRepeat >= keyRepeatInterval {
+			if timeSinceLastRepeat >= intervalMs {
 				// Update last repeat time and trigger
 				state.lastRepeat = now
 				e.keyRepeatState[code] = state
@@ -327,6 +347,11 @@ func (e *EbitenRenderer) checkGamepadInput() engineinput.Intent {
 	ids = ebiten.AppendGamepadIDs(ids[:0])
 
 	for _, id := range ids {
+		if isDeveloperMenuGamepadChordJustPressed(id) {
+			log.Printf("[DevMenu] gamepad chord detected id=%d", id)
+			return engineinput.Intent{Action: engineinput.ActionDevMenu}
+		}
+
 		// Face and shoulder buttons — check bindings before analog sticks.
 		for btn := ebiten.GamepadButton0; btn <= ebiten.GamepadButton9; btn++ {
 			if !inpututil.IsGamepadButtonJustPressed(id, btn) {
@@ -435,6 +460,40 @@ func (e *EbitenRenderer) checkGamepadInput() engineinput.Intent {
 	}
 
 	return engineinput.Intent{Action: engineinput.ActionNone}
+}
+
+func isDeveloperMenuGamepadChordJustPressed(id ebiten.GamepadID) bool {
+	if isStandardDeveloperMenuGamepadChordJustPressed(id) {
+		return true
+	}
+
+	// Fallback for controllers without a standard layout mapping.
+	lb := ebiten.IsGamepadButtonPressed(id, ebiten.GamepadButton4)
+	rb := ebiten.IsGamepadButtonPressed(id, ebiten.GamepadButton5)
+	start := ebiten.IsGamepadButtonPressed(id, ebiten.GamepadButton7)
+	if !lb || !rb || !start {
+		return false
+	}
+	return inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton4) ||
+		inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton5) ||
+		inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton7)
+}
+
+func isStandardDeveloperMenuGamepadChordJustPressed(id ebiten.GamepadID) bool {
+	topLeft := ebiten.IsStandardGamepadButtonPressed(id, ebiten.StandardGamepadButtonFrontTopLeft)
+	topRight := ebiten.IsStandardGamepadButtonPressed(id, ebiten.StandardGamepadButtonFrontTopRight)
+	bottomLeft := ebiten.IsStandardGamepadButtonPressed(id, ebiten.StandardGamepadButtonFrontBottomLeft)
+	bottomRight := ebiten.IsStandardGamepadButtonPressed(id, ebiten.StandardGamepadButtonFrontBottomRight)
+	start := ebiten.IsStandardGamepadButtonPressed(id, ebiten.StandardGamepadButtonCenterRight)
+	shouldersHeld := (topLeft && topRight) || (bottomLeft && bottomRight)
+	if !shouldersHeld || !start {
+		return false
+	}
+	return inpututil.IsStandardGamepadButtonJustPressed(id, ebiten.StandardGamepadButtonFrontTopLeft) ||
+		inpututil.IsStandardGamepadButtonJustPressed(id, ebiten.StandardGamepadButtonFrontTopRight) ||
+		inpututil.IsStandardGamepadButtonJustPressed(id, ebiten.StandardGamepadButtonFrontBottomLeft) ||
+		inpututil.IsStandardGamepadButtonJustPressed(id, ebiten.StandardGamepadButtonFrontBottomRight) ||
+		inpututil.IsStandardGamepadButtonJustPressed(id, ebiten.StandardGamepadButtonCenterRight)
 }
 
 // checkInput checks for keyboard input and returns the corresponding Intent.
@@ -593,8 +652,8 @@ func (e *EbitenRenderer) checkInput() engineinput.Intent {
 		return engineinput.Intent{Action: engineinput.ActionResetLevel}
 	}
 
-	// Back (Q) while a menu is open — same role as gamepad B / Escape in menus.
-	if e.isGenericMenuActive() && inpututil.IsKeyJustPressed(ebiten.KeyQ) {
+	// Cancel / back in menus. Gameplay ignores this intent.
+	if inpututil.IsKeyJustPressed(ebiten.KeyQ) {
 		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
 			Device: engineinput.DeviceKeyboard,
 			Code:   "q",

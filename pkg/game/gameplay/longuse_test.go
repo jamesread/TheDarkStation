@@ -102,6 +102,67 @@ func TestCompleteLongUse_powersGenerator(t *testing.T) {
 	}
 }
 
+func TestCompleteLongUse_startsWastePumpDrain(t *testing.T) {
+	g := state.NewGame()
+	grid := world.NewGrid(1, 3)
+	grid.MarkAsRoomWithName(0, 0, "A", "")
+	grid.MarkAsRoomWithName(0, 1, "Pump", "")
+	grid.MarkAsRoomWithName(0, 2, "Lift", "")
+	grid.BuildAllCellConnections()
+	grid.SetStartCellAt(0, 0)
+	g.Grid = grid
+	g.CurrentCell = grid.GetCell(0, 0)
+
+	repair := entities.NewRepairObjective("pump", entities.RepairWastePump, "Pump", 0, 1)
+	repair.BlockerName = "Toxic Slime"
+	repair.BlockerRow = 0
+	repair.BlockerCol = 2
+	gameworld.GetGameData(grid.GetCell(0, 1)).RepairDevice = repair
+	gameworld.GetGameData(grid.GetCell(0, 2)).RepairBlocker = repair
+	g.RepairObjectives = []*entities.RepairObjective{repair}
+
+	if !TryBeginLongUseOnAdjacent(g) {
+		t.Fatal("expected adjacent waste pump repair to start long use")
+	}
+	CompleteLongUse(g)
+	if !repair.IsDraining() {
+		t.Fatal("waste pump should start timed draining after long use")
+	}
+	if !gameworld.HasBlockingRepairBlocker(grid.GetCell(0, 2)) {
+		t.Fatal("toxic slime should block while draining")
+	}
+	if !g.AdvanceRepairTimers(time.Now().UnixMilli() + entities.WastePumpDrainDurationMs + 1) {
+		t.Fatal("drain timer should complete")
+	}
+	if gameworld.HasBlockingRepairBlocker(grid.GetCell(0, 2)) {
+		t.Fatal("toxic slime should stop blocking after drain completes")
+	}
+}
+
+func TestCheckAdjacentRepair_signalCalibrationCompletesInSequence(t *testing.T) {
+	g := state.NewGame()
+	grid := world.NewGrid(1, 2)
+	grid.MarkAsRoomWithName(0, 0, "A", "")
+	grid.MarkAsRoomWithName(0, 1, "Signal", "")
+	grid.BuildAllCellConnections()
+	grid.SetStartCellAt(0, 0)
+	g.Grid = grid
+	g.CurrentCell = grid.GetCell(0, 0)
+
+	repair := entities.NewRepairObjective("signal", entities.RepairSignalCalibrator, "Signal", 0, 1)
+	gameworld.GetGameData(grid.GetCell(0, 1)).RepairDevice = repair
+	g.RepairObjectives = []*entities.RepairObjective{repair}
+
+	for i := 0; i < entities.SignalCalibrationSteps; i++ {
+		if !CheckAdjacentRepairAtCell(g, grid.GetCell(0, 1)) {
+			t.Fatalf("calibration step %d did not consume interaction", i+1)
+		}
+	}
+	if !repair.IsComplete() {
+		t.Fatal("signal calibrator should complete after calibration sequence")
+	}
+}
+
 func TestCancelLongUse_clearsSession(t *testing.T) {
 	g, _ := makeLongUseTestGame()
 	TryBeginLongUseOnAdjacent(g)

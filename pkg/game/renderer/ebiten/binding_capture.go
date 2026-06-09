@@ -39,7 +39,7 @@ func (e *EbitenRenderer) CaptureBindingCode() string {
 }
 
 func (e *EbitenRenderer) pollBindingCapture() (code string, done bool) {
-	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) {
+	if inpututil.IsKeyJustPressed(ebiten.KeyEscape) || inpututil.IsKeyJustPressed(ebiten.KeyQ) {
 		return "", true
 	}
 	if code := pollKeyboardBindingCapture(); code != "" {
@@ -221,6 +221,8 @@ func bindingCodeFromIntent(intent engineinput.Intent) string {
 		return "?"
 	case engineinput.ActionQuit:
 		return "quit"
+	case engineinput.ActionCancel:
+		return "q"
 	case engineinput.ActionScreenshot:
 		return "screenshot"
 	case engineinput.ActionAction, engineinput.ActionInteract:

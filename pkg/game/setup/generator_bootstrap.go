@@ -163,7 +163,10 @@ func placeMaintenanceTerminalInRoom(g *state.Game, roomName string, force bool) 
 			return
 		}
 		data := gameworld.GetGameData(cell)
-		if data.Generator != nil || data.Door != nil || data.MaintenanceTerm != nil {
+		if data.Generator != nil || data.Door != nil || data.MaintenanceTerm != nil ||
+			data.Terminal != nil || data.Puzzle != nil || data.Furniture != nil ||
+			data.Hazard != nil || data.HazardControl != nil || data.RepairDevice != nil ||
+			data.RepairBlocker != nil || cell.ItemsOnFloor.Size() > 0 {
 			return
 		}
 		if !force && !CanPlaceBlockingEntity(g, cell) {
@@ -180,7 +183,10 @@ func placeMaintenanceTerminalInRoom(g *state.Game, roomName string, force bool) 
 				return
 			}
 			data := gameworld.GetGameData(cell)
-			if data.Generator != nil || data.Door != nil || data.MaintenanceTerm != nil {
+			if data.Generator != nil || data.Door != nil || data.MaintenanceTerm != nil ||
+				data.Terminal != nil || data.Puzzle != nil || data.Furniture != nil ||
+				data.Hazard != nil || data.HazardControl != nil || data.RepairDevice != nil ||
+				data.RepairBlocker != nil || cell.ItemsOnFloor.Size() > 0 {
 				return
 			}
 			target = cell
@@ -236,7 +242,7 @@ func powerFirstUnpoweredMaintenanceTerminal(g *state.Game) {
 			return
 		}
 		mt := gameworld.GetGameData(cell).MaintenanceTerm
-		if mt == nil || mt.Powered {
+		if mt == nil || mt.Powered || mt.Disabled {
 			return
 		}
 		mt.Powered = true
@@ -254,7 +260,7 @@ func powerFirstMaintTerminalInRoom(g *state.Game, roomName string) bool {
 			return
 		}
 		mt := gameworld.GetGameData(cell).MaintenanceTerm
-		if mt == nil || mt.Powered {
+		if mt == nil || mt.Powered || mt.Disabled {
 			return
 		}
 		mt.Powered = true

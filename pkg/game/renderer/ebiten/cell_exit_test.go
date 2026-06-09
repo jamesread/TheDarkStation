@@ -96,3 +96,49 @@ func TestGetTileCustomBg_exitLiftPulsingBgOnlyWhenReady(t *testing.T) {
 		t.Fatal("ready lift should have pulsing exit background")
 	}
 }
+
+func TestGetTileCustomBg_focusedGeneratorIsDarkGreen(t *testing.T) {
+	e := &EbitenRenderer{}
+	g := state.NewGame()
+	grid := world.NewGrid(1, 2)
+	grid.MarkAsRoomWithName(0, 0, "Start", "")
+	grid.MarkAsRoomWithName(0, 1, "Engineering", "")
+	grid.BuildAllCellConnections()
+	g.Grid = grid
+	g.CurrentCell = grid.GetCell(0, 0)
+	genCell := grid.GetCell(0, 1)
+	genCell.Discovered = true
+	gameworld.InitGameData(g.CurrentCell)
+	gameworld.InitGameData(genCell).Generator = entities.NewGenerator("G", 1)
+
+	snap := &renderSnapshot{
+		playerRow:      0,
+		playerCol:      0,
+		focusedCellRow: 0,
+		focusedCellCol: 1,
+	}
+	opts := e.getCellRenderOptions(g, genCell, snap, false)
+	if opts.Icon != IconGeneratorUnpowered {
+		t.Fatalf("generator icon = %q, want %q", opts.Icon, IconGeneratorUnpowered)
+	}
+	if bg := e.getTileCustomBg(g, genCell, snap, &opts, nil); bg != colorGeneratorFocusBg {
+		t.Fatalf("focused generator bg = %v, want %v", bg, colorGeneratorFocusBg)
+	}
+}
+
+func TestGetCellRenderOptions_generatorHasDarkGreenBackground(t *testing.T) {
+	e := &EbitenRenderer{}
+	g := state.NewGame()
+	grid := world.NewGrid(1, 1)
+	grid.MarkAsRoomWithName(0, 0, "Engineering", "")
+	g.Grid = grid
+	genCell := grid.GetCell(0, 0)
+	genCell.Discovered = true
+	gameworld.InitGameData(genCell).Generator = entities.NewGenerator("G", 1)
+
+	snap := &renderSnapshot{playerRow: -1, playerCol: -1}
+	opts := e.getCellRenderOptions(g, genCell, snap, false)
+	if opts.BackgroundColor != colorGeneratorFocusBg {
+		t.Fatalf("generator background = %v, want %v", opts.BackgroundColor, colorGeneratorFocusBg)
+	}
+}

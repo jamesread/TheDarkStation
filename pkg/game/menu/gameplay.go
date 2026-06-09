@@ -7,7 +7,9 @@ import engineinput "darkstation/pkg/engine/input"
 type GameplayMenuAction int
 
 const (
-	GameplayMenuActionBindings GameplayMenuAction = iota
+	GameplayMenuActionClose GameplayMenuAction = iota
+	GameplayMenuActionBindings
+	GameplayMenuActionVideo
 	GameplayMenuActionQuitToTitle
 )
 
@@ -30,8 +32,12 @@ func (m *GameplayMenuItem) IsSelectable() bool {
 // GetHelpText returns help text for this menu item.
 func (m *GameplayMenuItem) GetHelpText() string {
 	switch m.Action {
+	case GameplayMenuActionClose:
+		return "Return to the game"
 	case GameplayMenuActionBindings:
 		return "Configure keyboard and gamepad bindings"
+	case GameplayMenuActionVideo:
+		return "Configure display settings"
 	case GameplayMenuActionQuitToTitle:
 		return "Return to the main menu"
 	default:
@@ -73,6 +79,9 @@ func (h *GameplayMenuHandler) OnSelect(item MenuItem, index int) {
 func (h *GameplayMenuHandler) OnActivate(item MenuItem, index int) (shouldClose bool, helpText string) {
 	if gameplayItem, ok := item.(*GameplayMenuItem); ok {
 		h.selectedAction = gameplayItem.Action
+		if gameplayItem.Action == GameplayMenuActionClose {
+			return true, ""
+		}
 		if gameplayItem.Action == GameplayMenuActionQuitToTitle {
 			h.shouldQuit = true
 			return true, ""
@@ -106,7 +115,9 @@ func (h *GameplayMenuHandler) ShouldQuitToTitle() bool {
 // GetMenuItems returns the menu items for the gameplay menu.
 func (h *GameplayMenuHandler) GetMenuItems() []MenuItem {
 	return []MenuItem{
+		&GameplayMenuItem{Label: "Close Menu", Action: GameplayMenuActionClose},
 		&GameplayMenuItem{Label: "Bindings", Action: GameplayMenuActionBindings},
+		&GameplayMenuItem{Label: "Video", Action: GameplayMenuActionVideo},
 		&GameplayMenuItem{Label: "Quit to Title", Action: GameplayMenuActionQuitToTitle},
 	}
 }

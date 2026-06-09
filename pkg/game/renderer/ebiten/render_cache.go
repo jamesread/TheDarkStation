@@ -18,10 +18,6 @@ func generatorPoweredMask(g *state.Game) uint64 {
 	return mask
 }
 
-func cameraCoordMilli(v float64) int64 {
-	return int64(v*1000 + 0.5)
-}
-
 func (e *EbitenRenderer) invalidateMapDrawCache() {
 	e.mapDrawCache.valid = false
 }
@@ -100,9 +96,9 @@ func (e *EbitenRenderer) buildObjectivesCacheKey(g *state.Game) objectivesCacheK
 	}
 	return objectivesCacheKey{
 		level:               g.Level,
-		movementCount:       g.MovementCount,
 		interactionsCount:   g.InteractionsCount,
 		unpoweredGenerators: g.UnpoweredGeneratorCount(),
+		repairSignature:     g.RepairProgressSignature(),
 	}
 }
 
@@ -140,40 +136,33 @@ func (e *EbitenRenderer) refreshEnvPlaques(g *state.Game) []envPlaque {
 	return plaques
 }
 
-func (e *EbitenRenderer) mapDrawCacheHit(snapSeq uint64, camRow, camCol float64, startRow, startCol, bufW, bufH int) (blitX, blitY float64, ok bool) {
+func (e *EbitenRenderer) mapDrawCacheHit(snapSeq uint64, startRow, startCol, bufW, bufH int) bool {
 	c := &e.mapDrawCache
 	if !c.valid || c.snapSeq != snapSeq {
-		return 0, 0, false
-	}
-	if c.camRowMilli != cameraCoordMilli(camRow) || c.camColMilli != cameraCoordMilli(camCol) {
-		return 0, 0, false
+		return false
 	}
 	if c.startRow != startRow || c.startCol != startCol {
-		return 0, 0, false
+		return false
 	}
 	if c.bufW != bufW || c.bufH != bufH {
-		return 0, 0, false
+		return false
 	}
 	if c.tileSize != e.tileSize || c.viewRows != e.viewportRows || c.viewCols != e.viewportCols {
-		return 0, 0, false
+		return false
 	}
-	return c.blitX, c.blitY, true
+	return true
 }
 
-func (e *EbitenRenderer) storeMapDrawCache(snapSeq uint64, camRow, camCol float64, startRow, startCol int, blitX, blitY float64, bufW, bufH int) {
+func (e *EbitenRenderer) storeMapDrawCache(snapSeq uint64, startRow, startCol int, bufW, bufH int) {
 	e.mapDrawCache = mapDrawCache{
-		valid:       true,
-		snapSeq:     snapSeq,
-		camRowMilli: cameraCoordMilli(camRow),
-		camColMilli: cameraCoordMilli(camCol),
-		startRow:    startRow,
-		startCol:    startCol,
-		blitX:       blitX,
-		blitY:       blitY,
-		bufW:        bufW,
-		bufH:        bufH,
-		tileSize:    e.tileSize,
-		viewRows:    e.viewportRows,
-		viewCols:    e.viewportCols,
+		valid:    true,
+		snapSeq:  snapSeq,
+		startRow: startRow,
+		startCol: startCol,
+		bufW:     bufW,
+		bufH:     bufH,
+		tileSize: e.tileSize,
+		viewRows: e.viewportRows,
+		viewCols: e.viewportCols,
 	}
 }

@@ -35,6 +35,9 @@ func ExitLiftState(g *state.Game) state.ExitLiftState {
 	if !g.AllHazardsCleared() {
 		return state.ExitLiftLockedIncomplete
 	}
+	if !g.AllRepairsComplete() {
+		return state.ExitLiftLockedIncomplete
+	}
 	return state.ExitLiftReady
 }
 

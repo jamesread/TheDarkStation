@@ -79,14 +79,32 @@ type renderSnapshot struct {
 		row int
 		col int
 	} // Cells with interactable objects (for focus background)
-	longUseActive    bool
-	longUseProgress  float64
-	longUseTargetRow int
-	longUseTargetCol int
-	hazardClear      *state.HazardClearSession
-	hazardTour       *state.HazardTourSession
-	powerGrid        powerGridSnapshot
-	mapPower         mapPowerSnapshot
+	longUseActive           bool
+	longUseProgress         float64
+	longUseTargetRow        int
+	longUseTargetCol        int
+	repairDrains            []repairDrainSnapshot
+	slimePops               []slimePopSnapshot
+	generatorShutdownActive bool
+	generatorShutdownAtMs   int64
+	generatorShutdownRow    int
+	generatorShutdownCol    int
+	hazardClear             *state.HazardClearSession
+	hazardTour              *state.HazardTourSession
+	powerGrid               powerGridSnapshot
+	mapPower                mapPowerSnapshot
+}
+
+type repairDrainSnapshot struct {
+	row      int
+	col      int
+	progress float64
+}
+
+type slimePopSnapshot struct {
+	row      int
+	col      int
+	progress float64
 }
 
 // mapPowerSnapshot holds power routing state copied on the game thread for race-free Draw.
@@ -162,6 +180,10 @@ type EbitenRenderer struct {
 	cachedSansBoldTitleFace *text.GoTextFace // Sans bold 2pt larger for menu title text
 	cachedSansBoldTitleSize float64          // Size used for cachedSansBoldTitleFace
 	cachedMonoUIFace        *text.GoTextFace // Monospace font with UI size (for console)
+	monoGlyphMetrics        map[string]glyphMetrics
+	monoGlyphMetricsSize    float64
+	roomLabelTextWidth      map[string]float64
+	roomLabelTextWidthSize  float64
 
 	// Current game state (set by RenderFrame)
 	game      *state.Game
@@ -357,11 +379,14 @@ type EbitenRenderer struct {
 type mapDrawCache struct {
 	valid                        bool
 	snapSeq                      uint64
-	camRowMilli, camColMilli     int64
 	startRow, startCol           int
-	blitX, blitY                 float64
 	bufW, bufH                   int
 	tileSize, viewRows, viewCols int
+}
+
+type glyphMetrics struct {
+	w float64
+	h float64
 }
 
 type mapPowerSnapCacheKey struct {
@@ -380,8 +405,9 @@ type roomLabelsCacheKey struct {
 }
 
 type objectivesCacheKey struct {
-	level, movementCount, interactionsCount int
-	unpoweredGenerators                     int
+	level, interactionsCount int
+	unpoweredGenerators      int
+	repairSignature          string
 }
 
 type envPlaquesCacheKey struct {

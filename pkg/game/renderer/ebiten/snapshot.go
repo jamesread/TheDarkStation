@@ -11,6 +11,7 @@ import (
 
 	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/features"
 	gamemenu "darkstation/pkg/game/menu"
 	"darkstation/pkg/game/setup"
@@ -50,8 +51,20 @@ func (e *EbitenRenderer) calculateObjectives(g *state.Game) []string {
 		objectives = append(objectives, fmt.Sprintf(formatStr, numHazards))
 	}
 
+	repairsRemaining := g.IncompleteRepairCount()
+	if repairsRemaining > 0 {
+		draining := g.ActiveRepairDrainCount()
+		if draining > 0 {
+			objectives = append(objectives, fmt.Sprintf("Drain toxic slime: %d active", draining))
+		} else if repairsRemaining == 1 {
+			objectives = append(objectives, "Repair deck system: 1 remaining")
+		} else {
+			objectives = append(objectives, fmt.Sprintf("Repair deck systems: %d remaining", repairsRemaining))
+		}
+	}
+
 	// If all objectives are complete, show exit message
-	if unpoweredGenerators == 0 && numHazards == 0 {
+	if unpoweredGenerators == 0 && numHazards == 0 && repairsRemaining == 0 {
 		objectives = append(objectives, "FIND_LIFT") // Will be translated in drawColoredTextSegments
 	}
 
@@ -172,6 +185,7 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 			if gameworld.HasGenerator(cell) ||
 				gameworld.HasFurniture(cell) ||
 				gameworld.HasMaintenanceTerminal(cell) ||
+				gameworld.HasIncompleteRepairDevice(cell) ||
 				gameworld.HasUnusedTerminal(cell) ||
 				gameworld.HasUnsolvedPuzzle(cell) ||
 				gameworld.HasInactiveHazardControl(cell) {
@@ -197,6 +211,32 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 	copy(e.snapshot.callouts, activeCallouts)
 	e.calloutsMutex.Unlock()
 
+	e.snapshot.repairDrains = e.snapshot.repairDrains[:0]
+	for _, repair := range g.RepairObjectives {
+		if repair == nil || !repair.IsDraining() || repair.Type != entities.RepairWastePump {
+			continue
+		}
+		p := repair.DrainProgress(nowUnixMilli)
+		e.snapshot.repairDrains = append(e.snapshot.repairDrains, repairDrainSnapshot{
+			row:      repair.DeviceRow,
+			col:      repair.DeviceCol,
+			progress: p,
+		})
+	}
+
+	e.snapshot.slimePops = e.snapshot.slimePops[:0]
+	for _, pop := range g.SlimePops {
+		progress, ok := g.SlimePopProgress(pop.Row, pop.Col, nowUnixMilli)
+		if !ok {
+			continue
+		}
+		e.snapshot.slimePops = append(e.snapshot.slimePops, slimePopSnapshot{
+			row:      pop.Row,
+			col:      pop.Col,
+			progress: progress,
+		})
+	}
+
 	if g.LongUse != nil {
 		e.snapshot.longUseActive = true
 		e.snapshot.longUseTargetRow = g.LongUse.TargetRow
@@ -216,6 +256,18 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 		e.snapshot.longUseProgress = 0
 		e.snapshot.longUseTargetRow = 0
 		e.snapshot.longUseTargetCol = 0
+	}
+
+	if pending, remaining, row, col := setup.GeneratorShutdownPending(g, nowUnixMilli); pending {
+		e.snapshot.generatorShutdownActive = true
+		e.snapshot.generatorShutdownAtMs = nowUnixMilli + remaining
+		e.snapshot.generatorShutdownRow = row
+		e.snapshot.generatorShutdownCol = col
+	} else {
+		e.snapshot.generatorShutdownActive = false
+		e.snapshot.generatorShutdownAtMs = 0
+		e.snapshot.generatorShutdownRow = -1
+		e.snapshot.generatorShutdownCol = -1
 	}
 
 	if g.HazardClear != nil {

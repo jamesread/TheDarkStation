@@ -18,7 +18,8 @@ func IsPermanentlyBlockingCell(cell *world.Cell) bool {
 	}
 	data := gameworld.GetGameData(cell)
 	return data.Generator != nil || data.Furniture != nil || data.Terminal != nil ||
-		data.Puzzle != nil || data.MaintenanceTerm != nil || data.HazardControl != nil
+		data.Puzzle != nil || data.MaintenanceTerm != nil || data.HazardControl != nil ||
+		data.RepairDevice != nil
 }
 
 // isPassableAtLevelCompletion reports whether the player could step on the cell once all win
@@ -79,6 +80,9 @@ func ExitReachableWhenCompletable(g *state.Game, extraBlocked *world.Cell) bool 
 // and does not cut off init-reachable keycards or rooms.
 func CanPlaceBlockingEntity(g *state.Game, candidate *world.Cell) bool {
 	if g == nil || candidate == nil {
+		return false
+	}
+	if candidate.ItemsOnFloor.Size() > 0 {
 		return false
 	}
 	if !ExitReachableWhenCompletable(g, candidate) {
@@ -163,5 +167,6 @@ func clearPermanentBlocker(g *state.Game, cell *world.Cell) {
 	data.Terminal = nil
 	data.Puzzle = nil
 	data.HazardControl = nil
+	data.RepairDevice = nil
 	// Generators must remain; exit routing should not require stepping on them.
 }

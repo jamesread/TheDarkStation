@@ -8,6 +8,7 @@ import (
 
 	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/game/renderer"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 )
 
@@ -67,6 +68,16 @@ type QuitShortcutHandler interface {
 	HandleQuitShortcut(g *state.Game) (closeMenu bool)
 }
 
+// CancelShortcutHandler handles the cancel/back shortcut while a menu is open.
+type CancelShortcutHandler interface {
+	HandleCancelShortcut(g *state.Game) (closeMenu bool)
+}
+
+// PerfMapShortcutHandler handles developer perf-map console requests while a menu is open.
+type PerfMapShortcutHandler interface {
+	HandlePerfMapShortcut(g *state.Game, scenario string) (closeMenu bool)
+}
+
 // MenuRenderer is an optional interface for renderers that can draw
 // a full-screen menu overlay on top of the map.
 type MenuRenderer interface {
@@ -90,6 +101,8 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 	}
 
 	for {
+		advanceMenuTimers(g)
+
 		// Set maintenance room for renderer to highlight walls (when handler provides it)
 		if provider, ok := handler.(MaintenanceRoomProvider); ok {
 			g.MaintenanceMenuRoom = provider.GetMaintenanceRoom(selected, items)
@@ -208,7 +221,16 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 			}
 			handler.OnExit()
 			return
-		case engineinput.ActionOpenMenu:
+		case engineinput.ActionOpenMenu, engineinput.ActionCancel:
+			if intent.Action == engineinput.ActionCancel {
+				closeMenu := true
+				if csh, ok := handler.(CancelShortcutHandler); ok {
+					closeMenu = csh.HandleCancelShortcut(g)
+				}
+				if !closeMenu {
+					continue
+				}
+			}
 			// Exit menu
 			g.ClearMessages()
 			if mr, ok := renderer.Current.(MenuRenderer); ok {
@@ -216,6 +238,18 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 			}
 			handler.OnExit()
 			return
+		case engineinput.ActionPerfTestMap:
+			if pmh, ok := handler.(PerfMapShortcutHandler); ok {
+				if !pmh.HandlePerfMapShortcut(g, intent.Code) {
+					continue
+				}
+				g.ClearMessages()
+				if mr, ok := renderer.Current.(MenuRenderer); ok {
+					mr.ClearMenu()
+				}
+				handler.OnExit()
+				return
+			}
 		case engineinput.ActionNone:
 			// Ignore
 		default:
@@ -238,6 +272,8 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 	}()
 
 	for {
+		advanceMenuTimers(g)
+
 		items := handler.GetMenuItems()
 
 		// Find first selectable item, or keep current if still valid
@@ -365,7 +401,16 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 			}
 			handler.OnExit()
 			return
-		case engineinput.ActionOpenMenu:
+		case engineinput.ActionOpenMenu, engineinput.ActionCancel:
+			if intent.Action == engineinput.ActionCancel {
+				closeMenu := true
+				if csh, ok := handler.(CancelShortcutHandler); ok {
+					closeMenu = csh.HandleCancelShortcut(g)
+				}
+				if !closeMenu {
+					continue
+				}
+			}
 			g.ClearMessages()
 			if mr, ok := renderer.Current.(MenuRenderer); ok {
 				mr.ClearMenu()
@@ -378,6 +423,13 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 			// Ignore other actions while in menu
 		}
 	}
+}
+
+func advanceMenuTimers(g *state.Game) {
+	if g == nil {
+		return
+	}
+	setup.AdvanceGeneratorShutdown(g, setup.PowerNowMs())
 }
 
 // renderMenuFallback renders the menu in the message log as a fallback.

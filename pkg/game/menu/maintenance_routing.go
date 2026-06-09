@@ -9,6 +9,7 @@ import (
 	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
+	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
 
@@ -143,6 +144,68 @@ func (r *RefreshPowerGridMenuItem) IsSelectable() bool { return true }
 
 func (r *RefreshPowerGridMenuItem) GetHelpText() string {
 	return engineinput.HintPressConfirmTo("re-apply terminal feed from powered generators via the conductive grid")
+}
+
+// DelayedShutdownMenuItem starts a five-second countdown before powered generators shut down.
+type DelayedShutdownMenuItem struct {
+	Parent *MaintenanceMenuHandler
+}
+
+func (d *DelayedShutdownMenuItem) GetLabel() string {
+	if d.shutdownPending() {
+		if _, remaining, _, _ := setup.GeneratorShutdownPending(d.Parent.g, setup.PowerNowMs()); remaining > 0 {
+			secs := (remaining + 999) / 1000
+			if secs < 1 {
+				secs = 1
+			}
+			return fmt.Sprintf("Delayed shutdown:\tUNPOWERED{%ds}", secs)
+		}
+	}
+	return "Delayed shutdown"
+}
+
+func (d *DelayedShutdownMenuItem) IsSelectable() bool {
+	return d.Parent != nil && countPoweredGenerators(d.Parent.g) > 0 && !d.shutdownPending()
+}
+
+func (d *DelayedShutdownMenuItem) GetHelpText() string {
+	if d.Parent == nil {
+		return ""
+	}
+	if d.shutdownPending() {
+		_, remaining, _, _ := setup.GeneratorShutdownPending(d.Parent.g, setup.PowerNowMs())
+		secs := (remaining + 999) / 1000
+		if secs < 1 {
+			secs = 1
+		}
+		return fmt.Sprintf("Generator shutdown in %d seconds", secs)
+	}
+	powered := countPoweredGenerators(d.Parent.g)
+	if powered == 0 {
+		return "No powered generators to shut down"
+	}
+	return engineinput.HintPressConfirmTo(fmt.Sprintf("shut down %d powered generator(s) in %d seconds", powered, int(setup.GeneratorShutdownDelay.Seconds())))
+}
+
+func (d *DelayedShutdownMenuItem) shutdownPending() bool {
+	if d.Parent == nil {
+		return false
+	}
+	pending, _, _, _ := setup.GeneratorShutdownPending(d.Parent.g, setup.PowerNowMs())
+	return pending
+}
+
+func countPoweredGenerators(g *state.Game) int {
+	if g == nil {
+		return 0
+	}
+	count := 0
+	for _, gen := range g.Generators {
+		if gen != nil && gen.IsPowered() {
+			count++
+		}
+	}
+	return count
 }
 
 // AdvancedPowerMenuItem opens granular door/light/CCTV toggles (diagnostics).
@@ -292,6 +355,29 @@ func (h *MaintenanceMenuHandler) refreshPowerGrid() string {
 	return "No unpowered terminals on power grid"
 }
 
+func (h *MaintenanceMenuHandler) scheduleDelayedShutdown() string {
+	if h == nil || h.g == nil {
+		return ""
+	}
+	if pending, remaining, _, _ := setup.GeneratorShutdownPending(h.g, setup.PowerNowMs()); pending {
+		secs := (remaining + 999) / 1000
+		if secs < 1 {
+			secs = 1
+		}
+		return fmt.Sprintf("Generator shutdown already counting down: %d seconds", secs)
+	}
+	powered := countPoweredGenerators(h.g)
+	if powered == 0 {
+		return "No powered generators to shut down"
+	}
+	row, col := h.g.MaintenanceMenuTerminalRow, h.g.MaintenanceMenuTerminalCol
+	if h.cell != nil {
+		row, col = h.cell.Row, h.cell.Col
+	}
+	setup.ScheduleGeneratorShutdown(h.g, row, col, setup.PowerNowMs())
+	return fmt.Sprintf("Delayed shutdown armed — %d seconds until %d generator(s) stop", int(setup.GeneratorShutdownDelay.Seconds()), powered)
+}
+
 func (h *MaintenanceMenuHandler) pingNearbyInline() string {
 	centerRow, centerCol := h.cell.Row, h.cell.Col
 	radiusSq := pingRadius * pingRadius
@@ -357,6 +443,7 @@ func (h *MaintenanceMenuHandler) getControlsMenuItems() []MenuItem {
 		&InfoMenuItem{Label: renderer.FormatPowerBarLineWithHighlight("Grid power", gridSupply, gridUsed, roomConsumption)},
 		&InfoMenuItem{Label: ""},
 		&RoomCircuitPresetMenuItem{Parent: h},
+		&DelayedShutdownMenuItem{Parent: h},
 		&PingTerminalsMenuItem{},
 		&ModeToggleMenuItem{Parent: h},
 		&InfoMenuItem{Label: ""},

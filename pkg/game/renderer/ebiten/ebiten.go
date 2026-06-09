@@ -45,6 +45,7 @@ func New() *EbitenRenderer {
 		stickState:          make(map[ebiten.GamepadID]struct{ x, y float64 }),
 		bindingCaptureStick: make(map[ebiten.GamepadID]struct{ x, y float64 }),
 		keyRepeatState:      make(map[string]keyRepeatInfo),
+		monoGlyphMetrics:    make(map[string]glyphMetrics),
 	}
 }
 
@@ -73,6 +74,7 @@ func (e *EbitenRenderer) Init() {
 	ebiten.SetWindowSize(e.windowWidth, e.windowHeight)
 	ebiten.SetWindowTitle("The Dark Station")
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
+	ebiten.SetCursorMode(ebiten.CursorModeHidden)
 
 	// Enable VSync for smooth rendering (prevents tearing and reduces jitter)
 	ebiten.SetVsyncEnabled(true)
@@ -165,6 +167,23 @@ func (e *EbitenRenderer) GetViewportSize() (rows, cols int) {
 // GetTileSize returns the map tile size in pixels (zoom level).
 func (e *EbitenRenderer) GetTileSize() int {
 	return e.tileSize
+}
+
+// SetFullscreen switches the Ebiten window between windowed and borderless fullscreen.
+func (e *EbitenRenderer) SetFullscreen(on bool) {
+	ebiten.SetFullscreen(on)
+}
+
+// IsFullscreen reports whether the Ebiten window is currently fullscreen.
+func (e *EbitenRenderer) IsFullscreen() bool {
+	return ebiten.IsFullscreen()
+}
+
+// ToggleFullscreen flips fullscreen mode and returns the new state.
+func (e *EbitenRenderer) ToggleFullscreen() bool {
+	on := !ebiten.IsFullscreen()
+	ebiten.SetFullscreen(on)
+	return on
 }
 
 // Run starts the Ebiten game loop

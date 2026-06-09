@@ -281,6 +281,7 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 
 	maintOverlayStable := strings.Contains(title, "Maintenance Terminal") || title == "Select room"
 	devMenuRight := title == "Developer Menu"
+	currentCellCharsMenu := title == "Current Cell Chars"
 	skipMenuDropShadow := maintOverlayStable &&
 		maintCameraPanTweening(pg, e.cameraCenterRow, e.cameraCenterCol, e.cameraTargetRow, e.cameraTargetCol)
 	// Default true so callouts/main menu stay soft; maint/room picker uses crisp vector edges (less LCD shimmer).
@@ -452,13 +453,17 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	y := panelY + paddingY
 
 	fontSize := e.getUIFontSize()
+	rowFace := e.getSansFontFace()
+	if currentCellCharsMenu {
+		rowFace = e.getMonoUIFontFace()
+		fontSize = rowFace.Size
+	}
 	lineHeight := int(fontSize) + 6
 	// Tighter spacing between title and the first line below it (help text or menu items)
 	const titleToContentSpacing = 4
 
 	// Use UI font metrics so the highlight rectangle can tightly wrap the text.
-	face := e.getSansFontFace()
-	_, textHeight := text.Measure("Ag", face, 0)
+	_, textHeight := text.Measure("Ag", rowFace, 0)
 
 	// Title color and highlight derive from menu type (maintenance/select room = orange, others = purple)
 	titleColor := colorAction
@@ -548,6 +553,9 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 			highlightWidth = 0
 		}
 	}
+	if title == "Bindings Menu" {
+		highlightWidth = float64(panelW - paddingX*2)
+	}
 
 	// First pass: draw highlight rectangles (so they are always below text)
 	if highlightIndex >= 0 && highlightIndex < len(items) && items[highlightIndex].IsSelectable() && highlightWidth > 0 {
@@ -568,17 +576,23 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		vector.DrawFilledRect(screen, rx, ry, rw, rh, highlightColor, false)
 	}
 
-	// For maintenance terminal menus: align values in columns (tab-separated: label, status, optional watts)
+	// For table-style menus: align values in columns (tab-separated: label, status, optional watts/value).
 	var valueColumnX, wattsColumnX int
 	rightAlignPowerColumn := title == "Select room"
-	if strings.Contains(title, "Maintenance Terminal") || title == "Select room" {
+	tableMenu := strings.Contains(title, "Maintenance Terminal") ||
+		title == "Select room" ||
+		title == "Bindings Menu" ||
+		title == "Developer Menu" ||
+		currentCellCharsMenu ||
+		title == "Video"
+	if tableMenu {
 		var maxLabelW, maxValueW float64
 		for _, label := range labels {
 			before, after, ok := strings.Cut(label, "\t")
 			if !ok || before == "" {
 				continue
 			}
-			if w := e.getTextWidth(before); w > maxLabelW {
+			if w := e.getTextWidthWithFace(before, rowFace); w > maxLabelW {
 				maxLabelW = w
 			}
 			valuePart := after
@@ -587,17 +601,20 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 				valuePart, wattsPart = middle, w
 			}
 			if valuePart != "" {
-				if w := e.getMarkupWidth(valuePart); w > maxValueW {
+				if w := e.getMarkupWidthWithFace(valuePart, rowFace); w > maxValueW {
 					maxValueW = w
 				}
 			}
 			if rightAlignPowerColumn && wattsPart != "" {
-				if w := e.getMarkupWidth(wattsPart); w > maxValueW {
+				if w := e.getMarkupWidthWithFace(wattsPart, rowFace); w > maxValueW {
 					maxValueW = w
 				}
 			}
 		}
-		const valueColumnGap = 8 // pixels between columns
+		valueColumnGap := 8 // pixels between columns
+		if title == "Bindings Menu" {
+			valueColumnGap = 32
+		}
 		valueColumnX = x + int(maxLabelW) + valueColumnGap
 		if rightAlignPowerColumn {
 			// Third column right-aligned: draw at (rightEdge - width)
@@ -622,19 +639,25 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 			continue
 		}
 
+		if title == "Bindings Menu" && !item.IsSelectable() && strings.HasPrefix(label, "TITLE{") {
+			e.drawColoredTextSegmentsWithFace(screen, e.parseMarkup(label), x, rowParamY, e.getSansBoldTitleFontFace())
+			rowY += lineHeight
+			continue
+		}
+
 		// Maintenance terminal: draw label, value, and optional watts in columns if tab-separated
 		if valueColumnX > x {
 			if before, after, ok := strings.Cut(label, "\t"); ok {
 				if before != "" {
 					if strings.Contains(before, "{") {
 						segments := e.parseMarkup(before)
-						e.drawColoredTextSegments(screen, segments, x, rowParamY)
+						e.drawColoredTextSegmentsWithFace(screen, segments, x, rowParamY, rowFace)
 					} else {
 						labelColor := colorText
 						if !item.IsSelectable() {
 							labelColor = colorSubtle
 						}
-						e.drawColoredText(screen, before, x, rowParamY, labelColor)
+						e.drawColoredTextWithFace(screen, before, x, rowParamY, labelColor, rowFace)
 					}
 				}
 				valuePart, wattsPart := after, ""
@@ -644,29 +667,29 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 				if valuePart != "" {
 					segments := e.parseMarkup(valuePart)
 					if len(segments) > 0 {
-						e.drawColoredTextSegments(screen, segments, valueColumnX, rowParamY)
+						e.drawColoredTextSegmentsWithFace(screen, segments, valueColumnX, rowParamY, rowFace)
 					} else {
 						labelColor := colorText
 						if !item.IsSelectable() {
 							labelColor = colorSubtle
 						}
-						e.drawColoredText(screen, valuePart, valueColumnX, rowParamY, labelColor)
+						e.drawColoredTextWithFace(screen, valuePart, valueColumnX, rowParamY, labelColor, rowFace)
 					}
 				}
 				if wattsPart != "" && wattsColumnX > valueColumnX {
 					wattsX := wattsColumnX
 					if rightAlignPowerColumn {
-						wattsX = wattsColumnX - int(e.getMarkupWidth(wattsPart))
+						wattsX = wattsColumnX - int(e.getMarkupWidthWithFace(wattsPart, rowFace))
 					}
 					segments := e.parseMarkup(wattsPart)
 					if len(segments) > 0 {
-						e.drawColoredTextSegments(screen, segments, wattsX, rowParamY)
+						e.drawColoredTextSegmentsWithFace(screen, segments, wattsX, rowParamY, rowFace)
 					} else {
 						labelColor := colorText
 						if !item.IsSelectable() {
 							labelColor = colorSubtle
 						}
-						e.drawColoredText(screen, wattsPart, wattsX, rowParamY, labelColor)
+						e.drawColoredTextWithFace(screen, wattsPart, wattsX, rowParamY, labelColor, rowFace)
 					}
 				}
 				rowY += lineHeight
@@ -677,14 +700,14 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		// Parse markup and draw with proper colors
 		segments := e.parseMarkup(label)
 		if len(segments) > 0 {
-			e.drawColoredTextSegments(screen, segments, x, rowParamY)
+			e.drawColoredTextSegmentsWithFace(screen, segments, x, rowParamY, rowFace)
 		} else {
 			// Fallback: use different color for non-selectable items
 			labelColor := colorText
 			if !item.IsSelectable() {
 				labelColor = colorSubtle
 			}
-			e.drawColoredText(screen, label, x, rowParamY, labelColor)
+			e.drawColoredTextWithFace(screen, label, x, rowParamY, labelColor, rowFace)
 		}
 		rowY += lineHeight
 	}
@@ -692,10 +715,14 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 
 // getMarkupWidth returns the total width in pixels of a string that may contain markup (e.g. ACTION{}, POWERED{}).
 func (e *EbitenRenderer) getMarkupWidth(s string) float64 {
+	return e.getMarkupWidthWithFace(s, e.getSansFontFace())
+}
+
+func (e *EbitenRenderer) getMarkupWidthWithFace(s string, face *text.GoTextFace) float64 {
 	segments := e.parseMarkup(s)
 	var w float64
 	for _, seg := range segments {
-		w += e.getTextWidth(seg.text)
+		w += e.getTextWidthWithFace(seg.text, face)
 	}
 	return w
 }
@@ -727,6 +754,11 @@ func (e *EbitenRenderer) getMenuLabelWidth(label string) float64 {
 // calculateMenuHeight calculates the required height for a menu based on its content
 func (e *EbitenRenderer) calculateMenuHeight(labels []string, title string, helpText string) float64 {
 	fontSize := e.getUIFontSize()
+	face := e.getSansFontFace()
+	if title == "Current Cell Chars" {
+		face = e.getMonoUIFontFace()
+		fontSize = face.Size
+	}
 	lineHeight := float64(int(fontSize) + 6)
 	paddingY := 24.0 * 2            // Top and bottom padding
 	const titleToContentSpacing = 4 // Must match drawGenericMenuOverlay
@@ -758,7 +790,6 @@ func (e *EbitenRenderer) calculateMenuHeight(labels []string, title string, help
 
 	// Add extra space at bottom to account for text baseline and ensure last item is fully visible
 	// The last menu item's text extends below its baseline, so we need a bit more room
-	face := e.getSansFontFace()
 	_, textHeight := text.Measure("Ag", face, 0)
 	// Add space for text height below baseline (textHeight includes the full glyph box)
 	height += textHeight - fontSize + 8 // Extra buffer for comfortable spacing

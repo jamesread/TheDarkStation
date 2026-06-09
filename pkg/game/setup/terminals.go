@@ -148,7 +148,9 @@ func filterValidTerminalCells(roomCells []*world.Cell, entryPoints *mapset.Set[*
 		// Don't place terminal on entry points, exit cells, or cells with other entities
 		if !avoid.Has(cell) && !cell.ExitCell && !entryPoints.Has(cell) &&
 			data.Generator == nil && data.Door == nil && data.Terminal == nil &&
-			data.Furniture == nil && data.Hazard == nil && data.HazardControl == nil {
+			data.Furniture == nil && data.Hazard == nil && data.HazardControl == nil &&
+			data.MaintenanceTerm == nil && data.RepairDevice == nil && data.RepairBlocker == nil &&
+			cell.ItemsOnFloor.Size() == 0 {
 			validCells = append(validCells, cell)
 		}
 	}

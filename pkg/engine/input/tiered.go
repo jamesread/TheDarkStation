@@ -30,6 +30,7 @@ const (
 	// Meta / UI
 	ActionHint
 	ActionQuit
+	ActionCancel
 	ActionScreenshot
 	ActionOpenMenu
 	ActionAction   // Generic "action/confirm" (e.g., Enter/A)
@@ -37,6 +38,7 @@ const (
 	ActionDevMenu  // Open developer menu (F9)
 	ActionDevMap   // Switch to developer testing map (menu / console)
 	ActionMaintPanTestMap
+	ActionPerfTestMap
 	ActionDebugMapDump // Dump revealed map to map.txt (F8)
 	ActionResetLevel   // Reset current level (F5)
 	ActionZoomIn       // Zoom in (increase font/tile size)
@@ -106,10 +108,11 @@ var bindings = map[string]Action{
 	"?":    ActionHint,
 	"hint": ActionHint,
 
-	// Quit / back
-	"quit":   ActionQuit,
-	"q":      ActionQuit,
+	// Quit is keyboard-only; controller buttons must not prompt for game exit.
 	"escape": ActionQuit,
+	// Cancel / back in menus.
+	"q":         ActionCancel,
+	"gamepad_b": ActionCancel,
 
 	// Screenshot
 	"screenshot": ActionScreenshot,
@@ -140,7 +143,6 @@ var bindings = map[string]Action{
 	// Generic action/confirm inputs (reserved, not unbindable)
 	"action": ActionAction,
 
-	"gamepad_b":     ActionQuit,     // B button / Circle
 	"gamepad_start": ActionOpenMenu, // Start button
 
 	// Maintenance menu shortcuts (consumed only while maintenance menu is open)
@@ -180,6 +182,8 @@ func ActionName(a Action) string {
 		return "Hint"
 	case ActionQuit:
 		return "Quit"
+	case ActionCancel:
+		return "Cancel"
 	case ActionScreenshot:
 		return "Screenshot"
 	case ActionOpenMenu:
@@ -231,7 +235,7 @@ func SetSingleBinding(action Action, code string) {
 		if isReservedBindingCode(c) {
 			continue
 		}
-		if a == ActionAction || a == ActionInteract {
+		if a == ActionAction || a == ActionInteract || a == ActionCancel {
 			continue
 		}
 		if a == action && sameBindingDevice(c, code) {

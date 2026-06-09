@@ -16,6 +16,14 @@ type DeveloperDebugRenderer interface {
 	ToggleShowPlayerPosition() bool
 }
 
+// WindowModeRenderer is implemented by renderers that can switch between
+// windowed and borderless fullscreen display modes.
+type WindowModeRenderer interface {
+	SetFullscreen(on bool)
+	IsFullscreen() bool
+	ToggleFullscreen() bool
+}
+
 // SetDrawMapAreaBorder enables or disables the red map viewport border overlay.
 func SetDrawMapAreaBorder(on bool) {
 	if dr, ok := Current.(DeveloperDebugRenderer); ok {
@@ -104,6 +112,29 @@ func ShowPlayerPositionEnabled() bool {
 func ToggleShowPlayerPosition() bool {
 	if dr, ok := Current.(DeveloperDebugRenderer); ok {
 		return dr.ToggleShowPlayerPosition()
+	}
+	return false
+}
+
+// SetFullscreen switches the active renderer between windowed and borderless fullscreen.
+func SetFullscreen(on bool) {
+	if wr, ok := Current.(WindowModeRenderer); ok {
+		wr.SetFullscreen(on)
+	}
+}
+
+// IsFullscreen reports whether the active renderer is in fullscreen mode.
+func IsFullscreen() bool {
+	if wr, ok := Current.(WindowModeRenderer); ok {
+		return wr.IsFullscreen()
+	}
+	return false
+}
+
+// ToggleFullscreen flips the active renderer fullscreen state and returns the new state.
+func ToggleFullscreen() bool {
+	if wr, ok := Current.(WindowModeRenderer); ok {
+		return wr.ToggleFullscreen()
 	}
 	return false
 }

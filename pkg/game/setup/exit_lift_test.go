@@ -64,3 +64,32 @@ func TestExitCellHasLivePower_manualEgress(t *testing.T) {
 		t.Fatal("powered via manual egress with no hazards should be ready")
 	}
 }
+
+func TestExitLiftState_lockedByIncompleteRepairs(t *testing.T) {
+	g := state.NewGame()
+	grid := world.NewGrid(1, 2)
+	grid.MarkAsRoomWithName(0, 0, "Start", "")
+	grid.MarkAsRoomWithName(0, 1, "Lift", "")
+	grid.BuildAllCellConnections()
+	grid.SetStartCellAt(0, 0)
+	grid.SetExitCellAt(0, 1)
+	g.Grid = grid
+	gen := entities.NewGenerator("G", 1)
+	gen.InsertBatteriesAndStart(1)
+	gameworld.GetGameData(grid.GetCell(0, 0)).Generator = gen
+	g.AddGenerator(gen)
+	g.RoomDoorsPowered["Start"] = true
+	g.RoomDoorsPowered["Lift"] = true
+	PropagateRoomPowerOnlineFromGenerators(g)
+	g.RepairObjectives = []*entities.RepairObjective{
+		entities.NewRepairObjective("pump", entities.RepairWastePump, "Pump Room", 0, 0),
+	}
+
+	if got := ExitLiftState(g); got != state.ExitLiftLockedIncomplete {
+		t.Fatalf("incomplete repair: ExitLiftState = %v, want LockedIncomplete", got)
+	}
+	g.RepairObjectives[0].Complete()
+	if got := ExitLiftState(g); got != state.ExitLiftReady {
+		t.Fatalf("complete repair: ExitLiftState = %v, want Ready", got)
+	}
+}

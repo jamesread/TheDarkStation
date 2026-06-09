@@ -46,7 +46,9 @@ func PlaceMaintenanceTerminals(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 			if !avoid.Has(cell) && !cell.ExitCell &&
 				data.Generator == nil && data.Door == nil && data.Terminal == nil &&
 				data.Puzzle == nil && data.Furniture == nil && data.Hazard == nil &&
-				data.HazardControl == nil && data.MaintenanceTerm == nil {
+				data.HazardControl == nil && data.MaintenanceTerm == nil &&
+				data.RepairDevice == nil && data.RepairBlocker == nil &&
+				cell.ItemsOnFloor.Size() == 0 {
 
 				// Check if cell is against a wall (has a non-room neighbor)
 				isWallCell := false
@@ -100,7 +102,9 @@ func PlaceMaintenanceTerminals(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 				if !avoid.Has(cell) && !cell.ExitCell &&
 					data.Generator == nil && data.Door == nil && data.Terminal == nil &&
 					data.Puzzle == nil && data.Furniture == nil && data.Hazard == nil &&
-					data.HazardControl == nil && data.MaintenanceTerm == nil {
+					data.HazardControl == nil && data.MaintenanceTerm == nil &&
+					data.RepairDevice == nil && data.RepairBlocker == nil &&
+					cell.ItemsOnFloor.Size() == 0 {
 					validCells = append(validCells, cell)
 				}
 			}

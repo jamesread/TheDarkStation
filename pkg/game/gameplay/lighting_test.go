@@ -2,8 +2,10 @@ package gameplay
 
 import (
 	"testing"
+	"time"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/devtools"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
@@ -171,5 +173,19 @@ func TestUpdateLightingExploration_RecalculatesPowerStateBeforeApplyingLighting(
 	data := gameworld.GetGameData(cell)
 	if !data.LightsOn || !data.Lighted {
 		t.Error("expected room cell to be lit while lighting system is disabled")
+	}
+}
+
+func TestUpdateLightingExploration_entitiesGeneratorsPerfMapCompletesQuickly(t *testing.T) {
+	g := state.NewGame()
+	devtools.SwitchToPerfMap(g, "entities_generators")
+	if len(g.Generators) == 0 {
+		t.Fatal("perf map should register generators for realistic power simulation")
+	}
+
+	start := time.Now()
+	UpdateLightingExploration(g)
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("UpdateLightingExploration took %v, want under 2s on dense generator perf map", elapsed)
 	}
 }

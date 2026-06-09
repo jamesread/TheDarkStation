@@ -148,29 +148,14 @@ func cellsReachableFromGeneratorSeed(g *state.Game, seed *world.Cell) *mapset.Se
 	if g == nil || g.Grid == nil || seed == nil || !isConductivePowerSeed(g, seed) {
 		return &empty
 	}
-	genRoom := seed.Name
+	local := localCellsFromPoweredGeneratorSeed(g, seed)
 	visited := mapset.New[*world.Cell]()
-	queue := []*world.Cell{seed}
-	visited.Put(seed)
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		for _, n := range cur.GetNeighbors() {
-			if n == nil || !n.Room || visited.Has(n) {
-				continue
-			}
-			if !CanTraverseCellForLocalGeneratorFeed(g, n) {
-				continue
-			}
-			if genRoom != "" && genRoom != "Corridor" && n.Name != genRoom {
-				continue
-			}
-			visited.Put(n)
-			queue = append(queue, n)
+	var queue []*world.Cell
+	local.Each(func(c *world.Cell) {
+		if c == nil {
+			return
 		}
-	}
-	queue = nil
-	visited.Each(func(c *world.Cell) {
+		visited.Put(c)
 		queue = append(queue, c)
 	})
 	for len(queue) > 0 {
@@ -200,24 +185,55 @@ func cellsReachableViaArmedRoutingFromSeedDoors(g *state.Game, seed *world.Cell,
 	if g == nil || seed == nil || !seed.Room {
 		return &empty
 	}
-	visited := mapset.New[*world.Cell]()
+	globalSeen := mapset.New[*world.Cell]()
+	return floodArmedRoutingComponentDoors(g, seed, doorsPowered, &globalSeen)
+}
+
+// armedGridComponentsFromSeeds returns disjoint armed-routing components that contain at least
+// one seed. Uses one flood fill per component instead of one full-grid BFS per seed.
+func armedGridComponentsFromSeeds(g *state.Game, seeds []*world.Cell, doorsPowered map[string]bool) []*mapset.Set[*world.Cell] {
+	if g == nil || g.Grid == nil || len(seeds) == 0 {
+		return nil
+	}
+	globalSeen := mapset.New[*world.Cell]()
+	components := make([]*mapset.Set[*world.Cell], 0, len(seeds))
+	for _, seed := range seeds {
+		if seed == nil || globalSeen.Has(seed) {
+			continue
+		}
+		component := floodArmedRoutingComponentDoors(g, seed, doorsPowered, &globalSeen)
+		if component.Size() > 0 {
+			components = append(components, component)
+		}
+	}
+	return components
+}
+
+func floodArmedRoutingComponentDoors(g *state.Game, seed *world.Cell, doorsPowered map[string]bool, globalSeen *mapset.Set[*world.Cell]) *mapset.Set[*world.Cell] {
+	empty := mapset.New[*world.Cell]()
+	if g == nil || seed == nil || !seed.Room || globalSeen == nil {
+		return &empty
+	}
+	component := mapset.New[*world.Cell]()
 	queue := []*world.Cell{seed}
-	visited.Put(seed)
+	component.Put(seed)
+	globalSeen.Put(seed)
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
 		for _, n := range cur.GetNeighbors() {
-			if n == nil || !n.Room || visited.Has(n) {
+			if n == nil || !n.Room || globalSeen.Has(n) {
 				continue
 			}
 			if !CanTraverseCellForPowerGridArmDoors(g, n, doorsPowered) {
 				continue
 			}
-			visited.Put(n)
+			globalSeen.Put(n)
+			component.Put(n)
 			queue = append(queue, n)
 		}
 	}
-	return &visited
+	return &component
 }
 
 func generatorCellsOnGrid(g *state.Game) []*world.Cell {
@@ -236,70 +252,6 @@ func generatorCellsOnGrid(g *state.Game) []*world.Cell {
 	return seeds
 }
 
-func cellSetsIntersect(a, b *mapset.Set[*world.Cell]) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	found := false
-	a.Each(func(c *world.Cell) {
-		if found || c == nil {
-			return
-		}
-		if b.Has(c) {
-			found = true
-		}
-	})
-	return found
-}
-
-func mergeIntersectingCellSets(sets []*mapset.Set[*world.Cell]) []*mapset.Set[*world.Cell] {
-	if len(sets) == 0 {
-		return nil
-	}
-	parent := make([]int, len(sets))
-	for i := range parent {
-		parent[i] = i
-	}
-	var find func(int) int
-	find = func(i int) int {
-		if parent[i] != i {
-			parent[i] = find(parent[i])
-		}
-		return parent[i]
-	}
-	union := func(a, b int) {
-		ra, rb := find(a), find(b)
-		if ra != rb {
-			parent[rb] = ra
-		}
-	}
-	for i := 0; i < len(sets); i++ {
-		for j := i + 1; j < len(sets); j++ {
-			if cellSetsIntersect(sets[i], sets[j]) {
-				union(i, j)
-			}
-		}
-	}
-	byRoot := make(map[int]*mapset.Set[*world.Cell])
-	for i, set := range sets {
-		root := find(i)
-		if byRoot[root] == nil {
-			s := mapset.New[*world.Cell]()
-			byRoot[root] = &s
-		}
-		set.Each(func(c *world.Cell) {
-			if c != nil {
-				byRoot[root].Put(c)
-			}
-		})
-	}
-	merged := make([]*mapset.Set[*world.Cell], 0, len(byRoot))
-	for _, set := range byRoot {
-		merged = append(merged, set)
-	}
-	return merged
-}
-
 // armedGridComponentsFromGenerators returns disjoint armed routing grids fed by powered generators.
 func armedGridComponentsFromGenerators(g *state.Game) []*mapset.Set[*world.Cell] {
 	if g == nil || g.Grid == nil {
@@ -315,15 +267,19 @@ func armedGridComponentsFromGenerators(g *state.Game) []*mapset.Set[*world.Cell]
 	if len(seeds) == 0 {
 		return nil
 	}
-	sets := make([]*mapset.Set[*world.Cell], 0, len(seeds))
-	for _, seed := range seeds {
-		sets = append(sets, cellsReachableViaArmedRoutingFromSeed(g, seed))
-	}
-	return mergeIntersectingCellSets(sets)
+	return armedGridComponentsFromSeeds(g, seeds, nil)
 }
 
 func armedGridComponentsForBalance(g *state.Game, doorsPowered map[string]bool) []*mapset.Set[*world.Cell] {
-	return armedGridComponentsFromGeneratorLocations(g, doorsPowered)
+	if doorsPowered != nil {
+		return armedGridComponentsFromGeneratorLocations(g, doorsPowered)
+	}
+	if cached, ok := g.CachedArmedBalanceComponents(); ok {
+		return cached
+	}
+	components := armedGridComponentsFromGeneratorLocations(g, nil)
+	g.StoreArmedBalanceComponentsCache(components)
+	return components
 }
 
 func armedGridComponentsFromGeneratorLocations(g *state.Game, doorsPowered map[string]bool) []*mapset.Set[*world.Cell] {
@@ -334,11 +290,7 @@ func armedGridComponentsFromGeneratorLocations(g *state.Game, doorsPowered map[s
 	if len(seeds) == 0 {
 		return nil
 	}
-	sets := make([]*mapset.Set[*world.Cell], 0, len(seeds))
-	for _, seed := range seeds {
-		sets = append(sets, cellsReachableViaArmedRoutingFromSeedDoors(g, seed, doorsPowered))
-	}
-	return mergeIntersectingCellSets(sets)
+	return armedGridComponentsFromSeeds(g, seeds, doorsPowered)
 }
 
 // ArmedGridForRoom returns the armed routing grid containing roomName, if any.
@@ -380,8 +332,8 @@ func ArmedGridSupply(g *state.Game, grid *mapset.Set[*world.Cell]) int {
 		return 0
 	}
 	total := 0
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if cell == nil || !grid.Has(cell) {
+	grid.Each(func(cell *world.Cell) {
+		if cell == nil {
 			return
 		}
 		gen := gameworld.GetGameData(cell).Generator
@@ -424,16 +376,96 @@ func CellsReachableFromPoweredGenerators(g *state.Game) *mapset.Set[*world.Cell]
 	return &union
 }
 
+func localCellsFromPoweredGeneratorSeed(g *state.Game, seed *world.Cell) *mapset.Set[*world.Cell] {
+	empty := mapset.New[*world.Cell]()
+	if g == nil || seed == nil || !seed.Room || !isConductivePowerSeed(g, seed) {
+		return &empty
+	}
+	genRoom := seed.Name
+	visited := mapset.New[*world.Cell]()
+	queue := []*world.Cell{seed}
+	visited.Put(seed)
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, n := range cur.GetNeighbors() {
+			if n == nil || !n.Room || visited.Has(n) {
+				continue
+			}
+			if !CanTraverseCellForLocalGeneratorFeed(g, n) {
+				continue
+			}
+			if genRoom != "" && genRoom != "Corridor" && n.Name != genRoom {
+				continue
+			}
+			visited.Put(n)
+			queue = append(queue, n)
+		}
+	}
+	return &visited
+}
+
 func computeCellsReachableFromPoweredGenerators(g *state.Game) mapset.Set[*world.Cell] {
 	union := mapset.New[*world.Cell]()
+	if g == nil || g.Grid == nil {
+		return union
+	}
+	var seeds []*world.Cell
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil || !cell.Room || !isConductivePowerSeed(g, cell) {
 			return
 		}
-		cellsReachableFromGeneratorSeed(g, cell).Each(func(c *world.Cell) {
-			union.Put(c)
-		})
+		seeds = append(seeds, cell)
 	})
+	if len(seeds) == 0 {
+		return union
+	}
+
+	roomExpanded := make(map[string]bool)
+	var armedFrontier []*world.Cell
+	for _, seed := range seeds {
+		genRoom := seed.Name
+		if genRoom != "" && genRoom != "Corridor" {
+			if roomExpanded[genRoom] {
+				union.Put(seed)
+				continue
+			}
+			roomExpanded[genRoom] = true
+			localCellsFromPoweredGeneratorSeed(g, seed).Each(func(c *world.Cell) {
+				if c == nil {
+					return
+				}
+				union.Put(c)
+				armedFrontier = append(armedFrontier, c)
+			})
+			continue
+		}
+		union.Put(seed)
+		armedFrontier = append(armedFrontier, seed)
+	}
+
+	visited := mapset.New[*world.Cell]()
+	for _, c := range armedFrontier {
+		if c != nil {
+			visited.Put(c)
+		}
+	}
+	queue := append([]*world.Cell(nil), armedFrontier...)
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		for _, n := range cur.GetNeighbors() {
+			if n == nil || !n.Room || visited.Has(n) {
+				continue
+			}
+			if !CanTraverseCellForPowerGridArm(g, n) {
+				continue
+			}
+			visited.Put(n)
+			union.Put(n)
+			queue = append(queue, n)
+		}
+	}
 	return union
 }
 
@@ -691,21 +723,11 @@ func RoomsOnConductiveGeneratorGrid(g *state.Game) map[string]bool {
 	if g == nil || g.Grid == nil {
 		return rooms
 	}
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if cell == nil || !cell.Room {
+	CellsReachableFromPoweredGenerators(g).Each(func(c *world.Cell) {
+		if c == nil || c.Name == "" || c.Name == "Corridor" {
 			return
 		}
-		gen := gameworld.GetGameData(cell).Generator
-		if gen == nil || !gen.IsPowered() {
-			return
-		}
-		grid := ConductiveGridFromSeed(g, cell)
-		grid.Each(func(c *world.Cell) {
-			if c == nil || c.Name == "" || c.Name == "Corridor" {
-				return
-			}
-			rooms[c.Name] = true
-		})
+		rooms[c.Name] = true
 	})
 	return rooms
 }
@@ -839,7 +861,7 @@ func powerMaintTerminalsInGrid(g *state.Game, grid *mapset.Set[*world.Cell]) int
 			return
 		}
 		mt := gameworld.GetGameData(c).MaintenanceTerm
-		if mt == nil || mt.Powered {
+		if mt == nil || mt.Powered || mt.Disabled {
 			return
 		}
 		mt.Powered = true
@@ -947,19 +969,8 @@ func ApplyGridConductivePower(g *state.Game) int {
 		return 0
 	}
 	UnpowerTerminalsOffGeneratorGrid(g)
-	var seeds []*world.Cell
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if cell == nil || !cell.Room || !isGeneratorPowerSeed(g, cell) {
-			return
-		}
-		seeds = append(seeds, cell)
-	})
-	total := 0
-	for _, seed := range seeds {
-		grid := ConductiveGridFromSeed(g, seed)
-		total += powerMaintTerminalsInGrid(g, grid)
-	}
-	return total
+	live := CellsReachableFromPoweredGenerators(g)
+	return powerMaintTerminalsInGrid(g, live)
 }
 
 // RestoreTerminalsInRooms powers unpowered maintenance terminals in the given rooms.
@@ -975,6 +986,7 @@ func RestoreTerminalsInRooms(g *state.Game, roomSet map[string]bool) (restored i
 		if data.MaintenanceTerm == nil || data.MaintenanceTerm.Powered {
 			return
 		}
+		data.MaintenanceTerm.Disabled = false
 		data.MaintenanceTerm.Powered = true
 		restored++
 	})

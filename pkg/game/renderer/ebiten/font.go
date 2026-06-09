@@ -92,4 +92,8 @@ func (e *EbitenRenderer) invalidateFontCache() {
 	e.cachedSansBoldFace = nil
 	e.cachedSansBoldTitleFace = nil
 	e.cachedMonoUIFace = nil
+	e.monoGlyphMetrics = make(map[string]glyphMetrics)
+	e.monoGlyphMetricsSize = 0
+	e.roomLabelTextWidth = make(map[string]float64)
+	e.roomLabelTextWidthSize = 0
 }

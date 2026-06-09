@@ -13,8 +13,9 @@ type MainMenuAction int
 
 const (
 	MainMenuActionGenerate MainMenuAction = iota
-	MainMenuActionDebug
 	MainMenuActionBindings
+	MainMenuActionVideo
+	MainMenuActionPerfMap
 	MainMenuActionQuit
 )
 
@@ -39,10 +40,10 @@ func (m *MainMenuItem) GetHelpText() string {
 	switch m.Action {
 	case MainMenuActionGenerate:
 		return "Start a new game on Deck 1"
-	case MainMenuActionDebug:
-		return "Open the developer testing map"
 	case MainMenuActionBindings:
 		return "Configure keyboard and gamepad bindings"
+	case MainMenuActionVideo:
+		return "Configure display settings"
 	case MainMenuActionQuit:
 		return "Exit the game"
 	default:
@@ -52,8 +53,9 @@ func (m *MainMenuItem) GetHelpText() string {
 
 // MainMenuHandler handles the main menu.
 type MainMenuHandler struct {
-	selectedAction MainMenuAction
-	shouldQuit     bool
+	selectedAction  MainMenuAction
+	perfMapScenario string
+	shouldQuit      bool
 }
 
 // NewMainMenuHandler creates a new main menu handler.
@@ -88,8 +90,8 @@ func (h *MainMenuHandler) OnActivate(item MenuItem, index int) (shouldClose bool
 			h.shouldQuit = true
 			return true, ""
 		}
-		// For Bindings, close menu so bindings menu can run, then caller will loop back
-		// For Generate and Debug, close menu and let caller handle the action
+		// For submenus, close menu so caller can run them, then loop back.
+		// For Generate, close menu and let caller start the game.
 		return true, ""
 	}
 	return false, ""
@@ -102,6 +104,18 @@ func (h *MainMenuHandler) HandleQuitShortcut(g *state.Game) (closeMenu bool) {
 		return true
 	}
 	return false
+}
+
+// HandleCancelShortcut ignores cancel on the title screen; only Escape may prompt to exit.
+func (h *MainMenuHandler) HandleCancelShortcut(g *state.Game) (closeMenu bool) {
+	return false
+}
+
+// HandlePerfMapShortcut lets developer console perfmap commands start from the title screen.
+func (h *MainMenuHandler) HandlePerfMapShortcut(g *state.Game, scenario string) (closeMenu bool) {
+	h.selectedAction = MainMenuActionPerfMap
+	h.perfMapScenario = scenario
+	return true
 }
 
 // OnExit is called when the menu is exited.
@@ -119,6 +133,11 @@ func (h *MainMenuHandler) GetSelectedAction() MainMenuAction {
 	return h.selectedAction
 }
 
+// GetPerfMapScenario returns the console-requested perf map scenario, if any.
+func (h *MainMenuHandler) GetPerfMapScenario() string {
+	return h.perfMapScenario
+}
+
 // ShouldQuit returns true if the user selected Quit.
 func (h *MainMenuHandler) ShouldQuit() bool {
 	return h.shouldQuit
@@ -128,8 +147,8 @@ func (h *MainMenuHandler) ShouldQuit() bool {
 func (h *MainMenuHandler) GetMenuItems() []MenuItem {
 	return []MenuItem{
 		&MainMenuItem{Label: "Generate", Action: MainMenuActionGenerate},
-		&MainMenuItem{Label: "Debug", Action: MainMenuActionDebug},
 		&MainMenuItem{Label: "Bindings", Action: MainMenuActionBindings},
+		&MainMenuItem{Label: "Video", Action: MainMenuActionVideo},
 		&MainMenuItem{Label: "Quit", Action: MainMenuActionQuit},
 	}
 }

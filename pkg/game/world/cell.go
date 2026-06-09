@@ -18,6 +18,8 @@ type GameCellData struct {
 	Hazard          *entities.Hazard              // Environmental hazard in this cell (if any)
 	HazardControl   *entities.HazardControl       // Hazard control panel in this cell (if any)
 	MaintenanceTerm *entities.MaintenanceTerminal // Maintenance terminal in this cell (if any)
+	RepairDevice    *entities.RepairObjective     // Deck repair device in this cell (if any)
+	RepairBlocker   *entities.RepairObjective     // Repair-gated blocker in this cell (if any)
 	LightsOn        bool                          // Whether lights are on in this cell
 	Lighted         bool                          // Whether this cell has been lit (stays explored)
 	// EnvPlaqueMsgID is an optional gettext msgid for diegetic corridor signage (Story 5.1).
@@ -168,6 +170,33 @@ func HasUnsolvedPuzzle(cell *world.Cell) bool {
 func HasMaintenanceTerminal(cell *world.Cell) bool {
 	data := GetGameData(cell)
 	return data.MaintenanceTerm != nil
+}
+
+// HasRepairDevice returns true if this cell contains a repair objective device.
+func HasRepairDevice(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	return data.RepairDevice != nil
+}
+
+// HasIncompleteRepairDevice returns true for a repair device that still needs attention.
+func HasIncompleteRepairDevice(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	return data.RepairDevice != nil && !data.RepairDevice.IsComplete()
+}
+
+// HasRepairBlocker returns true if this cell contains a repair-gated blocker.
+func HasRepairBlocker(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	return data.RepairBlocker != nil
+}
+
+// HasBlockingRepairBlocker returns true if the repair-gated blocker is still impassable.
+func HasBlockingRepairBlocker(cell *world.Cell) bool {
+	if cell == nil {
+		return false
+	}
+	data := GetGameData(cell)
+	return data.RepairBlocker != nil && data.RepairBlocker.BlockerBlocksCell(cell.Row, cell.Col)
 }
 
 // AreLightsOn returns true if lights are on in this cell

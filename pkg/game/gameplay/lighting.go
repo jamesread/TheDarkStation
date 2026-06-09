@@ -16,12 +16,12 @@ func UpdateLightingExploration(g *state.Game) {
 	if g.Grid == nil || g.CurrentCell == nil {
 		return
 	}
-
 	nowMs := time.Now().UnixMilli()
 	if len(g.Generators) > 0 {
 		setup.AdvancePowerPropagation(g, nowMs)
 	}
 	setup.AdvanceRoomPowerOff(g, nowMs)
+	setup.AdvanceGeneratorShutdown(g, nowMs)
 
 	totalConsumption := g.CalculatePowerConsumption()
 	g.PowerConsumption = totalConsumption

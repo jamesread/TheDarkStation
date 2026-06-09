@@ -352,7 +352,7 @@ func calculateConsumptionFromMaps(g *state.Game, online, cctv map[string]bool, g
 	}
 	rawConsumption := 0
 	doorRoomCounted := make(map[string]bool)
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+	accumulate := func(cell *world.Cell) {
 		if cell == nil || !cell.Room {
 			return
 		}
@@ -363,32 +363,34 @@ func calculateConsumptionFromMaps(g *state.Game, online, cctv map[string]bool, g
 				doorRoomCounted[data.Door.RoomName] = true
 			}
 		}
-		if grid != nil && !grid.Has(cell) {
-			return
-		}
 		if data.Terminal != nil && cctv[cell.Name] && online[cell.Name] {
 			rawConsumption += 10
 		}
 		if data.Puzzle != nil && data.Puzzle.IsSolved() {
 			rawConsumption += 3
 		}
-	})
+	}
+	if grid == nil {
+		g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+			accumulate(cell)
+		})
+	} else {
+		grid.Each(accumulate)
+	}
 	params := deck.DecayParamsForDeck(g.CurrentDeckID)
 	return int(float64(rawConsumption) * params.PowerCostMultiplier)
 }
 
 func roomHasCellOnGrid(g *state.Game, roomName string, grid *mapset.Set[*world.Cell]) bool {
-	if g == nil || g.Grid == nil || roomName == "" || grid == nil {
+	if g == nil || roomName == "" || grid == nil {
 		return false
 	}
 	found := false
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+	grid.Each(func(cell *world.Cell) {
 		if found || cell == nil || cell.Name != roomName {
 			return
 		}
-		if grid.Has(cell) {
-			found = true
-		}
+		found = true
 	})
 	return found
 }

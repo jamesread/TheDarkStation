@@ -639,8 +639,14 @@ func (h *MaintenanceMenuHandler) OnActivate(item MenuItem, index int) (shouldClo
 		return false, helpText // Keep menu open so user can toggle more
 	}
 	if termItem, isTerm := item.(*MaintenanceTerminalPowerMenuItem); isTerm {
-		termItem.Term.Powered = !termItem.Term.Powered
-		setup.ApplyGridConductivePower(h.g)
+		if termItem.Term.Powered {
+			termItem.Term.Powered = false
+			termItem.Term.Disabled = true
+		} else {
+			termItem.Term.Disabled = false
+			termItem.Term.Powered = true
+			setup.ApplyGridConductivePower(h.g)
+		}
 		return false, "" // Keep menu open like doors/CCTV
 	}
 	if presetItem, isPreset := item.(*RoomCircuitPresetMenuItem); isPreset {
@@ -656,6 +662,9 @@ func (h *MaintenanceMenuHandler) OnActivate(item MenuItem, index int) (shouldClo
 	}
 	if _, isRefresh := item.(*RefreshPowerGridMenuItem); isRefresh {
 		return false, h.refreshPowerGrid()
+	}
+	if shutdown, isShutdown := item.(*DelayedShutdownMenuItem); isShutdown {
+		return false, shutdown.Parent.scheduleDelayedShutdown()
 	}
 	if _, isAdv := item.(*AdvancedPowerMenuItem); isAdv {
 		_, _, doorCount, lightCount := buildRoomDevices(h.g, h.selectedRoomName, h.maintenanceTerm)

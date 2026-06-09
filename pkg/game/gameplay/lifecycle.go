@@ -19,7 +19,7 @@ import (
 	"darkstation/pkg/game/state"
 )
 
-const levelGenTotalSteps = 12
+const levelGenTotalSteps = 13
 
 // GenerateGrid creates a new grid using the default generator
 func GenerateGrid(level int) *world.Grid {
@@ -105,6 +105,7 @@ func clearLevelProgress(g *state.Game) {
 	g.HasMap = false
 	g.FoundCodes = make(map[string]bool)
 	g.Generators = make([]*entities.Generator, 0)
+	g.RepairObjectives = make([]*entities.RepairObjective, 0)
 	g.Hints = nil
 	g.PowerSupply = 0
 	g.PowerConsumption = 0
@@ -116,6 +117,9 @@ func clearLevelProgress(g *state.Game) {
 	g.ManualEgressReleased = make(map[string]bool)
 	g.PowerPropPending = nil
 	g.RoomPowerOffPending = nil
+	g.GeneratorShutdownAt = 0
+	g.GeneratorShutdownRow = -1
+	g.GeneratorShutdownCol = -1
 	g.LongUse = nil
 	g.HazardClear = nil
 	g.HazardTour = nil
@@ -145,11 +149,15 @@ func clearCrossDeckPowerState(g *state.Game) {
 	g.Batteries = 0
 	g.OwnedItems = mapset.New[*world.Item]()
 	g.Generators = make([]*entities.Generator, 0)
+	g.RepairObjectives = make([]*entities.RepairObjective, 0)
 	g.PowerSupply = 0
 	g.PowerConsumption = 0
 	g.PowerOverloadWarned = false
 	g.PowerPropPending = nil
 	g.RoomPowerOffPending = nil
+	g.GeneratorShutdownAt = 0
+	g.GeneratorShutdownRow = -1
+	g.GeneratorShutdownCol = -1
 	g.LongUse = nil
 	g.HazardClear = nil
 	g.HazardTour = nil
@@ -204,6 +212,9 @@ func setupLevel(g *state.Game, report func(string)) {
 	report("Routing maintenance")
 	levelgen.PlaceMaintenanceTerminals(g, avoid)
 
+	report("Staging repair objectives")
+	levelgen.PlaceRepairObjectives(g, avoid)
+
 	report("Ensuring reachability")
 	setup.EnsureInitProgressReachability(g)
 	setup.EnsureInteractableNavAccess(g)
@@ -226,6 +237,7 @@ func setupLevel(g *state.Game, report func(string)) {
 	setup.EnsureInitialPowerBalance(g)
 
 	report("Finalizing deck")
+	setup.EnsureKeycardReachability(g)
 	MoveCell(g, g.Grid.StartCell())
 }
 

@@ -61,6 +61,9 @@ func logInteractDebugSnapshot(g *state.Game, phase string) {
 		if gameworld.HasMaintenanceTerminal(cell) {
 			tags = append(tags, "maint")
 		}
+		if gameworld.HasRepairDevice(cell) {
+			tags = append(tags, "repair")
+		}
 		log.Printf("[Interact] %s: neighbor %s: (%d,%d) name=%q flags=[%s]", phase, dirs[i], cell.Row, cell.Col, cell.Name, strings.Join(tags, ","))
 	}
 }
@@ -79,6 +82,7 @@ func countAdjacentInteractionCandidates(g *state.Game, neighbors []*world.Cell) 
 			gameworld.HasUnsolvedPuzzle(cell) ||
 			gameworld.HasInactiveHazardControl(cell) ||
 			gameworld.HasPowerRelay(cell) ||
+			gameworld.HasIncompleteRepairDevice(cell) ||
 			gameworld.HasMaintenanceTerminal(cell) ||
 			(cell.ExitCell && setup.ExitLiftState(g) == state.ExitLiftLockedIncomplete) {
 			n++
@@ -177,7 +181,7 @@ func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLa
 		}
 	}
 
-	// Pass 3: furniture, terminals, puzzles, hazard controls, maintenance
+	// Pass 3: furniture, terminals, puzzles, hazard controls, repairs, maintenance
 	for _, cell := range neighbors {
 		if skipCell(cell) {
 			continue
@@ -230,6 +234,16 @@ func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLa
 				g.LastInteractedCol = cell.Col
 				g.InteractionsCount++
 				log.Printf("[Interact] handled: power relay at (%d,%d)", cell.Row, cell.Col)
+				return true
+			}
+		}
+		if gameworld.HasIncompleteRepairDevice(cell) {
+			if CheckAdjacentRepairAtCell(g, cell) {
+				FaceTowardAdjacentCell(g, cell)
+				g.LastInteractedRow = cell.Row
+				g.LastInteractedCol = cell.Col
+				g.InteractionsCount++
+				log.Printf("[Interact] handled: repair at (%d,%d)", cell.Row, cell.Col)
 				return true
 			}
 		}

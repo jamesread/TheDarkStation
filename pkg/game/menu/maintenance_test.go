@@ -328,6 +328,45 @@ func TestRefreshPowerGrid_NoUnpoweredShowsMessage(t *testing.T) {
 	}
 }
 
+func TestDelayedShutdownMenuItem_schedulesGeneratorShutdown(t *testing.T) {
+	g, termCell := makeMenuTestGame(t)
+	term := gameworld.GetGameData(termCell).MaintenanceTerm
+	h := NewMaintenanceMenuHandler(g, termCell, term)
+	item := &DelayedShutdownMenuItem{Parent: h}
+
+	if !item.IsSelectable() {
+		t.Fatal("delayed shutdown should be selectable when a generator is powered")
+	}
+	_, helpText := h.OnActivate(item, 0)
+	if !strings.Contains(helpText, "Delayed shutdown armed") {
+		t.Fatalf("helpText = %q", helpText)
+	}
+	pending, _, row, col := setup.GeneratorShutdownPending(g, setup.PowerNowMs())
+	if !pending {
+		t.Fatal("expected generator shutdown countdown")
+	}
+	if row != termCell.Row || col != termCell.Col {
+		t.Fatalf("countdown cell = (%d,%d), want (%d,%d)", row, col, termCell.Row, termCell.Col)
+	}
+	if item.IsSelectable() {
+		t.Fatal("delayed shutdown should not be selectable while already pending")
+	}
+}
+
+func TestMaintenanceTerminalPowerMenuItem_toggleIsImmediate(t *testing.T) {
+	g, termCell := makeMenuTestGame(t)
+	term := gameworld.GetGameData(termCell).MaintenanceTerm
+	h := NewMaintenanceMenuHandler(g, termCell, term)
+
+	h.OnActivate(&MaintenanceTerminalPowerMenuItem{G: g, Term: term}, 0)
+	if term.Powered {
+		t.Fatal("maintenance terminal should turn off immediately")
+	}
+	if setup.RoomPowerOffScheduled(g, "RoomA") {
+		t.Fatal("terminal toggle should not schedule the old room shutdown timer")
+	}
+}
+
 func TestRefreshPowerGrid_PowersOwnRoomUnpoweredTerminal(t *testing.T) {
 	// RoomA has 2 terminals: one powered (we're using it), one unpowered.
 	// Refresh should power the other terminal in own room.

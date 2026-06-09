@@ -2,6 +2,7 @@ package gameplay
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -28,6 +29,7 @@ const (
 	DevMenuActionTriggerOverload
 	DevMenuActionLoadSeed
 	DevMenuActionJumpToDeck
+	DevMenuActionListCurrentCellChars
 )
 
 // DevMenuItem is a selectable row in the developer menu.
@@ -61,6 +63,8 @@ func (d *DevMenuItem) GetHelpText() string {
 		return "Regenerate the current deck from a hexadecimal seed (for map reproduction)"
 	case DevMenuActionJumpToDeck:
 		return fmt.Sprintf("Jump to any deck (1–%d); loads saved state or generates if not yet visited", deck.TotalDecks)
+	case DevMenuActionListCurrentCellChars:
+		return "Show deduplicated map-cell glyphs currently visible in the viewport"
 	default:
 		return ""
 	}
@@ -187,6 +191,9 @@ func (h *DevMenuHandler) OnActivate(item gamemenu.MenuItem, index int) (bool, st
 		msg := fmt.Sprintf("Jumped to deck %d", h.g.Level)
 		renderer.ShowDeveloperMessage(msg)
 		return true, msg
+	case DevMenuActionListCurrentCellChars:
+		RunCurrentCellCharsMenu(h.g)
+		return false, ""
 	default:
 		return false, ""
 	}
@@ -200,35 +207,43 @@ func (h *DevMenuHandler) ShouldCloseOnAnyAction() bool {
 
 func mapAreaBorderMenuLabel() string {
 	if renderer.DrawMapAreaBorderEnabled() {
-		return "Map area border: ON"
+		return devToggleMenuLabel("Map area border", true)
 	}
-	return "Map area border: OFF"
+	return devToggleMenuLabel("Map area border", false)
 }
 
 func fovRaysMenuLabel() string {
 	if renderer.DrawFOVRaysEnabled() {
-		return "FOV ray lines: ON"
+		return devToggleMenuLabel("FOV ray lines", true)
 	}
-	return "FOV ray lines: OFF"
+	return devToggleMenuLabel("FOV ray lines", false)
 }
 
 func fpsDisplayMenuLabel() string {
 	if renderer.ShowFPSCounterEnabled() {
-		return "FPS display: ON"
+		return devToggleMenuLabel("FPS display", true)
 	}
-	return "FPS display: OFF"
+	return devToggleMenuLabel("FPS display", false)
 }
 
 func playerPositionMenuLabel() string {
 	if renderer.ShowPlayerPositionEnabled() {
-		return "Player position: ON"
+		return devToggleMenuLabel("Player position", true)
 	}
-	return "Player position: OFF"
+	return devToggleMenuLabel("Player position", false)
+}
+
+func devToggleMenuLabel(label string, on bool) string {
+	value := "UNPOWERED{OFF}"
+	if on {
+		value = "POWERED{ON}"
+	}
+	return label + "\t" + value
 }
 
 func levelSeedMenuLabel(g *state.Game) string {
 	if g != nil && g.LevelSeed != 0 {
-		return fmt.Sprintf("Load level seed (%s)", levelseed.Format(g.LevelSeed))
+		return fmt.Sprintf("Load level seed\tACTION{%s}", levelseed.Format(g.LevelSeed))
 	}
 	return "Load level seed"
 }
@@ -236,22 +251,23 @@ func levelSeedMenuLabel(g *state.Game) string {
 func zoomMenuLabel() string {
 	tileSize := renderer.GetTileSize()
 	rows, cols := renderer.GetViewportSize()
-	return fmt.Sprintf("Zoom: %dpx (%d×%d tiles)", tileSize, cols, rows)
+	return fmt.Sprintf("Zoom\tSUBTLE{%dpx (%d×%d tiles)}", tileSize, cols, rows)
 }
 
 func (h *DevMenuHandler) GetMenuItems() []gamemenu.MenuItem {
 	return []gamemenu.MenuItem{
 		&gamemenu.InfoMenuItem{Label: zoomMenuLabel()},
 		&gamemenu.InfoMenuItem{Label: ""},
-		&DevMenuItem{Label: "Dump map", Action: DevMenuActionDumpMap, G: h.g},
-		&DevMenuItem{Label: "Developer test map", Action: DevMenuActionDevTestMap, G: h.g},
+		&DevMenuItem{Label: "Dump map\tSUBTLE{map.txt}", Action: DevMenuActionDumpMap, G: h.g},
+		&DevMenuItem{Label: "list current cell chars", Action: DevMenuActionListCurrentCellChars, G: h.g},
+		&DevMenuItem{Label: "Developer test map\tSUBTLE{load}", Action: DevMenuActionDevTestMap, G: h.g},
 		&DevMenuItem{Label: mapAreaBorderMenuLabel(), Action: DevMenuActionToggleMapAreaBorder, G: h.g},
 		&DevMenuItem{Label: fovRaysMenuLabel(), Action: DevMenuActionToggleFOVRays, G: h.g},
 		&DevMenuItem{Label: fpsDisplayMenuLabel(), Action: DevMenuActionToggleFPSDisplay, G: h.g},
 		&DevMenuItem{Label: playerPositionMenuLabel(), Action: DevMenuActionTogglePlayerPosition, G: h.g},
 		&DevMenuItem{Label: levelSeedMenuLabel(h.g), Action: DevMenuActionLoadSeed, G: h.g},
-		&DevMenuItem{Label: "Jump to deck", Action: DevMenuActionJumpToDeck, G: h.g},
-		&DevMenuItem{Label: "Trigger overload", Action: DevMenuActionTriggerOverload, G: h.g},
+		&DevMenuItem{Label: "Jump to deck\tSUBTLE{select}", Action: DevMenuActionJumpToDeck, G: h.g},
+		&DevMenuItem{Label: "Trigger overload\tUNPOWERED{danger}", Action: DevMenuActionTriggerOverload, G: h.g},
 		&gamemenu.CloseMenuItem{Label: "Close"},
 	}
 }
@@ -263,4 +279,81 @@ func RunDeveloperMenu(g *state.Game) {
 	}
 	handler := NewDevMenuHandler(g)
 	gamemenu.RunMenuDynamic(g, handler)
+}
+
+// CurrentCellCharsMenuHandler displays glyphs currently visible in the map viewport.
+type CurrentCellCharsMenuHandler struct {
+	g *state.Game
+}
+
+func (h *CurrentCellCharsMenuHandler) GetTitle() string {
+	return "Current Cell Chars"
+}
+
+func (h *CurrentCellCharsMenuHandler) GetInstructions(selected gamemenu.MenuItem) string {
+	return engineinput.HintPressConfirm() + " to close. " + engineinput.HintMenuCloseShort() + "."
+}
+
+func (h *CurrentCellCharsMenuHandler) OnSelect(item gamemenu.MenuItem, index int) {}
+
+func (h *CurrentCellCharsMenuHandler) OnActivate(item gamemenu.MenuItem, index int) (bool, string) {
+	if _, isClose := item.(*gamemenu.CloseMenuItem); isClose {
+		return true, ""
+	}
+	return false, ""
+}
+
+func (h *CurrentCellCharsMenuHandler) OnExit() {}
+
+func (h *CurrentCellCharsMenuHandler) ShouldCloseOnAnyAction() bool {
+	return false
+}
+
+func (h *CurrentCellCharsMenuHandler) GetMenuItems() []gamemenu.MenuItem {
+	items := []gamemenu.MenuItem{
+		&gamemenu.InfoMenuItem{Label: "Char\tHex code\tDescription"},
+		&gamemenu.InfoMenuItem{Label: ""},
+	}
+	chars := currentVisibleMapChars(h.g)
+	if len(chars) == 0 {
+		items = append(items, &gamemenu.InfoMenuItem{Label: "No visible map characters"})
+	} else {
+		for _, ch := range chars {
+			items = append(items, &gamemenu.InfoMenuItem{Label: fmt.Sprintf("%s\tSUBTLE{%s}\t%s", displayMapChar(ch.Char), ch.Hex, ch.Description)})
+		}
+	}
+	items = append(items, &gamemenu.InfoMenuItem{Label: ""}, &gamemenu.CloseMenuItem{Label: "Back"})
+	return items
+}
+
+func currentVisibleMapChars(g *state.Game) []renderer.VisibleMapChar {
+	lister, ok := renderer.Current.(renderer.VisibleMapCharLister)
+	if !ok {
+		return nil
+	}
+	chars := lister.VisibleMapChars(g)
+	sort.Slice(chars, func(i, j int) bool {
+		return chars[i].Hex < chars[j].Hex
+	})
+	return chars
+}
+
+func displayMapChar(ch string) string {
+	switch ch {
+	case " ":
+		return "<space>"
+	case "\t":
+		return "<tab>"
+	case "\n":
+		return "<newline>"
+	default:
+		return ch
+	}
+}
+
+func RunCurrentCellCharsMenu(g *state.Game) {
+	if g == nil {
+		return
+	}
+	gamemenu.RunMenuDynamic(g, &CurrentCellCharsMenuHandler{g: g})
 }

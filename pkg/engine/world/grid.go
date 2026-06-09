@@ -22,6 +22,9 @@ type Grid struct {
 
 	startCell *Cell
 	exitCell  *Cell
+
+	fovRayPlanCache map[[2]int]*fovRayPlan
+	fovRayPlanOrder [][2]int
 }
 
 // NewGrid creates a new grid with the given dimensions
@@ -200,6 +203,8 @@ func (g *Grid) Build(rows, cols int) {
 
 	g.roomMap = make(map[int]map[int]*Cell, rows)
 	g.roomDir = make(map[string]*Cell)
+	g.fovRayPlanCache = nil
+	g.fovRayPlanOrder = nil
 
 	for currentRow := 0; currentRow < rows; currentRow++ {
 		g.roomMap[currentRow] = make(map[int]*Cell)

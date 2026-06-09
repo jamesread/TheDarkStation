@@ -2,6 +2,7 @@
 package gameplay
 
 import (
+	"strings"
 	"testing"
 
 	"darkstation/pkg/engine/world"
@@ -348,6 +349,63 @@ func TestBuildGame_NoStartEgressDeadlock(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestLoadLevelFromSeed_RelocatedKeycardIsDiscoverable(t *testing.T) {
+	g := state.NewGame()
+	g.Level = 4
+	LoadLevelFromSeed(g, 0x18B512C7318DA329)
+	start := g.Grid.StartCell()
+	if start == nil {
+		t.Fatal("missing start cell")
+	}
+	reachable := setup.InitialReachableCells(g)
+	var keycardCells []*world.Cell
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil {
+			return
+		}
+		cell.ItemsOnFloor.Each(func(item *world.Item) {
+			if item != nil && strings.Contains(item.Name, "Keycard") {
+				keycardCells = append(keycardCells, cell)
+			}
+		})
+	})
+	if len(keycardCells) == 0 {
+		t.Fatal("expected at least one keycard on the deck")
+	}
+	for _, keycardCell := range keycardCells {
+		if !reachable.Has(keycardCell) {
+			t.Fatalf("keycard at row=%d col=%d is not initially reachable", keycardCell.Row, keycardCell.Col)
+		}
+		if keycardCell == start {
+			t.Fatalf("keycard should be discoverable away from the spawn tile, got row=%d col=%d",
+				keycardCell.Row, keycardCell.Col)
+		}
+		if data := gameworld.GetGameData(keycardCell); data.MaintenanceTerm != nil {
+			t.Fatalf("keycard at row=%d col=%d is covered by maintenance terminal", keycardCell.Row, keycardCell.Col)
+		}
+	}
+}
+
+func TestLoadLevelFromSeed_LargerDeckDoesNotStartWithKeycards(t *testing.T) {
+	g := state.NewGame()
+	g.Level = 6
+	LoadLevelFromSeed(g, 42)
+
+	g.OwnedItems.Each(func(item *world.Item) {
+		if item != nil && strings.Contains(item.Name, "Keycard") {
+			t.Fatalf("player should not start with keycard %q in inventory", item.Name)
+		}
+	})
+	if g.CurrentCell == nil {
+		t.Fatal("missing current cell")
+	}
+	g.CurrentCell.ItemsOnFloor.Each(func(item *world.Item) {
+		if item != nil && strings.Contains(item.Name, "Keycard") {
+			t.Fatalf("keycard %q should not start on the spawn tile", item.Name)
+		}
+	})
 }
 
 func TestBuildGame_NoInitialPowerOverload(t *testing.T) {

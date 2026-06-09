@@ -21,24 +21,18 @@ func TestApplyCircuitPreset_OffAndOn(t *testing.T) {
 	}
 
 	help := ApplyCircuitPreset(g, "RoomA", CircuitOff)
-	if !g.RoomDoorsPowered["RoomA"] || !g.RoomCCTVPowered["RoomA"] {
-		t.Fatal("OFF: circuits should stay on during shutdown delay")
+	if g.RoomDoorsPowered["RoomA"] || g.RoomCCTVPowered["RoomA"] {
+		t.Fatal("OFF: expected doors and cctv off immediately")
 	}
 	if help == "" {
 		t.Fatal("expected shutdown help text")
 	}
-
-	now := setup.PowerNowMs()
-	setup.AdvanceRoomPowerOff(g, now+setup.RoomPowerOffDelay.Milliseconds())
-	if g.RoomDoorsPowered["RoomA"] || g.RoomCCTVPowered["RoomA"] {
-		t.Fatal("OFF: expected doors and cctv off after delay")
-	}
 }
 
-func TestApplyCircuitPreset_OffCancelledByOn(t *testing.T) {
+func TestApplyCircuitPreset_OnCancelsPendingOff(t *testing.T) {
 	g, _ := makeMenuTestGame(t)
 	ApplyCircuitPreset(g, "RoomA", CircuitFull)
-	ApplyCircuitPreset(g, "RoomA", CircuitOff)
+	setup.ScheduleRoomPowerOff(g, "RoomA", setup.PowerNowMs())
 	if !setup.RoomPowerOffScheduled(g, "RoomA") {
 		t.Fatal("expected pending shutdown")
 	}
@@ -184,6 +178,9 @@ func TestMaintenanceMenuItems_controlsVsDiagnostics(t *testing.T) {
 	}
 	if !strings.Contains(controls, "Power Grid") {
 		t.Fatal("controls should include Power Grid row")
+	}
+	if !strings.Contains(controls, "Delayed shutdown") {
+		t.Fatal("controls should include Delayed shutdown row")
 	}
 	if strings.Contains(controls, "Circuit preset") {
 		t.Fatal("controls should not use old Circuit preset label")

@@ -74,8 +74,21 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 		return false, &missingItems
 	}
 
+	// Check for repair devices (blocks movement)
+	if gameworld.HasRepairDevice(r) {
+		return false, &missingItems
+	}
+
 	// Check for hazard controls / circuit breaker switches (blocks movement, like furniture)
 	if gameworld.HasHazardControl(r) {
+		return false, &missingItems
+	}
+
+	if gameworld.HasBlockingRepairBlocker(r) {
+		if logReason {
+			repair := gameworld.GetGameData(r).RepairBlocker
+			renderer.AddCallout(r.Row, r.Col, repairBlockerCallout(repair), renderer.CalloutColorHazard, 0)
+		}
 		return false, &missingItems
 	}
 
@@ -141,8 +154,15 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 						numHazards++
 					}
 				})
-				logMessage(g, "The lift requires all environmental hazards to be cleared!")
-				logMessage(g, "ACTION{%d} environmental hazard(s) remain.", numHazards)
+				repairs := g.IncompleteRepairCount()
+				if numHazards > 0 {
+					logMessage(g, "The lift requires all environmental hazards to be cleared!")
+					logMessage(g, "ACTION{%d} environmental hazard(s) remain.", numHazards)
+				}
+				if repairs > 0 {
+					logMessage(g, "The lift is locked until deck repairs are complete.")
+					logMessage(g, "ACTION{%d} repair objective(s) remain.", repairs)
+				}
 			}
 		}
 		return false, &missingItems

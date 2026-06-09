@@ -121,7 +121,30 @@ func CheckAdjacentExitLiftAtCell(g *state.Game, cell *world.Cell) bool {
 	if setup.ExitLiftState(g) != state.ExitLiftLockedIncomplete {
 		return false
 	}
-	return StartExitHazardTour(g)
+	if StartExitHazardTour(g) {
+		return true
+	}
+	if g != nil && g.IncompleteRepairCount() > 0 {
+		renderer.AddCallout(cell.Row, cell.Col, blockedLiftRepairCallout(g), renderer.CalloutColorMaintenance, 0)
+		return true
+	}
+	return false
+}
+
+func blockedLiftRepairCallout(g *state.Game) string {
+	if g == nil {
+		return "UNPOWERED{Lift locked}"
+	}
+	for _, repair := range g.RepairObjectives {
+		if repair == nil || repair.IsComplete() {
+			continue
+		}
+		if repair.IsDraining() {
+			return repairDrainCallout(repair, time.Now().UnixMilli())
+		}
+		return "UNPOWERED{Lift locked}\nNeeds: ACTION{" + repair.Name + "}\nSUBTLE{" + repair.RoomName + "}"
+	}
+	return "UNPOWERED{Lift locked}"
 }
 
 func showHazardTourCallout(g *state.Game, s *state.HazardTourSession) {

@@ -13,6 +13,8 @@ import (
 	gameworld "darkstation/pkg/game/world"
 )
 
+var floorIconCache = make(map[string]string)
+
 // getCellRenderOptions returns rendering options for a cell.
 // When forUnderfoot is true, the cell is treated as if the player were not on it (used to draw floor under the player).
 func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, snap *renderSnapshot, forUnderfoot bool) CellRenderOptions {
@@ -47,6 +49,15 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 		return CellRenderOptions{Icon: entities.GetControlIcon(data.HazardControl.Type), Color: colorSubtle, HasBackground: false}
 	}
 
+	if gameworld.HasRepairBlocker(cell) && (g.HasMap || cell.Discovered) {
+		repair := data.RepairBlocker
+		if repair != nil && repair.BlockerBlocksCell(cell.Row, cell.Col) {
+			return CellRenderOptions{Icon: IconToxicSlime, Color: colorToxicSlime, HasBackground: true, BackgroundColor: colorToxicSlimeBg}
+		}
+		// Drained cells play a pop overlay; keep the floor tile clean underneath.
+		return CellRenderOptions{Icon: "", Color: colorSubtle, HasBackground: false}
+	}
+
 	// Door (show if has map or discovered)
 	if gameworld.HasDoor(cell) && (g.HasMap || cell.Discovered) {
 		roomName := data.Door.RoomName
@@ -66,14 +77,23 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 	// Generator (show if has map or discovered)
 	if gameworld.HasGenerator(cell) && (g.HasMap || cell.Discovered) {
 		if data.Generator.IsPowered() {
-			return CellRenderOptions{Icon: IconGeneratorPowered, Color: colorGeneratorOn, HasBackground: true}
+			return CellRenderOptions{Icon: IconGeneratorPowered, Color: colorGeneratorOn, HasBackground: true, BackgroundColor: colorGeneratorFocusBg}
 		}
-		return CellRenderOptions{Icon: IconGeneratorUnpowered, Color: colorGeneratorOff, HasBackground: true}
+		return CellRenderOptions{Icon: IconGeneratorUnpowered, Color: colorGeneratorOff, HasBackground: true, BackgroundColor: colorGeneratorFocusBg}
 	}
 
 	// Maintenance Terminal (show if has map or discovered) - same visibility as other cells
 	if gameworld.HasMaintenanceTerminal(cell) && (g.HasMap || cell.Discovered) {
 		return CellRenderOptions{Icon: IconMaintenance, Color: colorMaintenance, HasBackground: true, BackgroundColor: colorMaintenanceBg}
+	}
+
+	if gameworld.HasRepairDevice(cell) && (g.HasMap || cell.Discovered) {
+		repair := data.RepairDevice
+		icon := repairIcon(repair)
+		if repair != nil && repair.IsComplete() {
+			return CellRenderOptions{Icon: icon, Color: colorSubtle, HasBackground: false}
+		}
+		return CellRenderOptions{Icon: icon, Color: colorRepair, HasBackground: true, BackgroundColor: colorRepairBg}
 	}
 
 	// CCTV Terminal (show if has map or discovered) - same orange as maintenance terminals
@@ -183,19 +203,48 @@ func hazardClearVisualAlpha(snap *renderSnapshot, cell *world.Cell) float64 {
 	return hc.VisualAlpha
 }
 
+func repairIcon(repair *entities.RepairObjective) string {
+	if repair == nil {
+		return IconRepairValve
+	}
+	switch repair.Type {
+	case entities.RepairPressureValve:
+		return IconRepairValve
+	case entities.RepairSignalCalibrator:
+		return IconRepairSignal
+	case entities.RepairPowerCoupler:
+		return IconRepairCoupler
+	case entities.RepairWastePump:
+		return IconRepairPump
+	default:
+		return IconRepairValve
+	}
+}
+
 // getFloorIcon returns the appropriate floor icon for a room
 func getFloorIcon(roomName string, visited bool) string {
+	cacheKey := "u:" + roomName
+	if visited {
+		cacheKey = "v:" + roomName
+	}
+	if icon, ok := floorIconCache[cacheKey]; ok {
+		return icon
+	}
 	for baseRoom, icons := range roomFloorIcons {
 		if strings.Contains(roomName, baseRoom) {
 			if visited {
+				floorIconCache[cacheKey] = icons[0]
 				return icons[0]
 			}
+			floorIconCache[cacheKey] = icons[1]
 			return icons[1]
 		}
 	}
 	if visited {
+		floorIconCache[cacheKey] = IconVisited
 		return IconVisited
 	}
+	floorIconCache[cacheKey] = IconUnvisited
 	return IconUnvisited
 }
 

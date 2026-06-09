@@ -2,6 +2,7 @@ package setup
 
 import (
 	"testing"
+	"time"
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
@@ -150,6 +151,61 @@ func TestCellsReachableInPowerGridOverlay_manualEgressDoor(t *testing.T) {
 	}
 	if overlay == nil || !overlay.Has(roomBCell) {
 		t.Fatal("overlay grid should extend through manually released doors")
+	}
+}
+
+func TestArmedGridComponents_denseGeneratorsCompletesQuickly(t *testing.T) {
+	g := state.NewGame()
+	grid := world.NewGrid(72, 112)
+	grid.BuildAllCellConnections()
+	g.Grid = grid
+	g.RoomDoorsPowered = make(map[string]bool)
+	g.RoomCCTVPowered = make(map[string]bool)
+	g.RoomLightsPowered = make(map[string]bool)
+	g.RoomPowerOnline = make(map[string]bool)
+
+	grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		cell.Room = true
+		cell.Name = "Perf Entity Floor"
+		gameworld.InitGameData(cell)
+		g.RoomDoorsPowered[cell.Name] = true
+		g.RoomCCTVPowered[cell.Name] = true
+		g.RoomLightsPowered[cell.Name] = true
+		g.RoomPowerOnline[cell.Name] = true
+	})
+	placed := 0
+	grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if row < 2 || col < 2 || row > grid.Rows()-3 || col > grid.Cols()-3 {
+			return
+		}
+		diag := row - col
+		if diag%3 != 0 {
+			return
+		}
+		linePos := (row + col) / 3
+		if linePos%6 == 5 {
+			return
+		}
+		gen := entities.NewGenerator("G", 1)
+		gen.InsertBatteriesAndStart(1)
+		gameworld.GetGameData(cell).Generator = gen
+		placed++
+	})
+	if placed < 1000 {
+		t.Fatalf("expected dense generator layout, got %d cells", placed)
+	}
+	g.RebuildGeneratorsFromGrid()
+
+	components := armedGridComponentsFromGeneratorLocations(g, nil)
+	if len(components) != 1 {
+		t.Fatalf("dense open floor should be one armed component, got %d", len(components))
+	}
+
+	g.InvalidateLivePowerCache()
+	start := time.Now()
+	_ = AnyArmedGridOverloaded(g)
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("AnyArmedGridOverloaded took %v, want <= 50ms on ~%d generators", elapsed, placed)
 	}
 }
 

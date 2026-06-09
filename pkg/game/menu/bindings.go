@@ -18,21 +18,12 @@ type BindingMenuItem struct {
 // GetLabel returns the display label for this binding menu item.
 func (b *BindingMenuItem) GetLabel() string {
 	name := engineinput.ActionName(b.Action)
-	byAction := engineinput.GetBindingsByAction()
-	codes := byAction[b.Action]
-	labels := make([]string, 0, len(codes))
-	for _, code := range codes {
-		labels = append(labels, engineinput.FormatBindingCode(code))
-	}
-	codeText := strings.Join(labels, ", ")
-	if codeText == "" {
-		codeText = "(unbound)"
-	}
-
+	keyboard := bindingLabelsForAction(b.Action, false)
+	gamepad := bindingLabelsForAction(b.Action, true)
 	if b.NonRebindable {
-		return fmt.Sprintf("%s: %s (fixed)", renderer.StyledSubtle(name), codeText)
+		name += " (fixed)"
 	}
-	return fmt.Sprintf("%s: %s", name, codeText)
+	return fmt.Sprintf("%s\t%s\t%s", name, keyboard, gamepad)
 }
 
 // IsSelectable returns whether this binding can be selected.
@@ -43,9 +34,29 @@ func (b *BindingMenuItem) IsSelectable() bool {
 // GetHelpText returns help text for this binding.
 func (b *BindingMenuItem) GetHelpText() string {
 	if b.NonRebindable {
-		return ""
+		return "This binding is fixed"
 	}
 	return fmt.Sprintf("Editing binding for: %s", engineinput.ActionName(b.Action))
+}
+
+// BindingHeaderItem represents a non-selectable section or column header.
+type BindingHeaderItem struct {
+	Label string
+}
+
+// GetLabel returns the display label for this header.
+func (b *BindingHeaderItem) GetLabel() string {
+	return b.Label
+}
+
+// IsSelectable returns whether this item can be selected.
+func (b *BindingHeaderItem) IsSelectable() bool {
+	return false
+}
+
+// GetHelpText returns help text for this header.
+func (b *BindingHeaderItem) GetHelpText() string {
+	return ""
 }
 
 // BackMenuItem represents a "Back" menu item for returning to the previous menu.
@@ -68,34 +79,64 @@ func (b *BackMenuItem) GetHelpText() string {
 
 // BindingsMenuHandler handles the bindings menu.
 type BindingsMenuHandler struct {
-	actions       []engineinput.Action
+	groups        []bindingGroup
 	nonRebindable map[engineinput.Action]bool
 	fromMainMenu  bool
+}
+
+type bindingGroup struct {
+	Name    string
+	Actions []engineinput.Action
 }
 
 // NewBindingsMenuHandler creates a new bindings menu handler.
 // If fromMainMenu is true, a "Back" option will be added to return to the main menu.
 func NewBindingsMenuHandler(fromMainMenu bool) *BindingsMenuHandler {
-	actions := []engineinput.Action{
-		engineinput.ActionMoveNorth,
-		engineinput.ActionMoveSouth,
-		engineinput.ActionMoveWest,
-		engineinput.ActionMoveEast,
-		engineinput.ActionHint,
-		engineinput.ActionInteract,
-		engineinput.ActionZoomIn,
-		engineinput.ActionZoomOut,
+	groups := []bindingGroup{
+		{
+			Name: "Navigation",
+			Actions: []engineinput.Action{
+				engineinput.ActionMoveNorth,
+				engineinput.ActionMoveSouth,
+				engineinput.ActionMoveWest,
+				engineinput.ActionMoveEast,
+			},
+		},
+		{
+			Name: "Interaction",
+			Actions: []engineinput.Action{
+				engineinput.ActionInteract,
+				engineinput.ActionHint,
+			},
+		},
+		{
+			Name: "View",
+			Actions: []engineinput.Action{
+				engineinput.ActionZoomIn,
+				engineinput.ActionZoomOut,
+			},
+		},
+		{
+			Name: "System",
+			Actions: []engineinput.Action{
+				engineinput.ActionOpenMenu,
+				engineinput.ActionCancel,
+				engineinput.ActionQuit,
+			},
+		},
 	}
 
 	nonRebindable := make(map[engineinput.Action]bool)
-	for _, act := range actions {
-		if isNonRebindable(act) {
-			nonRebindable[act] = true
+	for _, group := range groups {
+		for _, act := range group.Actions {
+			if isNonRebindable(act) {
+				nonRebindable[act] = true
+			}
 		}
 	}
 
 	return &BindingsMenuHandler{
-		actions:       actions,
+		groups:        groups,
 		nonRebindable: nonRebindable,
 		fromMainMenu:  fromMainMenu,
 	}
@@ -179,11 +220,16 @@ func (h *BindingsMenuHandler) ShouldCloseOnAnyAction() bool {
 
 // GetMenuItems returns the menu items for the bindings menu.
 func (h *BindingsMenuHandler) GetMenuItems() []MenuItem {
-	items := make([]MenuItem, len(h.actions))
-	for i, action := range h.actions {
-		items[i] = &BindingMenuItem{
-			Action:        action,
-			NonRebindable: h.nonRebindable[action],
+	items := []MenuItem{
+		&BindingHeaderItem{Label: "Action\tKeyboard\tController"},
+	}
+	for _, group := range h.groups {
+		items = append(items, &BindingHeaderItem{Label: fmt.Sprintf("TITLE{%s}", group.Name)})
+		for _, action := range group.Actions {
+			items = append(items, &BindingMenuItem{
+				Action:        action,
+				NonRebindable: h.nonRebindable[action],
+			})
 		}
 	}
 
@@ -199,5 +245,24 @@ func (h *BindingsMenuHandler) GetMenuItems() []MenuItem {
 func isNonRebindable(action engineinput.Action) bool {
 	return action == engineinput.ActionInteract ||
 		action == engineinput.ActionZoomIn ||
-		action == engineinput.ActionZoomOut
+		action == engineinput.ActionZoomOut ||
+		action == engineinput.ActionOpenMenu ||
+		action == engineinput.ActionCancel ||
+		action == engineinput.ActionQuit
+}
+
+func bindingLabelsForAction(action engineinput.Action, gamepad bool) string {
+	byAction := engineinput.GetBindingsByAction()
+	codes := byAction[action]
+	labels := make([]string, 0, len(codes))
+	for _, code := range codes {
+		if engineinput.IsGamepadCode(code) != gamepad {
+			continue
+		}
+		labels = append(labels, engineinput.FormatBindingCode(code))
+	}
+	if len(labels) == 0 {
+		return "SUBTLE{unbound}"
+	}
+	return strings.Join(labels, ", ")
 }

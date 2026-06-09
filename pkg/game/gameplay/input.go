@@ -16,6 +16,7 @@ import (
 	gamemenu "darkstation/pkg/game/menu"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/state"
+	gameworld "darkstation/pkg/game/world"
 )
 
 // ProcessIntent handles a high-level input intent from the tiered input system.
@@ -63,6 +64,10 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 
 	case engineinput.ActionMaintPanTestMap:
 		devtools.SwitchToMaintPanTestMap(g)
+		return
+
+	case engineinput.ActionPerfTestMap:
+		devtools.SwitchToPerfMap(g, intent.Code)
 		return
 
 	case engineinput.ActionDebugMapDump:
@@ -123,6 +128,11 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 				CheckAdjacentGeneratorAtCell(g, cell)
 			case LongUseDoorManualRelease:
 				showManualDoorReleaseCallout(g, cell)
+			case LongUseRepair:
+				if gameworld.HasRepairDevice(cell) {
+					repair := gameworld.GetGameData(cell).RepairDevice
+					renderer.AddCallout(cell.Row, cell.Col, repairDeviceCallout(g, repair, cell), renderer.CalloutColorMaintenance, 0)
+				}
 			}
 		}
 		if TryBeginLongUseOnAdjacent(g) {
@@ -153,6 +163,8 @@ func RunGameplayMenu(g *state.Game) {
 		RunBindingsMenu(g, true) // true = from menu, shows "Back" option
 		// After bindings menu closes, return to gameplay menu
 		// (User can press F10 again to reopen gameplay menu)
+	case gamemenu.GameplayMenuActionVideo:
+		RunVideoMenu(g)
 	case gamemenu.GameplayMenuActionQuitToTitle:
 		QuitToTitleMenu(g)
 	}
@@ -164,6 +176,12 @@ func RunBindingsMenu(g *state.Game, fromMainMenu bool) {
 	handler := gamemenu.NewBindingsMenuHandler(fromMainMenu)
 	items := handler.GetMenuItems()
 	gamemenu.RunMenu(g, items, handler)
+}
+
+// RunVideoMenu presents display settings.
+func RunVideoMenu(g *state.Game) {
+	handler := gamemenu.NewVideoMenuHandler()
+	gamemenu.RunMenuDynamic(g, handler)
 }
 
 // RunMaintenanceMenu shows the maintenance terminal menu with room devices and power consumption using the generic menu system.

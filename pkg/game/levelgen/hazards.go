@@ -76,13 +76,14 @@ func hazardTypesForLevel(level int) []entities.HazardType {
 
 func collectHazardCandidateCells(g *state.Game, lockedDoorCells, blocked *mapset.Set[*world.Cell]) []*world.Cell {
 	currentlyReachable := GetReachableCells(g.Grid, g.Grid.StartCell(), blocked)
+	reachableSize := currentlyReachable.Size()
 	var corridorCandidates, roomCandidates []*world.Cell
 
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if !isValidHazardHostCell(g, cell, lockedDoorCells, currentlyReachable) {
 			return
 		}
-		if !blockingCellReducesReachability(g.Grid, g.Grid.StartCell(), lockedDoorCells, blocked, cell) {
+		if !blockingCellReducesReachability(g.Grid, g.Grid.StartCell(), blocked, cell, reachableSize) {
 			return
 		}
 		if !setup.InitProgressPreserved(g, cell) {
@@ -129,14 +130,9 @@ func isValidHazardHostCell(g *state.Game, cell *world.Cell, lockedDoorCells, cur
 		data.Hazard == nil && data.HazardControl == nil
 }
 
-func blockingCellReducesReachability(grid *world.Grid, start *world.Cell, lockedDoorCells, blocked *mapset.Set[*world.Cell], cell *world.Cell) bool {
-	testBlocked := mapset.New[*world.Cell]()
-	blocked.Each(func(c *world.Cell) { testBlocked.Put(c) })
-	testBlocked.Put(cell)
-
-	before := GetReachableCells(grid, start, blocked)
-	after := GetReachableCells(grid, start, &testBlocked)
-	return after.Size() < before.Size()
+func blockingCellReducesReachability(grid *world.Grid, start *world.Cell, blocked *mapset.Set[*world.Cell], cell *world.Cell, beforeSize int) bool {
+	after := GetReachableCellsExcluding(grid, start, blocked, cell)
+	return after.Size() < beforeSize
 }
 
 func reachableWithoutCells(grid *world.Grid, start *world.Cell, blocked *mapset.Set[*world.Cell]) *mapset.Set[*world.Cell] {
@@ -224,8 +220,13 @@ func findHazardControlCell(g *state.Game, hazardCell *world.Cell, lockedDoorCell
 
 func hazardControlCandidates(g *state.Game, hazardCell *world.Cell, lockedDoorCells, reachableWithHazard, avoid *mapset.Set[*world.Cell]) []*world.Cell {
 	var preferred, fallback []*world.Cell
+	placement := setup.NewBlockingPlacementValidator(g)
+	canPlaceCache := make(map[*world.Cell]bool)
 	addCandidate := func(cell *world.Cell) {
-		if cell == nil || cell == hazardCell || avoid.Has(cell) {
+		if cell == nil {
+			return
+		}
+		if cell == hazardCell || avoid.Has(cell) {
 			return
 		}
 		data := gameworld.GetGameData(cell)
@@ -235,7 +236,12 @@ func hazardControlCandidates(g *state.Game, hazardCell *world.Cell, lockedDoorCe
 		if cell.ItemsOnFloor.Size() > 0 {
 			return
 		}
-		if !setup.CanPlaceBlockingEntity(g, cell) {
+		canPlace, ok := canPlaceCache[cell]
+		if !ok {
+			canPlace = placement.CanPlace(cell)
+			canPlaceCache[cell] = canPlace
+		}
+		if !canPlace {
 			return
 		}
 		if IsArticulationPoint(g.Grid, g.Grid.StartCell(), cell, lockedDoorCells) {

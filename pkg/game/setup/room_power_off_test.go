@@ -3,6 +3,7 @@ package setup
 import (
 	"testing"
 
+	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/state"
 )
 
@@ -43,5 +44,39 @@ func TestCancelRoomPowerOff_clearsPending(t *testing.T) {
 	CancelRoomPowerOff(g, "RoomA")
 	if pending, _ := RoomPowerOffPending(g, "RoomA", RoomPowerOffDelay.Milliseconds()); pending {
 		t.Fatal("expected no pending shutdown after cancel")
+	}
+}
+
+func TestScheduleGeneratorShutdown_delayedShutdown(t *testing.T) {
+	g := state.NewGame()
+	gen := entities.NewGenerator("G1", 1)
+	gen.InsertBatteriesAndStart(1)
+	g.Generators = []*entities.Generator{gen}
+
+	const now int64 = 2_000_000
+	ScheduleGeneratorShutdown(g, 3, 4, now)
+
+	pending, remaining, row, col := GeneratorShutdownPending(g, now)
+	if !pending {
+		t.Fatal("expected pending generator shutdown")
+	}
+	if remaining != GeneratorShutdownDelay.Milliseconds() {
+		t.Fatalf("remaining = %d, want %d", remaining, GeneratorShutdownDelay.Milliseconds())
+	}
+	if row != 3 || col != 4 {
+		t.Fatalf("countdown cell = (%d,%d), want (3,4)", row, col)
+	}
+
+	AdvanceGeneratorShutdown(g, now+GeneratorShutdownDelay.Milliseconds()-1)
+	if !gen.IsPowered() {
+		t.Fatal("generator should stay powered before delay elapses")
+	}
+
+	AdvanceGeneratorShutdown(g, now+GeneratorShutdownDelay.Milliseconds())
+	if gen.IsPowered() {
+		t.Fatal("generator should be off after delay")
+	}
+	if pending, _, _, _ := GeneratorShutdownPending(g, now+GeneratorShutdownDelay.Milliseconds()); pending {
+		t.Fatal("pending generator shutdown should be cleared")
 	}
 }

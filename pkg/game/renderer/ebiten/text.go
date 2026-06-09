@@ -18,6 +18,8 @@ import (
 // since we intentionally look up translation keys dynamically from markup.
 var dynamicGet = gotext.Get
 
+var markupRegex = regexp.MustCompile(`([A-Z][A-Z0-9_]*)\{([^}]*)\}`)
+
 // textSegment represents a segment of text with a specific color
 type textSegment struct {
 	text  string
@@ -38,17 +40,31 @@ func (e *EbitenRenderer) drawColoredCharF(screen *ebiten.Image, char string, x, 
 func (e *EbitenRenderer) drawColoredCharRotatedF(screen *ebiten.Image, char string, x, y float64, col color.Color, angleRad float64) {
 	face := e.getMonoFontFace()
 
-	w, h := text.Measure(char, face, 0)
+	metrics := e.monoGlyphMeasure(char, face)
 	centerX := x + float64(e.tileSize)/2
 	centerY := y + float64(e.tileSize)/2
 
 	op := &text.DrawOptions{}
-	op.GeoM.Translate(-w/2, -h/2)
+	op.GeoM.Translate(-metrics.w/2, -metrics.h/2)
 	op.GeoM.Rotate(angleRad)
 	op.GeoM.Translate(centerX, centerY)
 	op.ColorScale.ScaleWithColor(col)
 
 	text.Draw(screen, char, face, op)
+}
+
+func (e *EbitenRenderer) monoGlyphMeasure(char string, face *text.GoTextFace) glyphMetrics {
+	if e.monoGlyphMetrics == nil || e.monoGlyphMetricsSize != face.Size {
+		e.monoGlyphMetrics = make(map[string]glyphMetrics)
+		e.monoGlyphMetricsSize = face.Size
+	}
+	if m, ok := e.monoGlyphMetrics[char]; ok {
+		return m
+	}
+	w, h := text.Measure(char, face, 0)
+	m := glyphMetrics{w: w, h: h}
+	e.monoGlyphMetrics[char] = m
+	return m
 }
 
 // drawColoredText draws text with a specific color using sans-serif font for UI
@@ -109,8 +125,6 @@ func (e *EbitenRenderer) getTitleColorFromLine(line string) color.Color {
 // parseMarkup parses a message string with markup (ITEM{}, ROOM{}, ACTION{}, GT{}) and returns colored segments
 func (e *EbitenRenderer) parseMarkup(msg string) []textSegment {
 	var segments []textSegment
-	// Regex to match markup: FUNCTION{content} (FUNCTION can include underscores, e.g. UNPOWERED_SUBTLE)
-	markupRegex := regexp.MustCompile(`([A-Z][A-Z0-9_]*)\{([^}]*)\}`)
 
 	lastIndex := 0
 	matches := markupRegex.FindAllStringSubmatchIndex(msg, -1)

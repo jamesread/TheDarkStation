@@ -71,6 +71,19 @@ type Renderer interface {
 	GetTileSize() int
 }
 
+// VisibleMapChar describes a distinct glyph currently rendered in the map viewport.
+type VisibleMapChar struct {
+	Char        string
+	Hex         string
+	Description string
+}
+
+// VisibleMapCharLister is implemented by renderers that can report map-cell glyphs
+// for developer diagnostics.
+type VisibleMapCharLister interface {
+	VisibleMapChars(g *state.Game) []VisibleMapChar
+}
+
 // Current holds the active renderer instance
 var Current Renderer
 
@@ -149,6 +162,8 @@ func GetInput() string {
 			return "?"
 		case input.ActionQuit:
 			return "quit"
+		case input.ActionCancel:
+			return "q"
 		case input.ActionScreenshot:
 			return "screenshot"
 		case input.ActionAction:
