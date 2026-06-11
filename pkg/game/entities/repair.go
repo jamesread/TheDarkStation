@@ -45,6 +45,7 @@ type RepairObjective struct {
 	Description   string
 	PrereqIDs     []string
 	RequiresPower bool
+	SkipExitGate  bool // When true, does not block the local lift (e.g. cross-deck routing repairs)
 
 	DeviceRow int
 	DeviceCol int
@@ -98,6 +99,11 @@ func RepairDisplay(typ RepairType) (name, description string) {
 // IsComplete reports whether this objective no longer blocks progress.
 func (r *RepairObjective) IsComplete() bool {
 	return r != nil && r.Status == RepairComplete
+}
+
+// IsRoutingCoupler reports cross-deck lift routing payoff devices (SkipExitGate repairs).
+func (r *RepairObjective) IsRoutingCoupler() bool {
+	return r != nil && r.SkipExitGate
 }
 
 // IsDraining reports whether this objective is waiting on a timed drain.

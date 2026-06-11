@@ -29,6 +29,8 @@ type GameCellData struct {
 	LinkageTag string
 	// PowerRelay (power-routing Phase 3): corridor routing switch; nil on non-relay cells.
 	PowerRelay *entities.PowerRelay
+	// PendingUnlockKeycard spawns as floor loot when local exit-gating repairs complete.
+	PendingUnlockKeycard string
 }
 
 // InitGameData initializes game data for a cell if not already set

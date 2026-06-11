@@ -288,8 +288,8 @@ func TestPickUpItemsOnFloor_NonBatteryItem(t *testing.T) {
 	if g.Batteries != 0 {
 		t.Errorf("non-battery item should not increase battery count: got %d", g.Batteries)
 	}
-	if !g.OwnedItems.Has(keycard) {
-		t.Error("non-battery item should be added to OwnedItems")
+	if !g.HasRunKeycard("Keycard-A") {
+		t.Error("keycard should be added to run-wide inventory")
 	}
 }
 

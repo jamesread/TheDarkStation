@@ -7,6 +7,7 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/levelrand"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
@@ -154,7 +155,13 @@ func TestPlaceMaintenanceTerminals_DoesNotCoverFloorItems(t *testing.T) {
 	}
 }
 
-func TestPlaceRepairObjectives_placesChainAndBlocker(t *testing.T) {
+func TestPlaceRepairObjectives_slimeExitGate_placesChainAndBlocker(t *testing.T) {
+	seed := seedForExitGate(6, ExitGateSlime)
+	if seed < 0 {
+		t.Fatal("could not find seed that picks slime exit gate")
+	}
+	levelrand.Seed(seed)
+
 	g := state.NewGame()
 	g.Level = 6
 	g.CurrentDeckID = 5
@@ -235,4 +242,51 @@ func TestPlaceRepairObjectives_placesChainAndBlocker(t *testing.T) {
 	if adjacent < 2 {
 		t.Fatalf("expected at least two slime cells adjacent to exit, got %d", adjacent)
 	}
+}
+
+func TestPlaceRepairObjectives_noSlimeExitGate_omitsWastePump(t *testing.T) {
+	seed := seedForExitGate(6, ExitGateNone)
+	if seed < 0 {
+		t.Fatal("could not find seed that picks no exit gate")
+	}
+	levelrand.Seed(seed)
+
+	g := state.NewGame()
+	g.Level = 6
+	g.CurrentDeckID = 5
+	grid := world.NewGrid(5, 5)
+	for r := 0; r < 5; r++ {
+		for c := 0; c < 5; c++ {
+			roomName := string(rune('A' + r))
+			if r >= 3 && c >= 3 {
+				roomName = "Exit Approach"
+			}
+			grid.MarkAsRoomWithName(r, c, roomName, "room")
+		}
+	}
+	grid.BuildAllCellConnections()
+	grid.SetStartCellAt(0, 0)
+	grid.SetExitCellAt(4, 4)
+	g.Grid = grid
+	for r := 0; r < 5; r++ {
+		for c := 0; c < 5; c++ {
+			gameworld.InitGameData(grid.GetCell(r, c))
+		}
+	}
+
+	avoid := mapset.New[*world.Cell]()
+	avoid.Put(grid.StartCell())
+	avoid.Put(grid.ExitCell())
+	PlaceRepairObjectives(g, &avoid)
+
+	for _, repair := range g.RepairObjectives {
+		if repair.Type == entities.RepairWastePump {
+			t.Fatal("waste pump should not be placed without slime exit gate")
+		}
+	}
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell != nil && gameworld.GetGameData(cell).RepairBlocker != nil {
+			t.Fatalf("unexpected repair blocker at (%d,%d)", row, col)
+		}
+	})
 }

@@ -6,6 +6,7 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/levelgen"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
@@ -112,12 +113,25 @@ func advanceSignalCalibration(g *state.Game, repair *entities.RepairObjective, c
 		renderer.CalloutColorMaintenance, 0)
 }
 
+func OnRepairTimersAdvanced(g *state.Game) {
+	if g == nil {
+		return
+	}
+	levelgen.SpawnUnlockKeycardPayoffs(g)
+	g.MaybeSetReactorOnlineFromDeck()
+}
+
 func completeRepair(g *state.Game, repair *entities.RepairObjective, cell *world.Cell) {
 	if g == nil || repair == nil {
 		return
 	}
 	now := time.Now().UnixMilli()
 	repair.BeginTimedCompletion(now)
+	if repair.IsComplete() {
+		g.OnRoutingRepairComplete(repair.ID)
+	}
+	levelgen.SpawnUnlockKeycardPayoffs(g)
+	g.MaybeSetReactorOnlineFromDeck()
 	if repair.IsDraining() {
 		renderer.AddCallout(cell.Row, cell.Col,
 			fmt.Sprintf("TITLE{%s repaired}\nSUBTLE{Waste pumps draining toxic slime...}", repair.Name),

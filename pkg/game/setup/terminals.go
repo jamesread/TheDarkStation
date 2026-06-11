@@ -43,7 +43,7 @@ func placeCCTVTerminals(g *state.Game, avoid *mapset.Set[*world.Cell], roomEntri
 	roomNames := collectUniqueRoomNames(g.Grid)
 
 	for i := 0; i < numTerminals; i++ {
-		terminalRoom := findRoom(g, g.Grid.StartCell(), avoid)
+		terminalRoom := findRoom(g, PlayerEntryCell(g), avoid)
 		if terminalRoom == nil || len(roomNames) == 0 {
 			continue
 		}

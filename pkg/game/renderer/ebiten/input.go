@@ -122,6 +122,9 @@ func (e *EbitenRenderer) advanceTimedGameState(nowMs int64) {
 	// game loop path; doing it from Ebiten's Update thread can race power
 	// consumption calculations. Repair timers only update repair objective state.
 	if g.AdvanceRepairTimers(nowMs) {
+		if e.repairTimerAdvancer != nil {
+			e.repairTimerAdvancer(g)
+		}
 		e.RenderFrame(g)
 	}
 }

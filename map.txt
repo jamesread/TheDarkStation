@@ -1,0 +1,122 @@
+=== MAP DUMP DEBUG (level layout, routing, entities) ===
+
+--- Metadata ---
+level: 1
+level_seed: 18B81A8AAF3E786C
+grid_rows: 10
+grid_cols: 22
+coordinate_system: x,y (0-based)
+llm_coordinate_note: |
+  Positions in this dump use x (column, east/right) and y (row, south/down).
+  Go source maps these to Cell.Col==x and Cell.Row==y; Grid.GetCell(row, col) is GetCell(y, x).
+  ASCII map rows are y values (top line is y=0); characters within a row increase x left-to-right.
+player: x:12 y:5
+start: x:4 y:4
+start_room: "Overgrown Docking Seal"
+player_room: "Lift Shaft"
+has_map: false
+power_supply: 100
+power_consumption: 10
+power_available: 90
+batteries_in_inventory: 0
+
+--- Legend (cell symbols) ---
+. = walkable empty  # = unrevealed or wall  D = door  G = generator  T = CCTV terminal  P = puzzle terminal  M = maintenance terminal  F = furniture  ! = blocking hazard  C = hazard control  i = items on floor  @ = player  E = exit
+
+--- Map (revealed cells only; unrevealed = #) ---
+######################
+######################
+##F...##..F..#########
+##....##.....#########
+##F...DD..E..D.F..####
+##....##....↓#....####
+##..M.##MG...#F...####
+###############...####
+######################
+######################
+
+--- Map (fully revealed; full layout) ---
+######################
+######################
+##F...##..F..#########
+##....##.....#########
+##F...DD..E..D.F..####
+##....##....↓#....####
+##..M.##MG...#F...####
+##############M...####
+######################
+######################
+
+--- Solvability analysis ---
+initial_reachable_cells: 25
+initial_reachable_rooms: ["Lift Shaft"]
+start_room_doors_powered: true
+start_maint_terminal_powered: true
+powered_maint_terminals: 1
+maint_bootstrap_ok: true
+exit_reachable_at_init: true
+blocked_egress_doors: (none — start pocket opens to all adjacent rooms)
+solvability_warnings: (none)
+
+--- Room adjacency ---
+  room: "Lift Shaft" adjacent: ["Lift Shaft" "Overgrown Docking Seal" "Overgrown Transit Airlock"] doors_powered: true
+  room: "Overgrown Docking Seal" adjacent: ["Lift Shaft" "Overgrown Docking Seal"] doors_powered: true
+  room: "Overgrown Transit Airlock" adjacent: ["Lift Shaft" "Overgrown Transit Airlock"] doors_powered: true
+
+--- Maintenance terminal control scope ---
+  x:4 y:6 room: "Overgrown Docking Seal" powered: false selectable_rooms: ["Lift Shaft" "Overgrown Docking Seal"]
+  x:8 y:6 room: "Lift Shaft" powered: true selectable_rooms: ["Lift Shaft" "Overgrown Docking Seal" "Overgrown Transit Airlock"]
+  x:14 y:7 room: "Overgrown Transit Airlock" powered: false selectable_rooms: ["Lift Shaft" "Overgrown Transit Airlock"]
+
+--- Player adjacent movement ---
+  north: x:12 y:4 room: "Lift Shaft" passable
+  south: x:12 y:6 room: "Lift Shaft" passable
+  east: x:13 y:5 room: "5:13" blocked: wall
+  west: x:11 y:5 room: "Lift Shaft" passable
+
+--- Entities (all with x,y coordinates and state) ---
+Doors:
+  x:6 y:4 room_name: "Overgrown Docking Seal" locked: false keycard: "Overgrown Docking Seal Keycard" doors_powered: true init_passable: true block_reason: ""
+  x:7 y:4 room_name: "Lift Shaft" locked: false keycard: "Lift Shaft Keycard" doors_powered: true init_passable: true block_reason: ""
+  x:13 y:4 room_name: "Overgrown Transit Airlock" locked: false keycard: "Overgrown Transit Airlock Keycard" doors_powered: true init_passable: true block_reason: ""
+
+Generators:
+  x:9 y:6 name: "Generator #1" batteries_inserted: 1 batteries_required: 1 powered: true
+
+CCTV Terminals:
+
+Puzzle Terminals:
+
+Maintenance Terminals:
+  x:4 y:6 name: "Maintenance Terminal - Overgrown Docking Seal" room_name: "Overgrown Docking Seal" used: false powered: false on_power_grid: false (in_start_room: true)
+  x:8 y:6 name: "Maintenance Terminal - Lift Shaft" room_name: "Lift Shaft" used: false powered: true on_power_grid: true (in_start_room: false)
+  x:14 y:7 name: "Maintenance Terminal - Overgrown Transit Airlock" room_name: "Overgrown Transit Airlock" used: false powered: false on_power_grid: false (in_start_room: false)
+  (powered terminals: 1; maint_bootstrap_ok: true)
+
+Furniture:
+  x:2 y:2 name: "Pressure-equalisation panel" checked: false has_contained_item: false contained_item_name: "" description: "Manual bypass sealed — electronic latch offline."
+  x:10 y:2 name: "Pressure-equalisation panel" checked: true has_contained_item: false contained_item_name: "" description: "Manual bypass sealed — electronic latch offline."
+  x:2 y:4 name: "Atmospheric scrubber manifold" checked: false has_contained_item: false contained_item_name: "" description: "Stamped VOID — seal integrity not monitored."
+  x:15 y:4 name: "EVA Suit Rack" checked: false has_contained_item: false contained_item_name: "" description: "Emergency spacesuits, some missing."
+  x:14 y:6 name: "Pressure Door" checked: false has_contained_item: false contained_item_name: "" description: "Heavy bulkhead, seals intact."
+
+Hazards:
+
+Hazard Controls:
+
+Items on floor:
+
+Player inventory (owned items):
+  (none)
+
+Room power state:
+  room: "Corridor" doors_powered: false power_online: false cctv_powered: false lights_powered: true
+  room: "Lift Shaft" doors_powered: true power_online: true cctv_powered: true lights_powered: true
+  room: "Lift Shaft Far" doors_powered: true power_online: false cctv_powered: true lights_powered: true
+  room: "Overgrown Docking Seal" doors_powered: true power_online: false cctv_powered: true lights_powered: true
+  room: "Overgrown Transit Airlock" doors_powered: true power_online: false cctv_powered: false lights_powered: true
+
+Exit cell:
+  x:10 y:4
+
+=== END MAP DUMP ===

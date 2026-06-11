@@ -2,10 +2,16 @@
 package setup
 
 import (
+	"sort"
+
 	"github.com/zyedidia/generic/mapset"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/generator"
+	"darkstation/pkg/game/levelrand"
 	"darkstation/pkg/game/state"
+	gameworld "darkstation/pkg/game/world"
 )
 
 // SetupConfig holds configuration for level setup
@@ -19,8 +25,9 @@ type SetupConfig struct {
 func SetupLevel(g *state.Game) *SetupConfig {
 	// Cells to avoid placing items on
 	avoid := mapset.New[*world.Cell]()
-	avoid.Put(g.Grid.StartCell())
-	avoid.Put(g.Grid.ExitCell())
+	if entry := PlayerEntryCell(g); entry != nil {
+		avoid.Put(entry)
+	}
 
 	// Track which cells have locked doors for reachability calculations
 	lockedDoorCells := mapset.New[*world.Cell]()
@@ -62,6 +69,67 @@ func PlaceLockedRooms(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorC
 // PlaceGenerators places generators (exported for use in main)
 func PlaceGenerators(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 	placeGenerators(g, avoid)
+	EnsurePoweredSpawnGenerator(g, avoid)
+}
+
+// EnsurePoweredSpawnGenerator guarantees a powered spawn generator exists after placement.
+func EnsurePoweredSpawnGenerator(g *state.Game, avoid *mapset.Set[*world.Cell]) {
+	if g == nil || g.Grid == nil {
+		return
+	}
+	for _, gen := range g.Generators {
+		if gen != nil && gen.IsPowered() {
+			return
+		}
+	}
+	var cell *world.Cell
+	if start := g.Grid.StartCell(); start != nil && start.Name != "" {
+		cell = findGeneratorCellInRoom(g, start.Name, start, avoid, true)
+	}
+	if cell == nil {
+		cell = findGeneratorCellAnywhere(g, avoid, true)
+	}
+	if cell == nil {
+		return
+	}
+	batteriesRequired := 1
+	if g.Level >= 3 {
+		batteriesRequired = 1 + levelrand.Intn(3)
+	}
+	gen := entities.NewGenerator("Generator #1", batteriesRequired)
+	gen.InsertBatteriesAndStart(batteriesRequired)
+	gameworld.GetGameData(cell).Generator = gen
+	g.AddGenerator(gen)
+	if avoid != nil {
+		avoid.Put(cell)
+	}
+	g.UpdatePowerSupply()
+	SchedulePowerPropagation(g, PowerNowMs())
+}
+
+func findGeneratorCellAnywhere(g *state.Game, avoid *mapset.Set[*world.Cell], relaxed bool) *world.Cell {
+	if g == nil || g.Grid == nil {
+		return nil
+	}
+	rooms := map[string]struct{}{}
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell != nil && cell.Room && cell.Name != "" && cell.Name != "Corridor" &&
+			cell.Name != generator.ShaftRoomName {
+			rooms[cell.Name] = struct{}{}
+		}
+	})
+	names := make([]string, 0, len(rooms))
+	for name := range rooms {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	routingOrigin := PlayerEntryCell(g)
+	for _, name := range names {
+		if cell := findGeneratorCellInRoom(g, name, routingOrigin, avoid, relaxed); cell != nil {
+			return cell
+		}
+	}
+	return nil
 }
 
 // PlaceBatteries places batteries (exported for use in main)

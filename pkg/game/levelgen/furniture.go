@@ -7,7 +7,7 @@ import (
 	"github.com/zyedidia/generic/mapset"
 
 	"darkstation/pkg/engine/world"
-	"darkstation/pkg/game/deck"
+	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
@@ -30,7 +30,7 @@ func PlaceFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		cells := roomCells[roomName]
 		templates := entities.GetAllFurnitureForRoom(roomName)
 		if len(templates) == 0 {
-			templates = entities.FurnitureFallbackForFunctionalLayer(deck.FunctionalType(g.Level))
+			templates = entities.FurnitureFallbackForTheme(g.ThemeForCurrentDeck())
 		}
 		if len(templates) == 0 {
 			continue
@@ -118,6 +118,52 @@ func PlaceFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 			hideItemsInFurniture(g, cells, placedFurniture, roomName)
 		}
 	}
+
+	if !gridHasFurniture(g) {
+		placeFallbackFurniture(g, avoid)
+	}
+}
+
+func gridHasFurniture(g *state.Game) bool {
+	if g == nil || g.Grid == nil {
+		return false
+	}
+	found := false
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if found || cell == nil {
+			return
+		}
+		if gameworld.GetGameData(cell).Furniture != nil {
+			found = true
+		}
+	})
+	return found
+}
+
+func placeFallbackFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
+	templates := entities.FurnitureFallbackForTheme(g.ThemeForCurrentDeck())
+	if len(templates) == 0 {
+		return
+	}
+	template := templates[0]
+	var fallback *world.Cell
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if fallback != nil || cell == nil || !cell.Room || cell.Name == "" || cell.Name == "Corridor" ||
+			cell.Name == generator.ShaftRoomName || cell.ExitCell {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.Generator != nil || data.Door != nil || data.Terminal != nil ||
+			data.Furniture != nil || data.Hazard != nil || data.HazardControl != nil ||
+			data.MaintenanceTerm != nil {
+			return
+		}
+		fallback = cell
+	})
+	if fallback == nil {
+		return
+	}
+	gameworld.GetGameData(fallback).Furniture = entities.NewFurniture(template.Name, template.Description, template.Icon)
 }
 
 // hideItemsInFurniture moves items from floor cells into furniture with a chance

@@ -116,6 +116,7 @@ var roomFloorIcons = map[string][2]string{
 	"Mess Hall":       {"○", "●"},
 	"Airlock":         {"╳", "╳"}, // Special areas
 	"Corridor":        {"░", "░"}, // Corridors
+	"Lift Shaft":      {"▦", "▦"}, // Core lift shaft hub (mesh grating)
 }
 
 // Tile size constraints

@@ -422,8 +422,8 @@ func EnsureInitialPowerBalance(g *state.Game) {
 	}
 
 	startRoom := ""
-	if start := g.Grid.StartCell(); start != nil {
-		startRoom = start.Name
+	if entry := PlayerEntryCell(g); entry != nil {
+		startRoom = entry.Name
 	}
 
 	for pass := 0; pass < initialPowerBalanceMaxPasses && AnyArmedGridOverloaded(g); pass++ {

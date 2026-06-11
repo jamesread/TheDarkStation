@@ -21,8 +21,8 @@ func TestExitReachableWhenCompletable_blockedExitCorner(t *testing.T) {
 			grid.MarkAsRoomWithName(r, c, room, "desc")
 		}
 	}
-	grid.SetStartCellAt(5, 4)
-	grid.SetExitCellAt(3, 13)
+	grid.SetExitCellAt(5, 4)
+	grid.SetStartCellAt(3, 13)
 	grid.BuildAllCellConnections()
 	grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell != nil {
@@ -32,21 +32,19 @@ func TestExitReachableWhenCompletable_blockedExitCorner(t *testing.T) {
 	g := state.NewGame()
 	g.Grid = grid
 
-	fWest := grid.GetCell(3, 12)
-	mSouth := grid.GetCell(4, 13)
-	gameworld.GetGameData(fWest).Furniture = entities.NewFurniture("Crew bunk rack", "desc", "F")
-	gameworld.GetGameData(mSouth).MaintenanceTerm = entities.NewMaintenanceTerminal("MT", "Derelict Cryogenic Habitation Block")
+	exitCell := grid.ExitCell()
+	gameworld.GetGameData(exitCell).Furniture = entities.NewFurniture("Blocked lift pad", "desc", "F")
 
 	if ExitReachableWhenCompletable(g, nil) {
-		t.Fatal("expected exit unreachable when corner pocket is blocked")
+		t.Fatal("expected exit unreachable when lift cell is blocked")
 	}
-	if CanPlaceBlockingEntity(g, fWest) {
-		t.Error("furniture west of exit should fail placement check")
+	if CanPlaceBlockingEntity(g, exitCell) {
+		t.Error("blocker on exit cell should fail placement check")
 	}
 
 	EnsureExitReachability(g)
 	if !ExitReachableWhenCompletable(g, nil) {
-		t.Fatal("EnsureExitReachability should clear blockers near exit")
+		t.Fatal("EnsureExitReachability should clear blockers on exit")
 	}
 }
 
@@ -57,8 +55,8 @@ func TestCanPlaceBlockingEntity_allowsNonExitPathBlock(t *testing.T) {
 			grid.MarkAsRoomWithName(r, c, "R", "desc")
 		}
 	}
-	grid.SetStartCellAt(2, 0)
 	grid.SetExitCellAt(2, 4)
+	grid.SetStartCellAt(2, 0)
 	grid.BuildAllCellConnections()
 	grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell != nil {

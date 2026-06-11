@@ -3,8 +3,10 @@ package setup
 
 import (
 	"darkstation/pkg/game/deck"
+	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/levelrand"
 	"fmt"
+	"sort"
 
 	"github.com/zyedidia/generic/mapset"
 
@@ -20,16 +22,20 @@ func placeGenerators(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 	placeSpawnGenerator(g, avoid)
 }
 
-// placeSpawnGenerator places the generator in the spawn room
+// placeSpawnGenerator places the bootstrap generator in the lift shaft, preferring the cell
+// east of the south-west corner so the corner can host the bootstrap maintenance terminal.
 func placeSpawnGenerator(g *state.Game, avoid *mapset.Set[*world.Cell]) {
-	spawnCell := g.Grid.StartCell()
-	spawnRoomName := spawnCell.Name
-
-	// Find a valid cell in the spawn room for the generator (avoid chokepoints)
-	spawnRoomCell := findValidGeneratorCell(g, spawnRoomName, spawnCell, avoid)
+	spawnRoomCell := liftShaftGeneratorCell(g, avoid)
+	if spawnRoomCell == nil {
+		spawnRoomCell = liftShaftBootstrapCell(g, avoid, nil)
+	}
+	if spawnRoomCell == nil {
+		spawnRoomCell = legacySpawnGeneratorCell(g, avoid)
+	}
 	if spawnRoomCell == nil {
 		return
 	}
+	spawnRoomName := spawnRoomCell.Name
 
 	// Level 1-2: 1 battery, Level 3+: 1-3 batteries
 	batteriesRequired := 1
@@ -49,6 +55,31 @@ func placeSpawnGenerator(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 	SchedulePowerPropagation(g, PowerNowMs())
 
 	g.AddHint("A generator is in " + renderer.StyledCell(spawnRoomName))
+}
+
+func legacySpawnGeneratorCell(g *state.Game, avoid *mapset.Set[*world.Cell]) *world.Cell {
+	spawnCell := g.Grid.StartCell()
+	if spawnCell == nil {
+		return nil
+	}
+	spawnRoomName := spawnCell.Name
+	routingOrigin := PlayerEntryCell(g)
+	spawnRoomCell := findGeneratorCellInRoom(g, spawnRoomName, routingOrigin, avoid, false)
+	if spawnRoomCell == nil {
+		spawnRoomCell = findGeneratorCellInRoom(g, spawnRoomName, routingOrigin, avoid, true)
+	}
+	if spawnRoomCell == nil {
+		g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+			if spawnRoomCell != nil || cell == nil || cell.Name != spawnRoomName || cell.ExitCell {
+				return
+			}
+			if gameworld.GetGameData(cell).Generator != nil {
+				return
+			}
+			spawnRoomCell = cell
+		})
+	}
+	return spawnRoomCell
 }
 
 // findValidGeneratorCell finds a valid cell for generator placement
@@ -105,6 +136,39 @@ func PlaceAdditionalGenerators(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 	}
 	placeAdditionalGenerators(g, avoid)
 	g.RebuildGeneratorsFromGrid()
+	if exit != nil {
+		exit.Locked = false
+	}
+}
+
+func findGeneratorCellInRoom(g *state.Game, roomName string, startCell *world.Cell, avoid *mapset.Set[*world.Cell], relaxed bool) *world.Cell {
+	if g == nil || g.Grid == nil || roomName == "" {
+		return nil
+	}
+	if !relaxed {
+		return findValidGeneratorCell(g, roomName, startCell, avoid)
+	}
+	var candidates []*world.Cell
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room || cell.Name != roomName || cell.ExitCell {
+			return
+		}
+		if avoid != nil && avoid.Has(cell) {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.Generator != nil || data.Door != nil || data.Terminal != nil ||
+			data.Puzzle != nil || data.Furniture != nil || data.Hazard != nil ||
+			data.HazardControl != nil || data.MaintenanceTerm != nil {
+			return
+		}
+		candidates = append(candidates, cell)
+	})
+	if len(candidates) == 0 {
+		return nil
+	}
+	SortCellsByPosition(candidates)
+	return candidates[0]
 }
 
 // calculateBatteriesForGenerator calculates battery requirements for a generator
@@ -125,18 +189,52 @@ func calculateBatteriesForGenerator(level int) int {
 
 func placeAdditionalGenerators(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 	numAdditionalGenerators := numAdditionalGeneratorsForLevel(g.Level)
-	start := g.Grid.StartCell()
+	start := PlayerEntryCell(g)
 	for i := 0; i < numAdditionalGenerators; i++ {
 		batteriesRequired := calculateBatteriesForGenerator(g.Level)
 		gen := entities.NewGenerator(fmt.Sprintf("Generator #%d", i+2), batteriesRequired)
 		if placeAdditionalGenerator(g, start, avoid, gen) {
 			continue
 		}
-		// Last resort: allow rooms that already have a generator (single-room final deck).
 		if placeAdditionalGeneratorInAnyRoom(g, start, avoid, gen, true) {
 			continue
 		}
+		placeGeneratorInFallbackCell(g, avoid, gen)
 	}
+}
+
+func placeGeneratorInFallbackCell(g *state.Game, avoid *mapset.Set[*world.Cell], gen *entities.Generator) {
+	if g == nil || g.Grid == nil || gen == nil {
+		return
+	}
+	var candidates []*world.Cell
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room || cell.Name == "" || cell.Name == "Corridor" ||
+			cell.Name == generator.ShaftRoomName || cell.ExitCell {
+			return
+		}
+		if avoid != nil && avoid.Has(cell) {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.Generator != nil || data.Door != nil || data.Terminal != nil ||
+			data.Puzzle != nil || data.Furniture != nil || data.Hazard != nil ||
+			data.HazardControl != nil || data.MaintenanceTerm != nil {
+			return
+		}
+		candidates = append(candidates, cell)
+	})
+	if len(candidates) == 0 {
+		return
+	}
+	SortCellsByPosition(candidates)
+	cell := candidates[0]
+	gameworld.GetGameData(cell).Generator = gen
+	g.AddGenerator(gen)
+	if avoid != nil {
+		avoid.Put(cell)
+	}
+	g.AddHint("A generator is in " + renderer.StyledCell(cell.Name))
 }
 
 // numAdditionalGeneratorsForLevel returns how many unpowered generators to place beyond the spawn gen.
@@ -220,8 +318,14 @@ func generatorRoomCandidates(g *state.Game, start *world.Cell, avoid *mapset.Set
 		return nil
 	}
 	minDistance := 1 + g.Level
+	names := make([]string, 0, len(byRoom))
+	for name := range byRoom {
+		names = append(names, name)
+	}
+	sort.Strings(names)
 	var all, far []*world.Cell
-	for _, cell := range byRoom {
+	for _, name := range names {
+		cell := byRoom[name]
 		all = append(all, cell)
 		if start != nil && manhattanDistance(start, cell) >= minDistance {
 			far = append(far, cell)

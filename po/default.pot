@@ -131,6 +131,9 @@ msgstr	"%s (blocked)"
 msgid	"DECK_NUMBER"
 msgstr	"Deck %d"
 
+msgid	"DECK_HEADER"
+msgstr	"Deck %d — %s"
+
 msgid	"BINDINGS"
 msgstr	"Bindings"
 

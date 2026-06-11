@@ -761,6 +761,8 @@ func glyphDescription(ch string) string {
 		return "unvisited command floor"
 	case "░":
 		return "corridor floor"
+	case "▦":
+		return "lift shaft floor"
 	default:
 		return "map cell glyph"
 	}
@@ -1567,6 +1569,16 @@ func (e *EbitenRenderer) getDirectionText(g *state.Game, cell *world.Cell, direc
 	return direction
 }
 
+func deckHeaderText(snap *renderSnapshot) string {
+	if snap == nil {
+		return ""
+	}
+	if snap.deckTitle != "" {
+		return fmt.Sprintf(gotext.Get("DECK_HEADER"), snap.level, snap.deckTitle)
+	}
+	return fmt.Sprintf(gotext.Get("DECK_NUMBER"), snap.level)
+}
+
 // drawStatusBarFromSnapshot draws deck/objectives plus inventory and generator lines using snapshot data.
 // Caller supplies anchor x,y so panel/outlining aligns with layout (window top-left in gameplay).
 func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, x, y, width, height int) {
@@ -1616,9 +1628,8 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 
 	// Calculate the maximum width needed for all text lines
 	maxTextWidth := 0.0
-	// Deck number text - uses title face (larger), measure with that
-	deckTextFormat := gotext.Get("DECK_NUMBER")
-	deckText := fmt.Sprintf(deckTextFormat, snap.level)
+	// Deck header - uses title face (larger), measure with that
+	deckText := deckHeaderText(snap)
 	deckWidth := e.getTextWidthWithFace(deckText, titleFace)
 	if deckWidth > maxTextWidth {
 		maxTextWidth = deckWidth
@@ -1723,10 +1734,9 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 
 	currentY := firstLineY
 
-	// Deck number (always first line, uses title font)
+	// Deck header (always first line, uses title font)
 	if hasDeckNumber {
-		deckTextFormat := gotext.Get("DECK_NUMBER")
-		deckText := fmt.Sprintf(deckTextFormat, snap.level)
+		deckText := deckHeaderText(snap)
 		e.drawColoredTextWithFace(screen, deckText, x, currentY, colorAction, e.getSansBoldTitleFontFace())
 		currentY += firstLineHeight
 		// Add a small gap between deck number and objectives

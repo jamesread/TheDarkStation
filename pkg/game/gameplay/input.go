@@ -139,6 +139,11 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 			log.Printf("[Interact] ProcessIntent: started long-use hold interaction")
 			return
 		}
+		if g.CurrentCell != nil && g.CurrentCell.ExitCell {
+			if TryUseLift(g) {
+				return
+			}
+		}
 		interacted := CheckAdjacentInteractables(g)
 		log.Printf("[Interact] ProcessIntent: CheckAdjacentInteractables returned %v", interacted)
 		if !interacted {
@@ -158,6 +163,8 @@ func RunGameplayMenu(g *state.Game) {
 
 	// Handle menu selection
 	switch handler.GetSelectedAction() {
+	case gamemenu.GameplayMenuActionInventory:
+		gamemenu.RunInventoryMenu(g)
 	case gamemenu.GameplayMenuActionBindings:
 		// Open bindings menu (from gameplay menu, so show "Back" option)
 		RunBindingsMenu(g, true) // true = from menu, shows "Back" option

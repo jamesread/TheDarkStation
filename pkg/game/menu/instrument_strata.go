@@ -14,25 +14,6 @@ import (
 	"github.com/leonelquinteros/gotext"
 )
 
-func functionalAbbrev(t deck.Type) string {
-	switch t {
-	case deck.Habitation:
-		return "HAB"
-	case deck.Research:
-		return "RES"
-	case deck.Logistics:
-		return "LOG"
-	case deck.PowerDistribution:
-		return "PWR"
-	case deck.EmergencySystems:
-		return "EMG"
-	case deck.CoreInfrastructure:
-		return "COR"
-	default:
-		return "SYS"
-	}
-}
-
 func roomNameSlug(room string, maxRunes int) string {
 	var b []rune
 	for _, r := range room {
@@ -141,8 +122,8 @@ func maintenanceInstrumentMenuLines(g *state.Game, selectedRoom string) []string
 	}
 
 	seed := strataSeed(g, selectedRoom)
-	ft := deck.FunctionalType(g.Level)
-	abbr := functionalAbbrev(ft)
+	theme := g.ThemeForCurrentDeck()
+	abbr := deck.ThemeAbbrev(theme)
 	slug := roomNameSlug(selectedRoom, 4)
 
 	t1 := seed ^ 0xa5a5a5a5

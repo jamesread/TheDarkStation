@@ -139,6 +139,10 @@ func EnsureInteractableNavAccess(g *state.Game) {
 		if target == nil {
 			target = furnitureCells[0]
 		}
-		gameworld.GetGameData(target).Furniture = nil
+		data := gameworld.GetGameData(target)
+		if data.Furniture != nil && data.Furniture.ContainedItem != nil {
+			target.ItemsOnFloor.Put(data.Furniture.ContainedItem)
+		}
+		data.Furniture = nil
 	}
 }

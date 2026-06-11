@@ -41,39 +41,18 @@ const (
 )
 
 // Generate creates a new grid using BSP algorithm.
-// Deck identity (functional type) drives thematic room naming; final deck uses minimal layout.
-func (g *BSPGenerator) Generate(level int) *world.Grid {
+// Deck theme drives room naming; final deck uses minimal layout.
+func (g *BSPGenerator) Generate(level int, theme deck.Theme) *world.Grid {
 	grid := &world.Grid{}
 
 	// Reset room counter for this level
 	roomCounter = 0
 
-	// Thematic naming from deck functional type (GDD §3.1)
-	ft := deck.FunctionalType(level)
-	roomBases, roomAdjectives := deck.RoomNamesForType(ft)
+	roomBases, roomAdjectives := deck.RoomNamesForTheme(theme)
 
-	// Final deck: minimal layout — smaller grid, fewer rooms (GDD §10.2)
+	// Grid size: airlock, bull-curve middle decks, minimal final deck.
 	isFinal := deck.IsFinalDeck(level)
-	var rows, cols int
-	if isFinal {
-		rows = 8 + 2
-		cols = 14 + 2
-	} else if level == 1 {
-		rows = 8 + 2
-		cols = 16 + 2
-	} else {
-		baseRows := 12 + 2
-		baseCols := 24 + 2
-		rows = baseRows + ((level - 1) * 4)
-		cols = baseCols + ((level - 1) * 6)
-	}
-
-	if rows > 60 {
-		rows = 60
-	}
-	if cols > 100 {
-		cols = 100
-	}
+	rows, cols := deckGridDimensions(level)
 
 	grid.Build(rows, cols)
 
@@ -83,6 +62,10 @@ func (g *BSPGenerator) Generate(level int) *world.Grid {
 		width:  cols - 2,
 		height: rows - 2,
 	}
+
+	// Core lift shaft: reserve a centered leaf (shaft + wall ring) before random splits,
+	// so BSP rooms never overlap it and corridors connect it like any other room.
+	reserveShaftLeaf(root, rows, cols, level)
 
 	// More splits at higher levels for more rooms; final deck keeps fewer splits (not zero).
 	minSize := minNodeSize - (level / 3)
@@ -97,33 +80,22 @@ func (g *BSPGenerator) Generate(level int) *world.Grid {
 	usedRoomNames := make(map[string]bool)
 	createRooms(root, roomBases, roomAdjectives, usedRoomNames)
 
-	// Carve rooms into the grid
+	// Carve rooms into the grid (the shaft is carved as a regular room)
 	carveRooms(grid, root)
 
 	// Connect rooms with corridors
 	connectRooms(grid, root)
 
+	// Mark the shaft center as the exit/lift cell.
+	MarkShaftExit(grid, level)
+
 	// Build cell connections first so we can calculate path distances
 	grid.BuildAllCellConnections()
 
-	// Set start and exit cells using actual path distance
+	// Start outside the shaft when possible; exit is in the shaft center.
 	rooms := collectRooms(root)
 	if len(rooms) >= 1 {
-		// Start in a random room
-		startRoom := rooms[levelrand.Intn(len(rooms))]
-		startRow := startRoom.y + startRoom.height/2
-		startCol := startRoom.x + startRoom.width/2
-		grid.SetStartCellAt(startRow, startCol)
-
-		// Find the cell with the longest path distance from start using BFS
-		startCell := grid.StartCell()
-		exitCell := findFurthestCell(grid, startCell)
-		if exitCell != nil {
-			grid.SetExitCellAt(exitCell.Row, exitCell.Col)
-		} else {
-			// Fallback: exit in opposite corner of start room
-			grid.SetExitCellAt(startRoom.y+startRoom.height-2, startRoom.x+startRoom.width-2)
-		}
+		pickStartCellOutsideShaft(grid, rooms, level)
 	} else {
 		// Fallback to center
 		centerRow, centerCol := grid.CenterPosition()
@@ -145,6 +117,15 @@ func (g *BSPGenerator) Generate(level int) *world.Grid {
 
 // splitBSP recursively splits a BSP node
 func splitBSP(node *bspNode, minSize int) {
+	// Descend through forced splits (e.g. the reserved shaft region).
+	if node.left != nil || node.right != nil {
+		splitBSP(node.left, minSize)
+		splitBSP(node.right, minSize)
+		return
+	}
+	if node.room != nil {
+		return // Reserved leaf (lift shaft) keeps its fixed room
+	}
 	if node.width < minSize*2 && node.height < minSize*2 {
 		return // Too small to split
 	}
@@ -214,6 +195,9 @@ func createRooms(node *bspNode, bases, adjectives []string, usedRoomNames map[st
 		}
 		return
 	}
+	if node.room != nil {
+		return // Reserved leaf (lift shaft) already has its room
+	}
 
 	roomWidth := minRoomSize + levelrand.Intn(node.width-minRoomSize-roomPadding+1)
 	roomHeight := minRoomSize + levelrand.Intn(node.height-minRoomSize-roomPadding+1)
@@ -255,10 +239,9 @@ func createRooms(node *bspNode, bases, adjectives []string, usedRoomNames map[st
 	}
 }
 
-// carveRooms marks room cells as walkable in the grid
+// carveRooms marks room cells as walkable in the grid.
 func carveRooms(grid *world.Grid, node *bspNode) {
 	if node.room != nil {
-		// Carve the room - all cells get the same room name
 		for row := node.room.y; row < node.room.y+node.room.height; row++ {
 			for col := node.room.x; col < node.room.x+node.room.width; col++ {
 				grid.MarkAsRoomWithName(row, col, node.room.name, node.room.description)

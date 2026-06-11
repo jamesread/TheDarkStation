@@ -9,6 +9,7 @@ import (
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/unlocks"
 	gameworld "darkstation/pkg/game/world"
 )
 
@@ -59,6 +60,15 @@ type Game struct {
 
 	CurrentDeckID int                // 0-based deck index (source of truth for which deck we're in)
 	DeckStates    map[int]*DeckState // Per-deck generated state; key = deck ID (0-based)
+
+	// Run-wide progression (persists across deck travel).
+	RunSeed            int64
+	DeckThemes         map[int]deck.Theme
+	UnlockPlan         *unlocks.Plan
+	UnlockSatisfied    map[string]bool
+	LiftRoutingPowered map[int]bool
+	RunInventory       world.ItemSet
+	ReactorOnline      bool
 
 	Batteries                int                   // Number of batteries in inventory
 	Generators               []*entities.Generator // All generators on this level
@@ -190,6 +200,9 @@ func NewGame() *Game {
 		Level:                 1,
 		CurrentDeckID:         0,
 		DeckStates:            make(map[int]*DeckState),
+		RunInventory:          mapset.New[*world.Item](),
+		UnlockSatisfied:       make(map[string]bool),
+		LiftRoutingPowered:    unlocks.InitialLiftRouting(),
 		Batteries:             0,
 		Generators:            make([]*entities.Generator, 0),
 		FoundCodes:            make(map[string]bool),
@@ -395,7 +408,7 @@ func (g *Game) IncompleteRepairCount() int {
 	}
 	count := 0
 	for _, repair := range g.RepairObjectives {
-		if repair != nil && !repair.IsComplete() {
+		if repair != nil && !repair.SkipExitGate && !repair.IsComplete() {
 			count++
 		}
 	}
@@ -450,6 +463,7 @@ func (g *Game) AdvanceRepairTimers(nowMs int64) bool {
 		if repair.DrainCleared >= len(cells) || nowMs >= repair.CompleteAtMs {
 			repair.Complete()
 			clearRepairBlockersFromGrid(g, repair)
+			g.OnRoutingRepairComplete(repair.ID)
 			changed = true
 		}
 	}
@@ -713,15 +727,18 @@ func (g *Game) LoadDeckState(deckID int) {
 	} else {
 		g.RebuildRepairObjectivesFromGrid()
 	}
-	g.HasMap = false
+	// HasMap is run-wide; preserve across deck loads.
 	g.Hints = nil
-	g.FoundCodes = make(map[string]bool)
 	g.ResetLinkageTokensSeen()
 	g.PowerSupply = 0
 	g.PowerConsumption = 0
 	g.PowerOverloadWarned = false
 	g.ResetObservationCueAnnounced()
-	g.CurrentCell = g.Grid.StartCell()
+	if entry := g.Grid.ExitCell(); entry != nil {
+		g.CurrentCell = entry
+	} else {
+		g.CurrentCell = g.Grid.StartCell()
+	}
 }
 
 // GetAvailablePower returns the available power (supply - consumption)

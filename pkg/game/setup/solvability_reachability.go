@@ -40,31 +40,70 @@ func CanEnterCellAtInit(g *state.Game, cell *world.Cell) (bool, MovementBlockRea
 	if gameworld.HasGenerator(cell) || gameworld.HasFurniture(cell) ||
 		gameworld.HasTerminal(cell) || gameworld.HasPuzzle(cell) ||
 		gameworld.HasMaintenanceTerminal(cell) || gameworld.HasHazardControl(cell) ||
+		gameworld.HasRepairDevice(cell) || gameworld.HasBlockingRepairBlocker(cell) ||
 		gameworld.HasBlockingHazard(cell) {
 		return false, MovementBlockedEntity
 	}
 	return true, MovementOK
 }
 
-// InitialReachableCells returns cells reachable from start at level init (no keycards, current door power).
+// InitialReachableCells returns cells reachable from the player entry (lift shaft) at level init.
 func InitialReachableCells(g *state.Game) *mapset.Set[*world.Cell] {
 	empty := mapset.New[*world.Cell]()
 	if g == nil || g.Grid == nil {
 		return &empty
 	}
-	start := g.Grid.StartCell()
-	if start == nil {
+	entry := PlayerEntryCell(g)
+	if entry == nil {
 		return &empty
 	}
 	reachable := mapset.New[*world.Cell]()
-	queue := []*world.Cell{start}
+	queue := []*world.Cell{entry}
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
 		if cur == nil || !cur.Room || reachable.Has(cur) {
 			continue
 		}
-		if cur != start {
+		if cur != entry {
+			ok, _ := CanEnterCellAtInit(g, cur)
+			if !ok {
+				continue
+			}
+		}
+		reachable.Put(cur)
+		for _, n := range cur.GetNeighbors() {
+			if n != nil && n.Room && !reachable.Has(n) {
+				queue = append(queue, n)
+			}
+		}
+	}
+	return &reachable
+}
+
+// InitialReachableWithLockedDoors returns init-accurate reachability from the player entry,
+// treating cells in locked as impassable in addition to normal init movement rules.
+func InitialReachableWithLockedDoors(g *state.Game, locked *mapset.Set[*world.Cell]) *mapset.Set[*world.Cell] {
+	empty := mapset.New[*world.Cell]()
+	if g == nil || g.Grid == nil {
+		return &empty
+	}
+	entry := PlayerEntryCell(g)
+	if entry == nil {
+		return &empty
+	}
+	reachable := mapset.New[*world.Cell]()
+	queue := []*world.Cell{entry}
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		if cur == nil || !cur.Room || reachable.Has(cur) {
+			continue
+		}
+		if locked != nil && locked.Has(cur) {
+			continue
+		}
+		if cur != entry {
 			ok, _ := CanEnterCellAtInit(g, cur)
 			if !ok {
 				continue
@@ -211,7 +250,9 @@ func EnsureSolvability(g *state.Game) {
 	EnsureGeneratorRoomBootstrap(g)
 	EnsureInitProgressReachability(g)
 	EnsureInteractableNavAccess(g)
+	EnsureProgressionNavAccess(g)
 	EnsureExitReachability(g)
+	EnsureExitGatingRepairReachability(g)
 }
 
 // SolvabilityReport holds analysis output for debug dumps and validation.
@@ -236,11 +277,11 @@ func AnalyzeSolvability(g *state.Game) SolvabilityReport {
 		report.Warnings = append(report.Warnings, "no grid")
 		return report
 	}
-	start := g.Grid.StartCell()
-	if start != nil {
-		report.StartRoom = start.Name
-		report.StartRoomDoorsPowered = g.RoomDoorsPowered[start.Name]
-		report.StartMaintPowered = RoomMaintenanceTerminalPowered(g, start.Name)
+	entry := PlayerEntryCell(g)
+	if entry != nil {
+		report.StartRoom = entry.Name
+		report.StartRoomDoorsPowered = g.RoomDoorsPowered[entry.Name]
+		report.StartMaintPowered = RoomMaintenanceTerminalPowered(g, entry.Name)
 	}
 	if g.CurrentCell != nil {
 		report.PlayerRoom = g.CurrentCell.Name
@@ -261,7 +302,11 @@ func AnalyzeSolvability(g *state.Game) SolvabilityReport {
 	report.BlockedEgressDoors = InitialEgressDoors(g)
 	exit := g.Grid.ExitCell()
 	if exit != nil {
-		report.ExitReachableAtInit = reachable.Has(exit)
+		if entry != nil && entry == exit {
+			report.ExitReachableAtInit = true
+		} else {
+			report.ExitReachableAtInit = reachable.Has(exit)
+		}
 	}
 
 	report.PoweredMaintTerminals = CountPoweredMaintenanceTerminals(g)
@@ -277,7 +322,7 @@ func AnalyzeSolvability(g *state.Game) SolvabilityReport {
 					door.Row, door.Col, door.TargetRoom))
 		}
 	}
-	if !report.ExitReachableAtInit {
+	if exit != nil && entry != exit && !report.ExitReachableAtInit {
 		report.Warnings = append(report.Warnings, "exit not reachable at init (expected until doors powered/keycards found)")
 	}
 	if !ExitReachableWhenCompletable(g, nil) {
@@ -285,6 +330,9 @@ func AnalyzeSolvability(g *state.Game) SolvabilityReport {
 	}
 	if !keycardsAccessible(g, reachable) {
 		report.Warnings = append(report.Warnings, "keycard not reachable at init (I3 violation)")
+	}
+	for _, w := range warnExitGatingRepairInaccessible(g) {
+		report.Warnings = append(report.Warnings, w)
 	}
 	if AnyArmedGridOverloaded(g) {
 		report.Warnings = append(report.Warnings,

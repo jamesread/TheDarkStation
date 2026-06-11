@@ -183,15 +183,8 @@ func showUnpoweredDoorCallout(g *state.Game, r *world.Cell, rData *gameworld.Gam
 // Returns false when the door is locked and the player lacks the keycard.
 func unlockDoorWithKeycard(g *state.Game, r *world.Cell, rData *gameworld.GameCellData, logReason bool) bool {
 	keycardName := rData.Door.KeycardName()
-	var keycardItem *world.Item
 
-	g.OwnedItems.Each(func(item *world.Item) {
-		if item.Name == keycardName {
-			keycardItem = item
-		}
-	})
-
-	if keycardItem == nil {
+	if !g.HasKeycardNamed(keycardName) {
 		if logReason {
 			logMessage(g, "This door requires a %s", renderer.StyledKeycard(keycardName))
 			renderer.AddCallout(r.Row, r.Col, fmt.Sprintf("TITLE{Door Locked}\nNeeds: KEYCARD{%s}", keycardName), renderer.CalloutColorDoor, 0)
@@ -207,7 +200,6 @@ func unlockDoorWithKeycard(g *state.Game, r *world.Cell, rData *gameworld.GameCe
 			doorsUnlocked++
 		}
 	})
-	g.OwnedItems.Remove(keycardItem)
 
 	var calloutMsg string
 	if doorsUnlocked > 1 {
@@ -239,41 +231,49 @@ func MoveCell(g *state.Game, requestedCell *world.Cell) {
 	}
 
 	if res, _ := CanEnter(g, requestedCell, true); res {
-		features.MarkVisited(requestedCell)
-		cellData := gameworld.GetGameData(requestedCell)
-		cellData.LightsOn = true
-		cellData.Lighted = true
-
-		// Reveal cells within field of view (ray-cast; walls block sight).
-		world.RevealFOVDefault(g.Grid, requestedCell, unpoweredDoorSightBlocker(g))
-
-		// Update lighting-based exploration
-		UpdateLightingExploration(g)
-
-		// Reset interaction order when player moves
-		if g.CurrentCell == nil || g.CurrentCell.Row != requestedCell.Row || g.CurrentCell.Col != requestedCell.Col {
-			g.LastInteractedRow = -1
-			g.LastInteractedCol = -1
-			g.InteractionPlayerRow = requestedCell.Row
-			g.InteractionPlayerCol = requestedCell.Col
-			ClearGeneratorPowerGridOverlay(g)
-			// Increment movement count for hint system (only if player actually moved from a previous position)
-			if g.CurrentCell != nil {
-				g.MovementCount++
-			}
+		if g.CurrentCell != nil &&
+			(g.CurrentCell.Row != requestedCell.Row || g.CurrentCell.Col != requestedCell.Col) {
+			g.MovementCount++
 		}
-
-		g.CurrentCell = requestedCell
-		maybeAnnounceObservationCueOnMove(g, requestedCell)
-		maybeAnnounceLinkageCueOnMove(g, requestedCell)
-		if features.VisitedSystemEnabled() {
-			noteLinkageTagFromVisitedCell(g, requestedCell)
-		}
+		landPlayerOnCell(g, requestedCell)
 	} else {
 		// Movement failed - trigger debounce animation
 		if direction != "" {
 			renderer.SetDebounceAnimation(direction)
 		}
+	}
+}
+
+// TeleportPlayerTo places the player on a cell without movement checks (lift routing, etc.).
+func TeleportPlayerTo(g *state.Game, cell *world.Cell) {
+	if g == nil || cell == nil || !cell.Room {
+		return
+	}
+	landPlayerOnCell(g, cell)
+}
+
+func landPlayerOnCell(g *state.Game, cell *world.Cell) {
+	if g == nil || cell == nil {
+		return
+	}
+	features.MarkVisited(cell)
+	cellData := gameworld.GetGameData(cell)
+	cellData.LightsOn = true
+	cellData.Lighted = true
+	world.RevealFOVDefault(g.Grid, cell, unpoweredDoorSightBlocker(g))
+	UpdateLightingExploration(g)
+	if g.CurrentCell == nil || g.CurrentCell.Row != cell.Row || g.CurrentCell.Col != cell.Col {
+		g.LastInteractedRow = -1
+		g.LastInteractedCol = -1
+		g.InteractionPlayerRow = cell.Row
+		g.InteractionPlayerCol = cell.Col
+		ClearGeneratorPowerGridOverlay(g)
+	}
+	g.CurrentCell = cell
+	maybeAnnounceObservationCueOnMove(g, cell)
+	maybeAnnounceLinkageCueOnMove(g, cell)
+	if features.VisitedSystemEnabled() {
+		noteLinkageTagFromVisitedCell(g, cell)
 	}
 }
 

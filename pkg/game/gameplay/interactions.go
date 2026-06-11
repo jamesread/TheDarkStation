@@ -166,7 +166,25 @@ func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLa
 		}
 	}
 
-	// Pass 2: blocked exit lift (hazard tour when lift is powered but hazards remain)
+	// Pass 2: lift shaft terminal (ready or blocked)
+	for _, cell := range neighbors {
+		if skipCell(cell) {
+			continue
+		}
+		if cell != nil && cell.ExitCell {
+			if setup.ExitLiftReady(g) || setup.ExitLiftState(g) == state.ExitLiftLockedIncomplete {
+				if TryUseLift(g) {
+					FaceTowardAdjacentCell(g, cell)
+					g.LastInteractedRow = cell.Row
+					g.LastInteractedCol = cell.Col
+					g.InteractionsCount++
+					return true
+				}
+			}
+		}
+	}
+
+	// Pass 3: blocked exit lift (hazard tour when lift is powered but hazards remain)
 	for _, cell := range neighbors {
 		if skipCell(cell) {
 			continue
@@ -181,7 +199,7 @@ func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLa
 		}
 	}
 
-	// Pass 3: furniture, terminals, puzzles, hazard controls, repairs, maintenance
+	// Pass 4: furniture, terminals, puzzles, hazard controls, repairs, maintenance
 	for _, cell := range neighbors {
 		if skipCell(cell) {
 			continue
@@ -329,6 +347,10 @@ func PickUpItemsOnFloor(g *state.Game) {
 			g.HasMap = true
 			g.OwnedItems.Put(item)
 			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, "Picked up: ITEM{Map}", renderer.CalloutColorItem, 0)
+		} else if strings.Contains(strings.ToLower(item.Name), "keycard") {
+			g.AddRunKeycard(world.NewItem(item.Name))
+			msg := fmt.Sprintf("Picked up: KEYCARD{%s}", item.Name)
+			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, msg, renderer.CalloutColorKeycard, 0)
 		} else if strings.Contains(strings.ToLower(item.Name), "battery") {
 			g.AddBatteries(1)
 			msg := fmt.Sprintf("Picked up: BATTERY{%s}", item.Name)

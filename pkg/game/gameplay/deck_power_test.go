@@ -7,16 +7,6 @@ import (
 	gameworld "darkstation/pkg/game/world"
 )
 
-func itemSetHasName(items world.ItemSet, name string) bool {
-	found := false
-	items.Each(func(item *world.Item) {
-		if item != nil && item.Name == name {
-			found = true
-		}
-	})
-	return found
-}
-
 func TestAdvanceLevel_ClearsCarriedPowerState(t *testing.T) {
 	g := BuildGame(1)
 	if g == nil || g.Grid == nil {
@@ -77,26 +67,24 @@ func TestAdvanceLevel_ClearsCarriedPowerState(t *testing.T) {
 	}
 }
 
-func TestAdvanceLevel_ClearsKeycardsBetweenDecks(t *testing.T) {
+func TestTravelToDeck_PreservesRunKeycards(t *testing.T) {
 	g := BuildGame(1)
 	if g == nil || g.Grid == nil {
 		t.Fatal("BuildGame failed")
 	}
 
-	g.OwnedItems.Put(world.NewItem("Security Keycard"))
-	if g.OwnedItems.Size() != 1 {
-		t.Fatalf("setup OwnedItems size = %d, want 1", g.OwnedItems.Size())
+	g.AddRunKeycard(world.NewItem("Security Keycard"))
+	if !g.HasRunKeycard("Security Keycard") {
+		t.Fatal("setup: run keycard missing")
 	}
 
 	AdvanceLevel(g)
 
-	if g.OwnedItems.Size() != 0 {
-		t.Fatalf("keycards after advance = %d, want 0", g.OwnedItems.Size())
+	if !g.HasRunKeycard("Security Keycard") {
+		t.Error("run keycard should persist across deck travel")
 	}
-
-	g.LoadDeckState(0)
-	if !itemSetHasName(g.OwnedItems, "Security Keycard") {
-		t.Error("keycard should restore when loading saved deck 0 state")
+	if g.OwnedItems.Size() != 0 {
+		t.Fatalf("deck-local OwnedItems after travel = %d, want 0", g.OwnedItems.Size())
 	}
 }
 

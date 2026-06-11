@@ -25,6 +25,9 @@ type HazardTourAdvanceFunc func(g *state.Game, nowMs int64)
 // HintRefresher updates on-map control callouts after the primary input device changes.
 type HintRefresher func(g *state.Game)
 
+// RepairTimerAdvanceFunc runs gameplay side effects after timed repairs complete.
+type RepairTimerAdvanceFunc func(g *state.Game)
+
 // Callout represents a floating message displayed near a cell
 type Callout struct {
 	Row       int    // Cell row
@@ -57,6 +60,7 @@ type renderSnapshot struct {
 	valid             bool
 	seq               uint64
 	level             int
+	deckTitle         string // Theme display name (e.g. "Airlock")
 	playerRow         int
 	playerCol         int
 	playerFacing      state.PlayerFacing
@@ -220,6 +224,7 @@ type EbitenRenderer struct {
 	longUsePrevHeld      bool
 	hazardClearAdvancer  HazardClearAdvanceFunc
 	hazardTourAdvancer   HazardTourAdvanceFunc
+	repairTimerAdvancer  RepairTimerAdvanceFunc
 	hintRefresher        HintRefresher
 
 	// Flag indicating renderer is running

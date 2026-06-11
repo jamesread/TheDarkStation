@@ -9,8 +9,9 @@ import (
 
 	"github.com/leonelquinteros/gotext"
 
-	engineinput "darkstation/pkg/engine/input"
+	engineinput 	"darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/features"
 	gamemenu "darkstation/pkg/game/menu"
@@ -102,6 +103,7 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 
 	e.snapshot.valid = true
 	e.snapshot.level = g.Level
+	e.snapshot.deckTitle = deck.ThemeDisplayName(g.ThemeForCurrentDeck())
 	e.snapshot.playerRow = g.CurrentCell.Row
 	e.snapshot.playerCol = g.CurrentCell.Col
 	e.snapshot.playerFacing = g.PlayerFacing

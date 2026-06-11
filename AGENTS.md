@@ -46,6 +46,13 @@ e.drawColoredText(screen, versionText, versionX, versionY, colorSubtle)
 
 The active primary device (`pkg/engine/input`: keyboard vs gamepad) drives on-screen control text via `HintMove()`, `HintInteractPrefix()`, menu helpers in `hints.go`, etc. The Ebiten renderer switches primary on new input from either device, shows a short top-center notification, and refreshes tutorial callouts. Intent polling prefers the primary device first (gamepad-first when controller is active).
 
-## Revisit Policy (GDD, Plan Phase 5.4)
+## Lift travel and deck revisit
 
-The player **cannot revisit** previous decks. The lift is **forward-only**: it has a single destination (the next deck) and no "return" option. The final deck has **no destination** (lift does not advance); reaching it triggers completion. This preserves the intended feel of "moving deeper" and sequential discovery. Per-deck state is stored so the data model could support revisit later; the UI and graph do not expose it.
+The lift shaft is a **centered hub** on every deck. **USE** on the shaft (or exit cell) opens a **lift menu** listing all decks 1–10. The player may **travel bidirectionally** to any **unlocked** deck; locked entries show a disabled reason (missing keycard, routing repair, reactor offline, etc.).
+
+- **Start access:** decks 1 (Airlock) and 2 are unlocked at run start.
+- **Unlock graph:** seed-procedural requirements (keycards, routing couplers, thematic flags) plus fixed chains (e.g. reactor authorization → deck 5, `ReactorOnline` gates Life Support decks 6–9).
+- **Run-wide inventory:** keycards and the Map persist across deck travel; keycards are **not consumed** on doors. Batteries remain **per-deck**.
+- **Local lift gating:** `ExitLiftReady` on the current deck still requires local power, hazard clearance, and non-`SkipExitGate` repairs.
+- **Completion:** on deck 10, **USE** the lift when `ExitLiftReady` — stepping on the exit cell does **not** auto-advance or complete the run.
+- Per-deck state is saved in `DeckStates` so revisiting a deck restores its layout and local progress.

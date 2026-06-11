@@ -8,6 +8,7 @@ type GameplayMenuAction int
 
 const (
 	GameplayMenuActionClose GameplayMenuAction = iota
+	GameplayMenuActionInventory
 	GameplayMenuActionBindings
 	GameplayMenuActionVideo
 	GameplayMenuActionQuitToTitle
@@ -34,6 +35,8 @@ func (m *GameplayMenuItem) GetHelpText() string {
 	switch m.Action {
 	case GameplayMenuActionClose:
 		return "Return to the game"
+	case GameplayMenuActionInventory:
+		return "View run-wide inventory"
 	case GameplayMenuActionBindings:
 		return "Configure keyboard and gamepad bindings"
 	case GameplayMenuActionVideo:
@@ -116,6 +119,7 @@ func (h *GameplayMenuHandler) ShouldQuitToTitle() bool {
 func (h *GameplayMenuHandler) GetMenuItems() []MenuItem {
 	return []MenuItem{
 		&GameplayMenuItem{Label: "Close Menu", Action: GameplayMenuActionClose},
+		&GameplayMenuItem{Label: "Inventory", Action: GameplayMenuActionInventory},
 		&GameplayMenuItem{Label: "Bindings", Action: GameplayMenuActionBindings},
 		&GameplayMenuItem{Label: "Video", Action: GameplayMenuActionVideo},
 		&GameplayMenuItem{Label: "Quit to Title", Action: GameplayMenuActionQuitToTitle},

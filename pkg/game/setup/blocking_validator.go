@@ -101,12 +101,12 @@ func completionExitCutCells(g *state.Game) (bool, map[*world.Cell]bool) {
 	if g == nil || g.Grid == nil {
 		return false, out
 	}
-	start := g.Grid.StartCell()
+	entry := PlayerEntryCell(g)
 	exit := g.Grid.ExitCell()
-	if start == nil || exit == nil {
+	if entry == nil || exit == nil {
 		return true, out
 	}
-	if !isPassableAtLevelCompletion(start, nil) || !isPassableAtLevelCompletion(exit, nil) {
+	if !isPassableAtLevelCompletion(entry, nil) || !isPassableAtLevelCompletion(exit, nil) {
 		return false, out
 	}
 
@@ -147,11 +147,11 @@ func completionExitCutCells(g *state.Game) (bool, map[*world.Cell]bool) {
 		}
 	}
 
-	visit(start)
-	if !subtreeHasExit[start] {
+	visit(entry)
+	if !subtreeHasExit[entry] {
 		return false, out
 	}
-	out[start] = true
+	out[entry] = true
 	out[exit] = true
 	return true, out
 }

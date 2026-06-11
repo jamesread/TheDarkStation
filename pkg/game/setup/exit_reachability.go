@@ -38,24 +38,24 @@ func isPassableAtLevelCompletion(cell *world.Cell, extraBlocked *mapset.Set[*wor
 	return true
 }
 
-// ExitReachableWhenCompletable reports whether the exit cell can be reached from start
+// ExitReachableWhenCompletable reports whether the exit cell can be reached from the player entry
 // assuming all doors are powered/unlocked and all hazards are cleared.
 // extraBlocked treats additional cells as permanently blocked (for placement checks).
 func ExitReachableWhenCompletable(g *state.Game, extraBlocked *world.Cell) bool {
 	if g == nil || g.Grid == nil {
 		return false
 	}
-	start := g.Grid.StartCell()
+	entry := PlayerEntryCell(g)
 	exit := g.Grid.ExitCell()
-	if start == nil || exit == nil {
-		return true // no layout constraint when start/exit not set (unit tests)
+	if entry == nil || exit == nil {
+		return true // no layout constraint when entry/exit not set (unit tests)
 	}
 	extra := mapset.New[*world.Cell]()
 	if extraBlocked != nil {
 		extra.Put(extraBlocked)
 	}
 	reachable := mapset.New[*world.Cell]()
-	queue := []*world.Cell{start}
+	queue := []*world.Cell{entry}
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
@@ -89,6 +89,9 @@ func CanPlaceBlockingEntity(g *state.Game, candidate *world.Cell) bool {
 		return false
 	}
 	if !BlockingPlacementPreservesNavAccess(g, candidate) {
+		return false
+	}
+	if !bootstrapDoorNavPreserved(g, candidate) {
 		return false
 	}
 	return InitProgressPreserved(g, candidate)

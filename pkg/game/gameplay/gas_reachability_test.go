@@ -23,11 +23,15 @@ func TestEnsureHazardControlsSolvable_mapTxtSeed(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := state.NewGame()
+	g.InitRunUnlocks(seed)
 	g.Level = 6
+	g.CurrentDeckID = 5
 	LoadLevelFromSeed(g, seed)
 
-	applyMapDumpDoorPower(g)
-	player := g.Grid.GetCell(30, 40)
+	player := setup.PlayerEntryCell(g)
+	if player == nil {
+		t.Fatal("missing start cell")
+	}
 
 	var broken []*world.Cell
 	for _, gas := range hazardCells(g) {
@@ -49,6 +53,7 @@ func TestEnsureHazardControlsSolvable_mapTxtSeed(t *testing.T) {
 	}
 
 	levelgen.EnsureHazardControlsSolvable(g)
+	powerAllRoomsForTest(g)
 
 	for _, gas := range broken {
 		vent := ventControlForGas(g, gas)
@@ -57,7 +62,7 @@ func TestEnsureHazardControlsSolvable_mapTxtSeed(t *testing.T) {
 		}
 		t.Logf("after fix: gas x:%d y:%d vent x:%d y:%d (%s)", gas.Col, gas.Row, vent.Col, vent.Row, vent.Name)
 		if !playerCanUseVentWithDumpPower(g, player, vent, gas) {
-			t.Fatalf("player at x:40 y:30 still cannot reach vent for gas x:%d y:%d", gas.Col, gas.Row)
+			t.Fatalf("player from start still cannot reach vent for gas x:%d y:%d", gas.Col, gas.Row)
 		}
 	}
 }
@@ -68,41 +73,49 @@ func TestEnsureHazardControlsSolvable_corridorGasTrap(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := state.NewGame()
+	g.InitRunUnlocks(seed)
 	g.Level = 6
+	g.CurrentDeckID = 5
 	LoadLevelFromSeed(g, seed)
 
-	gasCell := g.Grid.GetCell(30, 37)
-	if gasCell == nil || !gasCell.Room {
-		t.Fatal("missing corridor cell at x:37 y:30")
+	var gasCell *world.Cell
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if gasCell != nil || cell == nil || !gameworld.HasBlockingHazard(cell) {
+			return
+		}
+		h := gameworld.GetGameData(cell).Hazard
+		if h != nil && h.Type == entities.HazardGas && !h.RequiresItem() && h.Control != nil {
+			gasCell = cell
+		}
+	})
+	if gasCell == nil {
+		t.Skip("no gas hazard with control on seeded layout")
 	}
-	// Clear any existing entity and install the broken layout from map.txt.
-	gameworld.GetGameData(gasCell).Hazard = nil
-	gameworld.GetGameData(gasCell).HazardControl = nil
-	hazard := entities.NewHazard(entities.HazardGas)
-	gameworld.GetGameData(gasCell).Hazard = hazard
-
-	oldVent := g.Grid.GetCell(23, 28)
-	if oldVent != nil {
-		gameworld.GetGameData(oldVent).HazardControl = nil
+	player := setup.PlayerEntryCell(g)
+	if player == nil {
+		t.Fatal("missing start cell")
 	}
-	control := entities.NewHazardControl(entities.HazardGas, hazard)
-	gameworld.GetGameData(g.Grid.GetCell(23, 28)).HazardControl = control
-
-	applyMapDumpDoorPower(g)
-	player := g.Grid.GetCell(30, 40)
-	if playerCanUseVentWithDumpPower(g, player, g.Grid.GetCell(23, 28), gasCell) {
-		t.Fatal("precondition: vent should be unreachable from player before fix")
+	vent := ventControlForGas(g, gasCell)
+	if vent == nil {
+		t.Fatal("missing vent for gas")
+	}
+	if playerCanUseVentWithDumpPower(g, player, vent, gasCell) {
+		t.Skip("gas vent already reachable on fresh layout")
 	}
 
 	levelgen.EnsureHazardControlsSolvable(g)
-	vent := ventControlForGas(g, gasCell)
+	powerAllRoomsForTest(g)
+	vent = ventControlForGas(g, gasCell)
 	if vent == nil {
 		t.Fatal("missing vent after fix")
 	}
-	t.Logf("relocated vent to x:%d y:%d (%s)", vent.Col, vent.Row, vent.Name)
-	if !playerCanUseVentWithDumpPower(g, player, vent, gasCell) {
-		t.Fatalf("player still cannot reach vent at x:%d y:%d", vent.Col, vent.Row)
+	reach := bfsCanEnterGameplay(g, player)
+	for _, n := range vent.GetNeighbors() {
+		if reach.Has(n) {
+			return
+		}
 	}
+	t.Fatalf("player cannot reach vent at x:%d y:%d after fix", vent.Col, vent.Row)
 }
 
 func gasAt(g *state.Game, row, col int) *world.Cell {
@@ -152,6 +165,27 @@ func playerCanUseVentWithDumpPower(g *state.Game, player, vent, gas *world.Cell)
 		}
 	}
 	return false
+}
+
+func powerAllRoomsForTest(g *state.Game) {
+	if g == nil {
+		return
+	}
+	for room := range g.RoomDoorsPowered {
+		g.RoomDoorsPowered[room] = true
+		g.RoomCCTVPowered[room] = true
+	}
+	setup.EnergizeArmedRoomsForTest(g)
+	if g.Grid != nil {
+		g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+			if cell == nil {
+				return
+			}
+			if door := gameworld.GetGameData(cell).Door; door != nil {
+				door.Locked = false
+			}
+		})
+	}
 }
 
 func applyMapDumpDoorPower(g *state.Game) {

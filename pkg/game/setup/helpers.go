@@ -8,6 +8,7 @@ import (
 	"github.com/zyedidia/generic/mapset"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/state"
 )
 
@@ -122,17 +123,19 @@ func getReachableCells(grid *world.Grid, start *world.Cell, lockedDoors *mapset.
 func findRoomInReachable(reachable *mapset.Set[*world.Cell], avoid *mapset.Set[*world.Cell]) *world.Cell {
 	var candidates []*world.Cell
 	reachable.Each(func(cell *world.Cell) {
-		if cell.Name != "Corridor" && !avoid.Has(cell) {
-			candidates = append(candidates, cell)
+		if cell.Name == "Corridor" || cell.Name == generator.ShaftRoomName || avoid.Has(cell) || cell.ExitCell {
+			return
 		}
+		candidates = append(candidates, cell)
 	})
 
 	if len(candidates) == 0 {
-		// Fallback to any reachable cell
+		// Fallback to any reachable cell outside the lift shaft pocket.
 		reachable.Each(func(cell *world.Cell) {
-			if !avoid.Has(cell) {
-				candidates = append(candidates, cell)
+			if avoid.Has(cell) || cell.ExitCell || cell.Name == generator.ShaftRoomName {
+				return
 			}
+			candidates = append(candidates, cell)
 		})
 	}
 
@@ -147,6 +150,9 @@ func findRoomInReachable(reachable *mapset.Set[*world.Cell], avoid *mapset.Set[*
 // collectReachableRooms collects all reachable rooms from a starting cell using BFS
 func collectReachableRooms(start *world.Cell, avoid *mapset.Set[*world.Cell]) []*world.Cell {
 	var rooms []*world.Cell
+	if start == nil {
+		return rooms
+	}
 	visited := mapset.New[*world.Cell]()
 	queue := []*world.Cell{start}
 
@@ -189,8 +195,11 @@ func manhattanDistance(a, b *world.Cell) int {
 	return rowDist + colDist
 }
 
-// findRoom finds a random reachable room at an appropriate distance based on level
+// findRoom finds a random reachable room at an appropriate distance from the player entry.
 func findRoom(g *state.Game, start *world.Cell, avoid *mapset.Set[*world.Cell]) *world.Cell {
+	if start == nil {
+		start = PlayerEntryCell(g)
+	}
 	rooms := collectReachableRooms(start, avoid)
 
 	if len(rooms) == 0 {

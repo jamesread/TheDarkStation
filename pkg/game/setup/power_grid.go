@@ -53,7 +53,7 @@ func CanTraverseCellForPowerGridArmDoors(g *state.Game, cell *world.Cell, doorsP
 	if g == nil || cell == nil || !cell.Room {
 		return false
 	}
-	if gameworld.HasFurniture(cell) {
+	if gameworld.HasFurniture(cell) || gameworld.HasRepairDevice(cell) {
 		return false
 	}
 	if gameworld.RelayBlocksGrid(cell) {
@@ -81,7 +81,7 @@ func CanTraverseCellForLocalGeneratorFeed(g *state.Game, cell *world.Cell) bool 
 	if g == nil || cell == nil || !cell.Room {
 		return false
 	}
-	if gameworld.HasFurniture(cell) {
+	if gameworld.HasFurniture(cell) || gameworld.HasRepairDevice(cell) {
 		return false
 	}
 	if gameworld.RelayBlocksGrid(cell) {
@@ -115,7 +115,7 @@ func CanTraverseCellForPowerGridOverlay(g *state.Game, cell *world.Cell) bool {
 	if g == nil || cell == nil || !cell.Room {
 		return false
 	}
-	if gameworld.HasFurniture(cell) {
+	if gameworld.HasFurniture(cell) || gameworld.HasRepairDevice(cell) {
 		return false
 	}
 	if gameworld.RelayBlocksGrid(cell) {
@@ -466,7 +466,33 @@ func computeCellsReachableFromPoweredGenerators(g *state.Game) mapset.Set[*world
 			queue = append(queue, n)
 		}
 	}
+	includeAdjacentRepairDeviceCells(g, &union)
 	return union
+}
+
+// includeAdjacentRepairDeviceCells adds repair-device cells that sit on live grid cells.
+// Repair devices block traversal but still draw power from an adjacent cell in the same pocket.
+func includeAdjacentRepairDeviceCells(g *state.Game, union *mapset.Set[*world.Cell]) {
+	if g == nil || union == nil {
+		return
+	}
+	var added []*world.Cell
+	union.Each(func(c *world.Cell) {
+		if c == nil {
+			return
+		}
+		for _, n := range c.GetNeighbors() {
+			if n == nil || !n.Room || union.Has(n) || !gameworld.HasRepairDevice(n) {
+				continue
+			}
+			if c.Name != "" && c.Name != "Corridor" && n.Name == c.Name {
+				added = append(added, n)
+			}
+		}
+	})
+	for _, c := range added {
+		union.Put(c)
+	}
 }
 
 // CellHasLivePower reports whether propagated power has reached a specific grid cell.

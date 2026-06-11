@@ -58,12 +58,16 @@ func TestRegenerateFromSeed_Deterministic(t *testing.T) {
 	const level = 3
 
 	g1 := state.NewGame()
+	g1.InitRunUnlocks(seed)
 	g1.Level = level
+	g1.CurrentDeckID = level - 1
 	RegenerateFromSeed(g1, seed)
 	d1 := levelEntityDigest(g1)
 
 	g2 := state.NewGame()
+	g2.InitRunUnlocks(seed)
 	g2.Level = level
+	g2.CurrentDeckID = level - 1
 	RegenerateFromSeed(g2, seed)
 	d2 := levelEntityDigest(g2)
 
@@ -80,12 +84,15 @@ func TestResetLevel_MatchesRegenerateFromSeed(t *testing.T) {
 	level := 2
 
 	g1 := state.NewGame()
+	g1.InitRunUnlocks(seed)
 	g1.Level = level
-	g1.LevelSeed = seed
+	g1.CurrentDeckID = level - 1
 	RegenerateFromSeed(g1, seed)
 
 	g2 := state.NewGame()
+	g2.InitRunUnlocks(seed)
 	g2.Level = level
+	g2.CurrentDeckID = level - 1
 	g2.LevelSeed = seed
 	ResetLevel(g2)
 

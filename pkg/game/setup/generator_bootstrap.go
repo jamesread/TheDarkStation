@@ -2,9 +2,11 @@ package setup
 
 import (
 	"fmt"
+	"strings"
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -18,15 +20,39 @@ func BootstrapGeneratorRoom(g *state.Game, cell *world.Cell) {
 	if gen == nil || !gen.IsPowered() {
 		return
 	}
+	armGeneratorRoomCircuit(g, cell.Name)
+	if paired := shaftFragmentPairName(cell.Name); paired != "" {
+		armGeneratorRoomCircuit(g, paired)
+	}
+	EnsureRoomPowerOnlineMap(g)
+}
+
+const shaftFarSuffix = " Far"
+
+// shaftFragmentPairName returns the paired base/Far room name when a generator room was split
+// by the lift shaft carve (e.g. "Lab" ↔ "Lab Far").
+func shaftFragmentPairName(roomName string) string {
+	if roomName == "" || roomName == "Corridor" {
+		return ""
+	}
+	if strings.HasSuffix(roomName, shaftFarSuffix) {
+		return roomName[:len(roomName)-len(shaftFarSuffix)]
+	}
+	return roomName + shaftFarSuffix
+}
+
+func armGeneratorRoomCircuit(g *state.Game, roomName string) {
+	if g == nil || roomName == "" || roomName == "Corridor" {
+		return
+	}
 	if g.RoomDoorsPowered == nil {
 		g.RoomDoorsPowered = make(map[string]bool)
 	}
 	if g.RoomCCTVPowered == nil {
 		g.RoomCCTVPowered = make(map[string]bool)
 	}
-	g.RoomDoorsPowered[cell.Name] = true
-	g.RoomCCTVPowered[cell.Name] = true
-	EnsureRoomPowerOnlineMap(g)
+	g.RoomDoorsPowered[roomName] = true
+	g.RoomCCTVPowered[roomName] = true
 }
 
 // EnsureGeneratorRoomBootstrap arms routing for every generator room, energizes rooms whose
@@ -58,9 +84,14 @@ func EnsureMinimumMaintenanceCoverage(g *state.Game) {
 	if g == nil || g.Grid == nil || countMaintenanceTerminals(g) > 0 {
 		return
 	}
-	if start := g.Grid.StartCell(); start != nil && start.Name != "" {
-		if placeMaintenanceTerminalInRoom(g, start.Name, true) {
-			return
+	if entry := PlayerEntryCell(g); entry != nil && entry.Name != "" {
+		for _, roomName := range GetAdjacentRoomNames(g.Grid, entry.Name) {
+			if roomName == entry.Name || roomName == "Corridor" {
+				continue
+			}
+			if placeMaintenanceTerminalInRoom(g, roomName, true) {
+				return
+			}
 		}
 	}
 	placed := false
@@ -154,43 +185,17 @@ func placeMaintenanceTerminalInRoom(g *state.Game, roomName string, force bool) 
 	if roomHasMaintenanceTerminal(g, roomName) {
 		return true
 	}
-	var target *world.Cell
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if target != nil || cell == nil || !cell.Room || cell.Name != roomName || cell.ExitCell {
-			return
-		}
-		if cell == g.Grid.StartCell() {
-			return
-		}
-		data := gameworld.GetGameData(cell)
-		if data.Generator != nil || data.Door != nil || data.MaintenanceTerm != nil ||
-			data.Terminal != nil || data.Puzzle != nil || data.Furniture != nil ||
-			data.Hazard != nil || data.HazardControl != nil || data.RepairDevice != nil ||
-			data.RepairBlocker != nil || cell.ItemsOnFloor.Size() > 0 {
-			return
-		}
-		if !force && !CanPlaceBlockingEntity(g, cell) {
-			return
-		}
-		target = cell
-	})
+	target := firstMaintTerminalCell(g, roomName, false)
 	if target == nil && force {
-		g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-			if target != nil || cell == nil || !cell.Room || cell.Name != roomName || cell.ExitCell {
-				return
+		target = firstMaintTerminalCell(g, roomName, true)
+	}
+	if target == nil && force {
+		if entry := PlayerEntryCell(g); entry != nil && entry.Name == roomName && !entry.ExitCell {
+			data := gameworld.GetGameData(entry)
+			if data.MaintenanceTerm == nil && data.Generator == nil {
+				target = entry
 			}
-			if cell == g.Grid.StartCell() {
-				return
-			}
-			data := gameworld.GetGameData(cell)
-			if data.Generator != nil || data.Door != nil || data.MaintenanceTerm != nil ||
-				data.Terminal != nil || data.Puzzle != nil || data.Furniture != nil ||
-				data.Hazard != nil || data.HazardControl != nil || data.RepairDevice != nil ||
-				data.RepairBlocker != nil || cell.ItemsOnFloor.Size() > 0 {
-				return
-			}
-			target = cell
-		})
+		}
 	}
 	if target == nil {
 		return false
@@ -198,6 +203,74 @@ func placeMaintenanceTerminalInRoom(g *state.Game, roomName string, force bool) 
 	term := entities.NewMaintenanceTerminal(fmt.Sprintf("Maintenance Terminal - %s", roomName), roomName)
 	gameworld.GetGameData(target).MaintenanceTerm = term
 	return true
+}
+
+func firstMaintTerminalCell(g *state.Game, roomName string, force bool) *world.Cell {
+	for _, cell := range maintTerminalCandidateCells(g, roomName) {
+		if cell == nil || !cell.Room || cell.Name != roomName || cell.ExitCell {
+			continue
+		}
+		if cell == PlayerEntryCell(g) {
+			continue
+		}
+		data := gameworld.GetGameData(cell)
+		if data.Generator != nil || data.Door != nil || data.MaintenanceTerm != nil ||
+			data.Terminal != nil || data.Puzzle != nil || data.Furniture != nil ||
+			data.Hazard != nil || data.HazardControl != nil || data.RepairDevice != nil ||
+			data.RepairBlocker != nil || cell.ItemsOnFloor.Size() > 0 {
+			continue
+		}
+		if !force && !CanPlaceBlockingEntity(g, cell) {
+			continue
+		}
+		return cell
+	}
+	return nil
+}
+
+func maintTerminalCandidateCells(g *state.Game, roomName string) []*world.Cell {
+	if g == nil || g.Grid == nil {
+		return nil
+	}
+	if roomName == generator.ShaftRoomName {
+		return LiftShaftCellsFromBottomLeft(g)
+	}
+	var out []*world.Cell
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell != nil && cell.Room && cell.Name == roomName {
+			out = append(out, cell)
+		}
+	})
+	SortCellsByPosition(out)
+	return out
+}
+
+// ForceMaintBootstrapOK guarantees a powered maintenance terminal when generators are online.
+func ForceMaintBootstrapOK(g *state.Game) {
+	if g == nil || g.Grid == nil {
+		return
+	}
+	hasPoweredGen := false
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if hasPoweredGen || cell == nil || !cell.Room {
+			return
+		}
+		gen := gameworld.GetGameData(cell).Generator
+		if gen != nil && gen.IsPowered() {
+			hasPoweredGen = true
+		}
+	})
+	if !hasPoweredGen {
+		return
+	}
+	if CountPoweredMaintenanceTerminals(g) > 0 {
+		return
+	}
+	EnsureMinimumMaintenanceCoverage(g)
+	EnsureMaintTerminalBootstrapFallback(g)
+	if CountPoweredMaintenanceTerminals(g) == 0 {
+		powerFirstUnpoweredMaintenanceTerminal(g)
+	}
 }
 
 // EnsureMaintTerminalBootstrapFallback powers at least one maintenance terminal reachable from

@@ -21,9 +21,13 @@ import (
 
 const levelGenTotalSteps = 13
 
-// GenerateGrid creates a new grid using the default generator
-func GenerateGrid(level int) *world.Grid {
-	return generator.DefaultGenerator.Generate(level)
+// GenerateGrid creates a new grid using the default generator and run deck theme.
+func GenerateGrid(g *state.Game, level int) *world.Grid {
+	theme := deck.ThemeAirlock
+	if g != nil {
+		theme = g.ThemeForDeck(level - 1)
+	}
+	return generator.DefaultGenerator.Generate(level, theme)
 }
 
 // BuildGame creates a new game instance with optional starting level (Phase 3.2, 3.4).
@@ -41,8 +45,10 @@ func BuildGame(startLevel int) *state.Game {
 	g.CurrentDeckID = startLevel - 1
 	g.Level = g.CurrentDeckID + 1
 
-	// Generate current deck on first entry (no stored state yet)
 	seed := time.Now().UnixNano()
+	g.InitRunUnlocks(seed)
+
+	// Generate current deck on first entry (no stored state yet)
 	generateLevel(g, startLevel, seed)
 
 	InitRunTracking(g)
@@ -69,7 +75,7 @@ func generateLevel(g *state.Game, level int, seed int64) {
 	g.CurrentDeckID = level - 1
 
 	report("Generating layout")
-	g.Grid = GenerateGrid(level)
+	g.Grid = GenerateGrid(g, level)
 	setupLevel(g, report)
 }
 
@@ -96,13 +102,14 @@ func LoadLevelFromSeed(g *state.Game, seed int64) {
 	UpdateLightingExploration(g)
 	setup.EnsureSolvabilityDoorPower(g)
 	setup.ApplyGridConductivePower(g)
+	setup.ForceMaintBootstrapOK(g)
 	g.ClearMessages()
 }
 
 func clearLevelProgress(g *state.Game) {
 	g.OwnedItems = mapset.New[*world.Item]()
 	g.Batteries = 0
-	g.HasMap = false
+	// HasMap is run-wide; do not reset here.
 	g.FoundCodes = make(map[string]bool)
 	g.Generators = make([]*entities.Generator, 0)
 	g.RepairObjectives = make([]*entities.RepairObjective, 0)
@@ -215,12 +222,18 @@ func setupLevel(g *state.Game, report func(string)) {
 	report("Staging repair objectives")
 	levelgen.PlaceRepairObjectives(g, avoid)
 
+	report("Placing deck unlock objectives")
+	levelgen.PlaceUnlockObjectives(g, avoid)
+
 	report("Ensuring reachability")
 	setup.EnsureInitProgressReachability(g)
 	setup.EnsureInteractableNavAccess(g)
+	setup.EnsureProgressionNavAccess(g)
+	setup.EnsureExitGatingRepairReachability(g)
 
 	report("Energizing power grid")
 	setup.EnsureSolvabilityDoorPower(g)
+	setup.EnsureEntryAdjacentDoorPower(g)
 	setup.InitMaintenanceTerminalPower(g)
 	setup.EnsureGeneratorRoomBootstrap(g)
 	setup.PlaceAdditionalGenerators(g, avoid)
@@ -228,6 +241,7 @@ func setupLevel(g *state.Game, report func(string)) {
 
 	report("Checking exit routes")
 	setup.EnsureExitReachability(g)
+	setup.EnsureExitGatingRepairReachability(g)
 	setup.ApplyEnvironmentalSignage(g)
 	setup.ApplyObservationLedPuzzleCues(g)
 	setup.ApplyMultiHopLinkage(g)
@@ -235,10 +249,19 @@ func setupLevel(g *state.Game, report func(string)) {
 
 	report("Balancing power grid")
 	setup.EnsureInitialPowerBalance(g)
+	setup.ApplyGridConductivePower(g)
 
 	report("Finalizing deck")
+	setup.EnsureLiftShaftEntryClearance(g)
+	setup.EnsureEntryAdjacentDoorPower(g)
 	setup.EnsureKeycardReachability(g)
-	MoveCell(g, g.Grid.StartCell())
+	setup.ForceMaintBootstrapOK(g)
+
+	report("Adjusting unlock routing")
+	levelgen.EnsureRoutingCouplerNavAccess(g)
+	setup.EnsureProgressionNavAccess(g)
+	setup.EnsureExitGatingRepairReachability(g)
+	spawnInLiftShaft(g)
 }
 
 func applyLoadedDeckFixups(g *state.Game) {
@@ -273,6 +296,7 @@ func ResetLevel(g *state.Game) {
 	UpdateLightingExploration(g)
 	setup.EnsureSolvabilityDoorPower(g)
 	setup.ApplyGridConductivePower(g)
+	setup.ForceMaintBootstrapOK(g)
 
 	g.ClearMessages()
 	logMessage(g, "Level reset!")
@@ -282,38 +306,13 @@ func ResetLevel(g *state.Game) {
 // The lift has no destination; the game is complete (ending per GDD §11).
 // Implementation lives in completion.go (stats snapshot and end-screen phases).
 
-// AdvanceLevel moves to the next deck via the graph: saves current deck state,
-// loads or generates the next deck, sets CurrentDeckID/Level (Phase 3.3, 3.4).
-// Does nothing if already at or past the final deck.
+// AdvanceLevel moves to the next deck when unlocked. Prefer TravelToDeck for lift routing.
 func AdvanceLevel(g *state.Game) {
 	nextID, ok := deck.NextDeckID(g.CurrentDeckID)
 	if !ok {
 		return
 	}
-
-	// Save current deck so we can revisit (Phase 3.4)
-	g.SaveCurrentDeckState()
-
-	clearCrossDeckPowerState(g)
-
-	// Load stored state or generate on first entry (Phase 3.4)
-	if ds := g.DeckStates[nextID]; ds != nil && ds.Grid != nil {
-		g.LoadDeckState(nextID)
-		applyLoadedDeckFixups(g)
-		refreshDeckPower(g)
-		UpdateLightingExploration(g)
-	} else {
-		g.CurrentDeckID = nextID
-		g.Level = g.CurrentDeckID + 1
-		seed := time.Now().UnixNano()
-		generateLevel(g, g.Level, seed)
-		refreshDeckPower(g)
-		g.SaveCurrentDeckState() // Store for potential revisit
-		UpdateLightingExploration(g)
-	}
-
-	g.ClearMessages()
-	logMessage(g, "You moved to deck %d!", g.Level)
+	_ = TravelToDeck(g, nextID+1)
 }
 
 // JumpToDeck moves the player to the given deck level (1-based). Developer/testing only.
@@ -342,12 +341,16 @@ func JumpToDeck(g *state.Game, targetLevel int) error {
 	} else {
 		g.CurrentDeckID = targetID
 		g.Level = targetLevel
-		seed := time.Now().UnixNano()
+		seed := g.RunSeed + int64(targetID)*9973
+		if g.RunSeed == 0 {
+			seed = time.Now().UnixNano()
+		}
 		generateLevel(g, targetLevel, seed)
 		refreshDeckPower(g)
 		g.SaveCurrentDeckState()
 		UpdateLightingExploration(g)
 	}
+	spawnInLiftShaft(g)
 
 	g.ClearMessages()
 	logMessage(g, "Jumped to deck %d (dev)", g.Level)

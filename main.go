@@ -11,7 +11,6 @@ import (
 	"github.com/leonelquinteros/gotext"
 
 	engineinput "darkstation/pkg/engine/input"
-	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/devtools"
 	"darkstation/pkg/game/gameplay"
 	gamemenu "darkstation/pkg/game/menu"
@@ -61,6 +60,7 @@ func main() {
 	// Initialize the Ebiten renderer
 	ebitRenderer := ebitenRenderer.New()
 	ebitRenderer.SetLongUseAdvancer(gameplay.AdvanceLongUseIfActive)
+	ebitRenderer.SetRepairTimerAdvancer(gameplay.OnRepairTimersAdvanced)
 	ebitRenderer.SetHazardClearAdvancer(gameplay.AdvanceHazardClearIfActive)
 	ebitRenderer.SetHazardTourAdvancer(gameplay.AdvanceHazardTourIfActive)
 	ebitRenderer.SetHintRefresher(func(g *state.Game) {
@@ -186,18 +186,9 @@ func mainLoop(g *state.Game) {
 
 	if g.ExitAnimating {
 		elapsed := time.Now().UnixMilli() - g.ExitAnimStartTime
-		const exitAnimDuration = 2000 // 2 seconds (matches drawExitAnimation)
+		const exitAnimDuration = 2000
 		if elapsed >= exitAnimDuration {
 			g.ExitAnimating = false
-			gameplay.AdvanceLevel(g)
-		}
-	} else if g.CurrentCell.ExitCell {
-		// Final deck: lift has no destination; game complete (GDD §10.2, §11)
-		if deck.IsFinalDeck(g.Level) {
-			gameplay.TriggerGameComplete(g)
-		} else if !g.ExitAnimating {
-			g.ExitAnimating = true
-			g.ExitAnimStartTime = time.Now().UnixMilli()
 		}
 	}
 
