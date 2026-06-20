@@ -9,6 +9,7 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
@@ -19,7 +20,7 @@ import (
 // Each hazard's fix (control panel or item) is always placed in the area reachable before
 // crossing the hazard, so the puzzle remains solvable.
 func PlaceHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells *mapset.Set[*world.Cell]) {
-	if g == nil || g.Grid == nil || g.Grid.StartCell() == nil {
+	if g == nil || g.Grid == nil || setup.PlayerEntryCell(g) == nil {
 		return
 	}
 
@@ -75,7 +76,7 @@ func hazardTypesForLevel(level int) []entities.HazardType {
 }
 
 func collectHazardCandidateCells(g *state.Game, lockedDoorCells, blocked *mapset.Set[*world.Cell]) []*world.Cell {
-	currentlyReachable := GetReachableCells(g.Grid, g.Grid.StartCell(), blocked)
+	currentlyReachable := GetReachableCells(g.Grid, setup.PlayerEntryCell(g), blocked)
 	reachableSize := currentlyReachable.Size()
 	var corridorCandidates, roomCandidates []*world.Cell
 
@@ -83,7 +84,7 @@ func collectHazardCandidateCells(g *state.Game, lockedDoorCells, blocked *mapset
 		if !isValidHazardHostCell(g, cell, lockedDoorCells, currentlyReachable) {
 			return
 		}
-		if !blockingCellReducesReachability(g.Grid, g.Grid.StartCell(), blocked, cell, reachableSize) {
+		if !blockingCellReducesReachability(g.Grid, setup.PlayerEntryCell(g), blocked, cell, reachableSize) {
 			return
 		}
 		if !setup.InitProgressPreserved(g, cell) {
@@ -113,9 +114,8 @@ func isValidHazardHostCell(g *state.Game, cell *world.Cell, lockedDoorCells, cur
 	if cell == nil || !cell.Room {
 		return false
 	}
-	start := g.Grid.StartCell()
-	exit := g.Grid.ExitCell()
-	if cell == start || cell == exit {
+	entry := setup.PlayerEntryCell(g)
+	if cell == entry {
 		return false
 	}
 	if lockedDoorCells.Has(cell) || !currentlyReachable.Has(cell) {
@@ -144,8 +144,8 @@ func tryPlaceHazardAt(g *state.Game, cell *world.Cell, hazardTypes []entities.Ha
 	blocked.Each(func(c *world.Cell) { testBlocked.Put(c) })
 	testBlocked.Put(cell)
 
-	reachableBefore := reachableWithoutCells(g.Grid, g.Grid.StartCell(), blocked)
-	reachableWithHazard := reachableWithoutCells(g.Grid, g.Grid.StartCell(), &testBlocked)
+	reachableBefore := reachableWithoutCells(g.Grid, setup.PlayerEntryCell(g), blocked)
+	reachableWithHazard := reachableWithoutCells(g.Grid, setup.PlayerEntryCell(g), &testBlocked)
 
 	hazardType := hazardTypes[levelrand.Intn(len(hazardTypes))]
 	hazard := entities.NewHazard(hazardType)
@@ -181,7 +181,7 @@ func placeHazardSolution(g *state.Game, hazard *entities.Hazard, info entities.H
 	if controlRoom == nil {
 		return false
 	}
-	if !canReachWithoutHazardWithGame(g, g.Grid, g.Grid.StartCell(), controlRoom, hazardCell, lockedDoorCells) {
+	if !canReachWithoutHazardWithGame(g, g.Grid, setup.PlayerEntryCell(g), controlRoom, hazardCell, lockedDoorCells) {
 		return false
 	}
 	if !hazardControlReachableFromFarSide(g, hazardCell, controlRoom, lockedDoorCells) {
@@ -222,11 +222,12 @@ func hazardControlCandidates(g *state.Game, hazardCell *world.Cell, lockedDoorCe
 	var preferred, fallback []*world.Cell
 	placement := setup.NewBlockingPlacementValidator(g)
 	canPlaceCache := make(map[*world.Cell]bool)
+	noLockedDoors := mapset.New[*world.Cell]()
 	addCandidate := func(cell *world.Cell) {
 		if cell == nil {
 			return
 		}
-		if cell == hazardCell || avoid.Has(cell) {
+		if cell == hazardCell || avoid.Has(cell) || cell.ExitCell || generator.IsPlacementExcludedRoom(cell.Name) {
 			return
 		}
 		data := gameworld.GetGameData(cell)
@@ -244,7 +245,14 @@ func hazardControlCandidates(g *state.Game, hazardCell *world.Cell, lockedDoorCe
 		if !canPlace {
 			return
 		}
-		if IsArticulationPoint(g.Grid, g.Grid.StartCell(), cell, lockedDoorCells) {
+		if IsArticulationPoint(g.Grid, setup.PlayerEntryCell(g), cell, lockedDoorCells) {
+			return
+		}
+		// Also reject chokepoints of the door-openable graph: locked doors open later
+		// (keycards are placed on-deck), and a permanent blocker in front of a door's
+		// only approach cell would wall that room off forever (e.g. rooms hosting
+		// exit-gating repairs, soft-locking the deck).
+		if IsArticulationPoint(g.Grid, setup.PlayerEntryCell(g), cell, &noLockedDoors) {
 			return
 		}
 		if cell.Name != "Corridor" {
@@ -326,8 +334,8 @@ func hazardFarSideAdjacentCells(g *state.Game, hazardCell *world.Cell, lockedDoo
 	lockedDoorCells.Each(func(c *world.Cell) { blockedWithHazard.Put(c) })
 	blockedWithHazard.Put(hazardCell)
 
-	before := GetReachableCells(g.Grid, g.Grid.StartCell(), &blockedWithHazard)
-	full := GetReachableCells(g.Grid, g.Grid.StartCell(), lockedDoorCells)
+	before := GetReachableCells(g.Grid, setup.PlayerEntryCell(g), &blockedWithHazard)
+	full := GetReachableCells(g.Grid, setup.PlayerEntryCell(g), lockedDoorCells)
 
 	var far []*world.Cell
 	for _, n := range hazardCell.GetNeighbors() {
@@ -424,7 +432,7 @@ func EnsureHazardControlsSolvable(g *state.Game) {
 		if controlCell == nil {
 			return
 		}
-		if canReachWithoutHazardWithGame(g, g.Grid, g.Grid.StartCell(), controlCell, cell, &locked) &&
+		if canReachWithoutHazardWithGame(g, g.Grid, setup.PlayerEntryCell(g), controlCell, cell, &locked) &&
 			hazardControlReachableFromFarSide(g, cell, controlCell, &locked) {
 			return
 		}
@@ -433,7 +441,7 @@ func EnsureHazardControlsSolvable(g *state.Game) {
 		blocked := mapset.New[*world.Cell]()
 		locked.Each(func(c *world.Cell) { blocked.Put(c) })
 		blocked.Put(cell)
-		reachableWithHazard := GetReachableCells(g.Grid, g.Grid.StartCell(), &blocked)
+		reachableWithHazard := GetReachableCells(g.Grid, setup.PlayerEntryCell(g), &blocked)
 
 		replacement := findHazardControlCell(g, cell, &locked, reachableWithHazard, &avoid)
 		if replacement == nil {
@@ -497,27 +505,13 @@ func findHazardItemCell(g *state.Game, hazardCell *world.Cell, lockedDoorCells, 
 }
 
 func isValidHazardItemCell(g *state.Game, cell, hazardCell *world.Cell, lockedDoorCells, avoid *mapset.Set[*world.Cell]) bool {
-	if cell == nil || cell == hazardCell || avoid.Has(cell) {
+	if cell == nil || cell == hazardCell {
 		return false
 	}
-	if lockedDoorCells.Has(cell) {
+	if lockedDoorCells != nil && lockedDoorCells.Has(cell) {
 		return false
 	}
-	data := gameworld.GetGameData(cell)
-	if data.HazardControl != nil || data.Generator != nil || data.MaintenanceTerm != nil {
-		return false
-	}
-	if data.Hazard != nil && data.Hazard.IsBlocking() {
-		return false
-	}
-	if cell.ItemsOnFloor.Size() > 0 {
-		return false
-	}
-	ok, _ := setup.CanEnterCellAtInit(g, cell)
-	if !ok {
-		return false
-	}
-	return true
+	return setup.ValidFloorLootPlacementCell(g, cell, avoid)
 }
 
 func collectHazardSolutionItemCells(g *state.Game) mapset.Set[*world.Cell] {
@@ -601,7 +595,7 @@ func findHazardItemRelocationCell(g *state.Game, near *world.Cell, lockedDoorCel
 		add(n)
 	}
 	if len(candidates) == 0 {
-		reach := GetReachableCells(g.Grid, g.Grid.StartCell(), lockedDoorCells)
+		reach := GetReachableCells(g.Grid, setup.PlayerEntryCell(g), lockedDoorCells)
 		reach.Each(func(cell *world.Cell) { add(cell) })
 	}
 	if len(candidates) == 0 {

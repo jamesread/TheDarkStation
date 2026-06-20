@@ -233,6 +233,9 @@ func roomMaintenanceTerminalPowered(g *state.Game, roomName string) bool {
 }
 
 func canToggleRoomPower(g *state.Game, controllerRoom, targetRoom string) bool {
+	if setup.IsAlwaysArmedOverlayRoom(targetRoom) {
+		return false
+	}
 	if controllerRoom != "" {
 		return setup.CanControlRoomPower(g, controllerRoom, targetRoom)
 	}
@@ -593,6 +596,9 @@ func (h *MaintenanceMenuHandler) OnActivate(item MenuItem, index int) (shouldClo
 		return true, ""
 	}
 	if toggle, isToggle := item.(*RoomPowerToggleMenuItem); isToggle {
+		if setup.IsAlwaysArmedOverlayRoom(toggle.RoomName) {
+			return false, ""
+		}
 		if !canToggleRoomPower(h.g, toggle.ControllerRoom, toggle.RoomName) {
 			if toggle.ControllerRoom != "" && toggle.ControllerRoom != toggle.RoomName {
 				return false, "No control path to this room from here"
@@ -662,6 +668,9 @@ func (h *MaintenanceMenuHandler) OnActivate(item MenuItem, index int) (shouldClo
 	}
 	if _, isRefresh := item.(*RefreshPowerGridMenuItem); isRefresh {
 		return false, h.refreshPowerGrid()
+	}
+	if _, isOverride := item.(*PolicyOverrideMenuItem); isOverride {
+		return false, h.deprecatePolicies()
 	}
 	if shutdown, isShutdown := item.(*DelayedShutdownMenuItem); isShutdown {
 		return false, shutdown.Parent.scheduleDelayedShutdown()

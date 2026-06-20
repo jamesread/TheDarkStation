@@ -19,7 +19,7 @@ func IsPermanentlyBlockingCell(cell *world.Cell) bool {
 	data := gameworld.GetGameData(cell)
 	return data.Generator != nil || data.Furniture != nil || data.Terminal != nil ||
 		data.Puzzle != nil || data.MaintenanceTerm != nil || data.HazardControl != nil ||
-		data.RepairDevice != nil
+		gameworld.RepairDeviceBlocksMovement(cell)
 }
 
 // isPassableAtLevelCompletion reports whether the player could step on the cell once all win
@@ -38,24 +38,24 @@ func isPassableAtLevelCompletion(cell *world.Cell, extraBlocked *mapset.Set[*wor
 	return true
 }
 
-// ExitReachableWhenCompletable reports whether the exit cell can be reached from start
+// ExitReachableWhenCompletable reports whether the exit cell can be reached from the player entry
 // assuming all doors are powered/unlocked and all hazards are cleared.
 // extraBlocked treats additional cells as permanently blocked (for placement checks).
 func ExitReachableWhenCompletable(g *state.Game, extraBlocked *world.Cell) bool {
 	if g == nil || g.Grid == nil {
 		return false
 	}
-	start := g.Grid.StartCell()
+	entry := PlayerEntryCell(g)
 	exit := g.Grid.ExitCell()
-	if start == nil || exit == nil {
-		return true // no layout constraint when start/exit not set (unit tests)
+	if entry == nil || exit == nil {
+		return true // no layout constraint when entry/exit not set (unit tests)
 	}
 	extra := mapset.New[*world.Cell]()
 	if extraBlocked != nil {
 		extra.Put(extraBlocked)
 	}
 	reachable := mapset.New[*world.Cell]()
-	queue := []*world.Cell{start}
+	queue := []*world.Cell{entry}
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
@@ -76,8 +76,11 @@ func ExitReachableWhenCompletable(g *state.Game, extraBlocked *world.Cell) bool 
 }
 
 // CanPlaceBlockingEntity reports whether placing a permanent blocker at candidate still
-// leaves a completable path to the exit (R7), preserves adjacent nav space for interactables,
-// and does not cut off init-reachable keycards or rooms.
+// leaves a completable path to the exit (R7), preserves the whole completion-reachable
+// region (I-Rooms: no room or corridor pocket may be permanently sealed), preserves
+// adjacent nav space for interactables, and does not cut off init-reachable keycards
+// or rooms. Callers placing several blockers must re-check each placement against the
+// current grid (after earlier placements), not against a pre-collected candidate list.
 func CanPlaceBlockingEntity(g *state.Game, candidate *world.Cell) bool {
 	if g == nil || candidate == nil {
 		return false
@@ -88,7 +91,13 @@ func CanPlaceBlockingEntity(g *state.Game, candidate *world.Cell) bool {
 	if !ExitReachableWhenCompletable(g, candidate) {
 		return false
 	}
+	if !CompletionRegionPreserved(g, candidate) {
+		return false
+	}
 	if !BlockingPlacementPreservesNavAccess(g, candidate) {
+		return false
+	}
+	if !bootstrapDoorNavPreserved(g, candidate) {
 		return false
 	}
 	return InitProgressPreserved(g, candidate)

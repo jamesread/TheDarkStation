@@ -22,8 +22,8 @@ func makeStartPocketGrid(t *testing.T) (*state.Game, *world.Cell) {
 	grid.MarkAsRoomWithName(1, 3, "Corridor", "desc")
 	grid.MarkAsRoomWithName(0, 4, "Lab", "desc")
 	grid.MarkAsRoomWithName(1, 4, "Lab", "desc")
-	grid.SetStartCellAt(1, 1)
-	grid.SetExitCellAt(0, 4)
+	grid.SetStartCellAt(1, 2)
+	grid.SetExitCellAt(1, 1)
 	grid.BuildAllCellConnections()
 	grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell != nil {
@@ -122,8 +122,6 @@ func TestAnalyzeSolvability_NoEgressWarningsWhenControllable(t *testing.T) {
 	g, _ := makeStartPocketGrid(t)
 	report := AnalyzeSolvability(g)
 	for _, w := range report.Warnings {
-		if w != "exit not reachable at init (expected until doors powered/keycards found)" {
-			t.Errorf("unexpected warning: %s", w)
-		}
+		t.Errorf("unexpected warning: %s", w)
 	}
 }

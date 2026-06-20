@@ -18,6 +18,7 @@ const (
 	LongUseGeneratorPowerUp  LongUseKind = "generator_power_up"
 	LongUseDoorManualRelease LongUseKind = "door_manual_release"
 	LongUseRepair            LongUseKind = "repair"
+	LongUseCouplerCrank      LongUseKind = "coupler_crank"
 )
 
 // LongUseHoldDuration is how long the player must hold USE for hold-to-use interactions.
@@ -40,12 +41,9 @@ func TryBeginLongUseOnAdjacent(g *state.Game) bool {
 }
 
 func findAdjacentLongUseTarget(g *state.Game) (*world.Cell, LongUseKind, bool) {
-	neighbors := []*world.Cell{
-		g.CurrentCell.North,
-		g.CurrentCell.South,
-		g.CurrentCell.East,
-		g.CurrentCell.West,
-	}
+	// Current cell first: walkable devices (conduit splices) can be underfoot.
+	neighbors := append([]*world.Cell{g.CurrentCell},
+		state.AdjacentCellsClockwiseFromFacing(g.CurrentCell, g.PlayerFacing)...)
 	for _, cell := range neighbors {
 		if cell == nil {
 			continue
@@ -221,6 +219,7 @@ func completeGeneratorPowerUp(g *state.Game, cell *world.Cell) {
 	setup.NotifyPowerGridChanged(g)
 	setup.BootstrapPoweredGenerators(g, cell)
 	UpdateLightingExploration(g)
+	renderer.AddDevicePulse(cell.Row, cell.Col)
 	renderer.AddCallout(cell.Row, cell.Col,
 		"POWERED{"+gen.Name+" - online}", renderer.CalloutColorGeneratorOn, 0)
 	logMessage(g, "ITEM{%s} is now powered!", gen.Name)
@@ -244,6 +243,9 @@ func completeRepairLongUse(g *state.Game, cell *world.Cell) {
 // Cancel only on button-up (released); !held without release keeps the session paused.
 func AdvanceLongUseIfActive(g *state.Game, held, released bool, nowMs int64) {
 	if g == nil || g.LongUse == nil {
+		return
+	}
+	if LongUseKind(g.LongUse.Kind) == LongUseCouplerCrank {
 		return
 	}
 	session := g.LongUse

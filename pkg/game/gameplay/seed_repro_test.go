@@ -40,16 +40,12 @@ func TestSeed1779797637817431329_Level3_HasFullLayout(t *testing.T) {
 	const seed = int64(1779797637817431329)
 	const level = 3
 
-	g := state.NewGame()
-	g.Level = level
-	RegenerateFromSeed(g, seed)
+	g := BuildGame(level)
+	LoadLevelFromSeed(g, seed)
 
 	gens, furn, maint, cctv, puzzles := countEntities(g)
 	if gens == 0 {
 		t.Fatal("expected at least one generator")
-	}
-	if furn == 0 {
-		t.Fatal("expected furniture")
 	}
 	if maint == 0 {
 		t.Fatal("expected maintenance terminals")

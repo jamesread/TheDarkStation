@@ -7,6 +7,7 @@ import (
 	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/deck"
+	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
@@ -131,6 +132,97 @@ func (r *RoomCircuitPresetMenuItem) HandleCycle(delta int) (bool, string) {
 	return true, r.Parent.applyCircuitPreset(preset)
 }
 
+// PolicyOverrideMenuItem deprecates the deck's conservation policies using a
+// Crew Override Authorization from the player's inventory (consumed on use).
+type PolicyOverrideMenuItem struct {
+	Parent *MaintenanceMenuHandler
+}
+
+func (p *PolicyOverrideMenuItem) GetLabel() string {
+	return "Deprecate station policies\tSUBTLE{(Crew Override Authorization)}"
+}
+
+func (p *PolicyOverrideMenuItem) IsSelectable() bool {
+	return setup.ActivePolicyCount(p.Parent.g) > 0 && playerOwnsItemNamed(p.Parent.g, entities.CrewOverrideItemName)
+}
+
+func (p *PolicyOverrideMenuItem) GetHelpText() string {
+	if setup.ActivePolicyCount(p.Parent.g) == 0 {
+		return "No active policies on this deck"
+	}
+	if !playerOwnsItemNamed(p.Parent.g, entities.CrewOverrideItemName) {
+		return "Requires a Crew Override Authorization (search the deck)"
+	}
+	return engineinput.HintPressConfirmTo("permanently deprecate this deck's automation policies")
+}
+
+func playerOwnsItemNamed(g *state.Game, name string) bool {
+	if g == nil || name == "" {
+		return false
+	}
+	found := false
+	g.OwnedItems.Each(func(item *world.Item) {
+		if item != nil && item.Name == name {
+			found = true
+		}
+	})
+	return found
+}
+
+func consumeOwnedItemNamed(g *state.Game, name string) bool {
+	if g == nil || name == "" {
+		return false
+	}
+	var found *world.Item
+	g.OwnedItems.Each(func(item *world.Item) {
+		if found == nil && item != nil && item.Name == name {
+			found = item
+		}
+	})
+	if found == nil {
+		return false
+	}
+	g.OwnedItems.Remove(found)
+	return true
+}
+
+func (h *MaintenanceMenuHandler) deprecatePolicies() string {
+	if setup.ActivePolicyCount(h.g) == 0 {
+		return "No active policies on this deck"
+	}
+	if !consumeOwnedItemNamed(h.g, entities.CrewOverrideItemName) {
+		return "Requires a Crew Override Authorization"
+	}
+	n := setup.OverrideDeckPolicies(h.g)
+	return fmt.Sprintf("Crew override accepted — %d polic%s deprecated", n, pluralYIes(n))
+}
+
+func pluralYIes(n int) string {
+	if n == 1 {
+		return "y"
+	}
+	return "ies"
+}
+
+// policyMenuLines renders the deck's conservation policies for the diagnostics panel.
+func policyMenuLines(g *state.Game) []string {
+	if g == nil || len(g.Policies) == 0 {
+		return nil
+	}
+	lines := []string{"SUBTLE{STATION POLICIES}"}
+	for _, p := range g.Policies {
+		if p == nil {
+			continue
+		}
+		status := "UNPOWERED{" + p.Code + " ACTIVE}"
+		if p.Overridden {
+			status = "SUBTLE{" + p.Code + " DEPRECATED}"
+		}
+		lines = append(lines, fmt.Sprintf("POLICY\t%s\t%s", status, p.RuleText()))
+	}
+	return lines
+}
+
 // RefreshPowerGridMenuItem re-applies generator-fed terminal power across the conductive grid.
 type RefreshPowerGridMenuItem struct {
 	Parent *MaintenanceMenuHandler
@@ -146,7 +238,7 @@ func (r *RefreshPowerGridMenuItem) GetHelpText() string {
 	return engineinput.HintPressConfirmTo("re-apply terminal feed from powered generators via the conductive grid")
 }
 
-// DelayedShutdownMenuItem starts a five-second countdown before powered generators shut down.
+// DelayedShutdownMenuItem starts a five-second countdown before the viewed room's circuits shut down.
 type DelayedShutdownMenuItem struct {
 	Parent *MaintenanceMenuHandler
 }
@@ -165,7 +257,15 @@ func (d *DelayedShutdownMenuItem) GetLabel() string {
 }
 
 func (d *DelayedShutdownMenuItem) IsSelectable() bool {
-	return d.Parent != nil && countPoweredGenerators(d.Parent.g) > 0 && !d.shutdownPending()
+	if d.Parent == nil || d.shutdownPending() {
+		return false
+	}
+	room := d.Parent.selectedRoomName
+	if !canToggleRoomPower(d.Parent.g, d.Parent.terminalRoomName, room) {
+		return false
+	}
+	g := d.Parent.g
+	return g.RoomDoorsPowered[room] || g.RoomCCTVPowered[room]
 }
 
 func (d *DelayedShutdownMenuItem) GetHelpText() string {
@@ -178,13 +278,20 @@ func (d *DelayedShutdownMenuItem) GetHelpText() string {
 		if secs < 1 {
 			secs = 1
 		}
-		return fmt.Sprintf("Generator shutdown in %d seconds", secs)
+		room := setup.GeneratorShutdownRoom(d.Parent.g)
+		if room != "" {
+			return fmt.Sprintf("%s circuits shut down in %d seconds", room, secs)
+		}
+		return fmt.Sprintf("Room shutdown in %d seconds", secs)
 	}
-	powered := countPoweredGenerators(d.Parent.g)
-	if powered == 0 {
-		return "No powered generators to shut down"
+	room := d.Parent.selectedRoomName
+	if !canToggleRoomPower(d.Parent.g, d.Parent.terminalRoomName, room) {
+		return "No control path to this room from here"
 	}
-	return engineinput.HintPressConfirmTo(fmt.Sprintf("shut down %d powered generator(s) in %d seconds", powered, int(setup.GeneratorShutdownDelay.Seconds())))
+	if !d.Parent.g.RoomDoorsPowered[room] && !d.Parent.g.RoomCCTVPowered[room] {
+		return "Room circuits are already off"
+	}
+	return engineinput.HintPressConfirmTo(fmt.Sprintf("shut down %s in %d seconds", room, int(setup.GeneratorShutdownDelay.Seconds())))
 }
 
 func (d *DelayedShutdownMenuItem) shutdownPending() bool {
@@ -359,23 +466,29 @@ func (h *MaintenanceMenuHandler) scheduleDelayedShutdown() string {
 	if h == nil || h.g == nil {
 		return ""
 	}
+	room := h.selectedRoomName
+	if !canToggleRoomPower(h.g, h.terminalRoomName, room) {
+		if h.terminalRoomName != "" && h.terminalRoomName != room {
+			return "No control path to this room from here"
+		}
+		return "Activate this room's maintenance terminal first"
+	}
 	if pending, remaining, _, _ := setup.GeneratorShutdownPending(h.g, setup.PowerNowMs()); pending {
 		secs := (remaining + 999) / 1000
 		if secs < 1 {
 			secs = 1
 		}
-		return fmt.Sprintf("Generator shutdown already counting down: %d seconds", secs)
+		return fmt.Sprintf("Room shutdown already counting down: %d seconds", secs)
 	}
-	powered := countPoweredGenerators(h.g)
-	if powered == 0 {
-		return "No powered generators to shut down"
+	if !h.g.RoomDoorsPowered[room] && !h.g.RoomCCTVPowered[room] {
+		return "Room circuits are already off"
 	}
 	row, col := h.g.MaintenanceMenuTerminalRow, h.g.MaintenanceMenuTerminalCol
 	if h.cell != nil {
 		row, col = h.cell.Row, h.cell.Col
 	}
-	setup.ScheduleGeneratorShutdown(h.g, row, col, setup.PowerNowMs())
-	return fmt.Sprintf("Delayed shutdown armed — %d seconds until %d generator(s) stop", int(setup.GeneratorShutdownDelay.Seconds()), powered)
+	setup.ScheduleGeneratorShutdown(h.g, room, row, col, setup.PowerNowMs())
+	return fmt.Sprintf("Delayed shutdown armed — %d seconds until %s powers down", int(setup.GeneratorShutdownDelay.Seconds()), room)
 }
 
 func (h *MaintenanceMenuHandler) pingNearbyInline() string {
@@ -461,6 +574,22 @@ func (h *MaintenanceMenuHandler) getDiagnosticsMenuItems() []MenuItem {
 		&InfoMenuItem{Label: "SUBTLE{" + flavourLine + "}"},
 		&ViewingRoomMenuItem{Parent: h},
 		&InfoMenuItem{Label: ""},
+	}
+	// Functional bus trace: where does conduction toward the selected room stop?
+	trace := setup.TraceBusFault(h.g, h.cell, h.selectedRoomName)
+	items = append(items,
+		&InfoMenuItem{Label: "SUBTLE{BUS TRACE — " + h.selectedRoomName + "}"},
+		&InfoMenuItem{Label: setup.FormatBusTraceLine(trace)},
+		&InfoMenuItem{Label: ""},
+	)
+	if policyLines := policyMenuLines(h.g); len(policyLines) > 0 {
+		for _, line := range policyLines {
+			items = append(items, &InfoMenuItem{Label: line})
+		}
+		if setup.ActivePolicyCount(h.g) > 0 {
+			items = append(items, &PolicyOverrideMenuItem{Parent: h})
+		}
+		items = append(items, &InfoMenuItem{Label: ""})
 	}
 	for _, line := range instrLines {
 		items = append(items, &InfoMenuItem{Label: line})

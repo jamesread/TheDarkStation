@@ -147,3 +147,17 @@ func TestGenerator_InsertBatteries(t *testing.T) {
 		})
 	}
 }
+
+func TestPermanentFusionReactor_alwaysPowered(t *testing.T) {
+	gen := NewPermanentFusionReactor("Ship's fusion reactor")
+	if !gen.IsPowered() {
+		t.Fatal("permanent reactor should be powered at creation")
+	}
+	gen.Trip()
+	if !gen.IsPowered() {
+		t.Fatal("permanent reactor should stay powered after Trip")
+	}
+	if gen.InsertBatteriesAndStart(3) != 0 {
+		t.Fatal("permanent reactor should ignore battery insertion")
+	}
+}

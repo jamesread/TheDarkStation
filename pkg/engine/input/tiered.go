@@ -33,7 +33,8 @@ const (
 	ActionCancel
 	ActionScreenshot
 	ActionOpenMenu
-	ActionAction   // Generic "action/confirm" (e.g., Enter/A)
+	ActionOpenInventory // Open run-wide inventory overlay (in-game)
+	ActionAction        // Generic "action/confirm" (e.g., Enter/A)
 	ActionInteract // Interact with furniture/objects (E, Enter, A button)
 	ActionDevMenu  // Open developer menu (F9)
 	ActionDevMap   // Switch to developer testing map (menu / console)
@@ -118,9 +119,10 @@ var bindings = map[string]Action{
 	"screenshot": ActionScreenshot,
 
 	// Menu
-	"menu": ActionOpenMenu,
-	"f9":   ActionDevMenu,
-	"f8":   ActionDebugMapDump,
+	"menu":        ActionOpenMenu,
+	"f":           ActionOpenInventory,
+	"f9":          ActionDevMenu,
+	"f8":          ActionDebugMapDump,
 
 	// Controller/gamepad specific bindings
 	"gamepad_dpad_up":    ActionMoveNorth,
@@ -132,6 +134,7 @@ var bindings = map[string]Action{
 	"e":         ActionInteract,
 	"enter":     ActionInteract,
 	"gamepad_a": ActionInteract, // A button / Cross
+	"gamepad_y": ActionOpenInventory,
 
 	// Zoom (fixed bindings, not rebindable)
 	"=":               ActionZoomIn,
@@ -188,6 +191,8 @@ func ActionName(a Action) string {
 		return "Screenshot"
 	case ActionOpenMenu:
 		return "Open Menu"
+	case ActionOpenInventory:
+		return "Open Inventory"
 	case ActionDevMenu:
 		return "Developer Menu"
 	case ActionDevMap:

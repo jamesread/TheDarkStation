@@ -12,6 +12,7 @@ import (
 
 	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/game/config"
+	"darkstation/pkg/game/state"
 )
 
 // Update handles input and game logic (Ebiten interface)
@@ -61,11 +62,8 @@ func (e *EbitenRenderer) Update() error {
 
 	// Update floating tiles for main menu and completion screens.
 	if e.floatingTilesAnimationActive() {
-		w, h := ebiten.WindowSize()
-		if w > 0 && h > 0 {
-			e.ensureFloatingTiles(w, h)
-			e.updateFloatingTiles(w, h)
-		}
+		w, h := e.floatingTileScreenSize()
+		e.updateFloatingTiles(w, h)
 	}
 
 	// Handle font size changes (Ctrl+= to increase, Ctrl+- to decrease)
@@ -122,6 +120,9 @@ func (e *EbitenRenderer) advanceTimedGameState(nowMs int64) {
 	// game loop path; doing it from Ebiten's Update thread can race power
 	// consumption calculations. Repair timers only update repair objective state.
 	if g.AdvanceRepairTimers(nowMs) {
+		if e.repairTimerAdvancer != nil {
+			e.repairTimerAdvancer(g)
+		}
 		e.RenderFrame(g)
 	}
 }
@@ -133,7 +134,12 @@ func (e *EbitenRenderer) advanceLongUseFromInput() {
 	e.gameMutex.RLock()
 	g := e.game
 	e.gameMutex.RUnlock()
-	if g == nil || g.LongUse == nil {
+	if g == nil {
+		e.longUsePrevHeld = false
+		return
+	}
+	wasCouplerCrank := isCouplerCrankSession(g)
+	if g.LongUse == nil {
 		e.longUsePrevHeld = false
 		return
 	}
@@ -141,6 +147,13 @@ func (e *EbitenRenderer) advanceLongUseFromInput() {
 	released := e.longUsePrevHeld && !held
 	e.longUsePrevHeld = held
 	e.longUseAdvancer(g, held, released, e.menuAnimClockMilli)
+	if wasCouplerCrank || isCouplerCrankSession(g) {
+		e.RenderFrame(g)
+	}
+}
+
+func isCouplerCrankSession(g *state.Game) bool {
+	return g != nil && g.LongUse != nil && g.LongUse.Kind == "coupler_crank"
 }
 
 func (e *EbitenRenderer) advanceHazardClear() {
@@ -631,6 +644,13 @@ func (e *EbitenRenderer) checkInput() engineinput.Intent {
 		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
 			Device: engineinput.DeviceKeyboard,
 			Code:   "f9",
+		}))
+	}
+
+	if inpututil.IsKeyJustPressed(ebiten.KeyF) {
+		return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
+			Device: engineinput.DeviceKeyboard,
+			Code:   "f",
 		}))
 	}
 

@@ -318,6 +318,7 @@ func getFloorIconHTML(roomName string, visited bool) string {
 		"Mess Hall":       {"·", "•"},
 		"Airlock":         {"╳", "╳"},
 		"Corridor":        {"░", "░"},
+		"Lift Shaft":      {"▦", "▦"},
 	}
 
 	for baseRoom, icons := range roomFloorIcons {

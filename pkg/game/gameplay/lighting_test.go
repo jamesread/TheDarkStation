@@ -91,14 +91,12 @@ func makeLightingGrid() (*world.Grid, *state.Game) {
 	return grid, g
 }
 
-func TestUpdateLightingExploration_AlwaysLitRoomCells(t *testing.T) {
+func TestUpdateLightingExploration_HeadlampLightsNearbyCells(t *testing.T) {
 	grid, g := makeLightingGrid()
 	g.Generators = nil
 	g.RoomLightsPowered = map[string]bool{"R": false}
 
-	cell := grid.GetCell(1, 1)
-	cell.Discovered = true
-	cell.Visited = true
+	cell := grid.GetCell(1, 1) // within HeadlampRadius of the player at (0,0)
 	gameworld.GetGameData(cell).LightsOn = false
 	gameworld.GetGameData(cell).Lighted = false
 
@@ -106,11 +104,105 @@ func TestUpdateLightingExploration_AlwaysLitRoomCells(t *testing.T) {
 
 	data := gameworld.GetGameData(cell)
 	if !data.LightsOn || !data.Lighted {
-		t.Error("room cells should always be lit while lighting system is disabled")
+		t.Error("cells within headlamp radius should be illuminated even with no grid power")
+	}
+	if !cell.Discovered {
+		t.Error("headlamp-lit cells should be discovered")
 	}
 }
 
-func TestUpdateLightingExploration_DiscoveredCellsNotDarkenedWithoutPower(t *testing.T) {
+func TestApplyHeadlamp_ConeFollowsFacing(t *testing.T) {
+	grid, g := makeLightingGrid()
+	g.Generators = nil
+	g.RoomLightsPowered = map[string]bool{"R": false}
+	g.CurrentCell = grid.GetCell(2, 0)
+
+	ahead := grid.GetCell(0, 0)  // 2 north of the player
+	behind := grid.GetCell(4, 0) // 2 south of the player
+
+	g.PlayerFacing = state.FaceNorth
+	UpdateLightingExploration(g)
+	if !gameworld.GetGameData(ahead).LightsOn {
+		t.Error("cell 2 ahead of facing should be inside the headlamp cone")
+	}
+	if gameworld.GetGameData(behind).LightsOn {
+		t.Error("cell 2 behind facing should be outside the headlamp cone")
+	}
+
+	// Turn around: the beam swings with the player.
+	g.PlayerFacing = state.FaceSouth
+	UpdateLightingExploration(g)
+	if gameworld.GetGameData(ahead).LightsOn {
+		t.Error("after turning south, the cell 2 north should fall out of the beam")
+	}
+	if !gameworld.GetGameData(behind).LightsOn {
+		t.Error("after turning south, the cell 2 south should be lit")
+	}
+	if !gameworld.GetGameData(ahead).Lighted {
+		t.Error("a cell seen lit must keep remembered knowledge after the beam moves off it")
+	}
+}
+
+func TestApplyHeadlamp_BackRadiusKeepsAdjacentGlow(t *testing.T) {
+	grid, g := makeLightingGrid()
+	g.Generators = nil
+	g.RoomLightsPowered = map[string]bool{"R": false}
+	g.CurrentCell = grid.GetCell(2, 0)
+	g.PlayerFacing = state.FaceNorth
+
+	UpdateLightingExploration(g)
+
+	adjacentBehind := grid.GetCell(3, 0) // 1 south of the player
+	if !gameworld.GetGameData(adjacentBehind).LightsOn {
+		t.Error("cells at Chebyshev distance 1 should stay lit regardless of facing (residual glow)")
+	}
+}
+
+func TestRefreshHeadlampCone_RestoresGridLitCells(t *testing.T) {
+	grid, g := makeLightingGrid()
+	g.Generators = nil
+	g.RoomLightsPowered = map[string]bool{"R": false}
+	g.CurrentCell = grid.GetCell(2, 0)
+	g.PlayerFacing = state.FaceNorth
+	UpdateLightingExploration(g)
+
+	// Simulate a grid-lit cell inside the cone window, then swing the cone away.
+	gridLitCell := grid.GetCell(0, 0)
+	gameworld.GetGameData(gridLitCell).GridLit = true
+	g.PlayerFacing = state.FaceSouth
+	RefreshHeadlampCone(g)
+
+	if !gameworld.GetGameData(gridLitCell).LightsOn {
+		t.Error("grid-lit cell must stay lit when the headlamp cone swings off it")
+	}
+	if !gameworld.GetGameData(grid.GetCell(4, 0)).LightsOn {
+		t.Error("cone refresh should light the new facing direction")
+	}
+}
+
+func TestHeadlampConeCovers(t *testing.T) {
+	faceRow, faceCol := state.FaceNorth.Delta()
+	cases := []struct {
+		dr, dc int
+		want   bool
+	}{
+		{0, 0, true},   // player cell
+		{-2, 0, true},  // straight ahead
+		{-2, 2, true},  // forward diagonal
+		{0, 2, true},   // perpendicular at full radius (dot == 0 counts as forward)
+		{1, 0, true},   // 1 behind: residual glow
+		{2, 0, false},  // 2 behind
+		{2, -2, false}, // rear diagonal
+		{-3, 0, false}, // beyond radius
+	}
+	for _, c := range cases {
+		if got := headlampConeCovers(c.dr, c.dc, faceRow, faceCol); got != c.want {
+			t.Errorf("headlampConeCovers(%d,%d facing north) = %v, want %v", c.dr, c.dc, got, c.want)
+		}
+	}
+}
+
+func TestUpdateLightingExploration_FarDiscoveredCellGoesDarkWithoutPower(t *testing.T) {
 	grid, g := makeLightingGrid()
 	g.Generators = nil
 	g.CurrentCell = grid.GetCell(0, 0)
@@ -122,11 +214,60 @@ func TestUpdateLightingExploration_DiscoveredCellsNotDarkenedWithoutPower(t *tes
 	UpdateLightingExploration(g)
 
 	if !farCell.Discovered {
-		t.Error("discovered cells should not be darkened while lighting is disabled")
+		t.Error("going dark must not lose discovery (layout knowledge is sticky)")
 	}
 	data := gameworld.GetGameData(farCell)
-	if !data.LightsOn || !data.Lighted {
-		t.Error("discovered room cells should be marked lit")
+	if data.LightsOn {
+		t.Error("far cell with no live power and no headlamp should be dark")
+	}
+	if data.Lighted {
+		t.Error("cell never seen lit should not gain remembered knowledge")
+	}
+}
+
+func TestUpdateLightingExploration_LiveConduitLightsRoom(t *testing.T) {
+	grid, g := makeLightingGrid()
+
+	// Powered generator on the grid inside room "R" (left block).
+	genCell := grid.GetCell(5, 0)
+	gen := entities.NewGenerator("G-grid", 1)
+	gen.InsertBatteriesAndStart(1)
+	gameworld.GetGameData(genCell).Generator = gen
+
+	farSameRoom := grid.GetCell(3, 1) // outside headlamp range, same conductive pocket
+	farSameRoom.Discovered = true
+	disconnected := grid.GetCell(5, 5) // right block: no conduit from the generator
+	disconnected.Discovered = true
+
+	UpdateLightingExploration(g)
+
+	if !gameworld.GetGameData(farSameRoom).LightsOn {
+		t.Error("cell on a live conduit with lights enabled should be lit")
+	}
+	if !gameworld.GetGameData(farSameRoom).Lighted {
+		t.Error("discovered cell seen lit should gain remembered knowledge")
+	}
+	if gameworld.GetGameData(disconnected).LightsOn {
+		t.Error("cell disconnected from every powered generator should stay dark")
+	}
+}
+
+func TestUpdateLightingExploration_RoomLightsToggleGatesConduitLighting(t *testing.T) {
+	grid, g := makeLightingGrid()
+	g.RoomLightsPowered = map[string]bool{"R": false}
+
+	genCell := grid.GetCell(5, 0)
+	gen := entities.NewGenerator("G-grid", 1)
+	gen.InsertBatteriesAndStart(1)
+	gameworld.GetGameData(genCell).Generator = gen
+
+	farSameRoom := grid.GetCell(3, 1)
+	farSameRoom.Discovered = true
+
+	UpdateLightingExploration(g)
+
+	if gameworld.GetGameData(farSameRoom).LightsOn {
+		t.Error("room with lights circuit off should stay dark even on a live conduit")
 	}
 }
 
@@ -172,7 +313,7 @@ func TestUpdateLightingExploration_RecalculatesPowerStateBeforeApplyingLighting(
 	}
 	data := gameworld.GetGameData(cell)
 	if !data.LightsOn || !data.Lighted {
-		t.Error("expected room cell to be lit while lighting system is disabled")
+		t.Error("expected cell within headlamp radius to be lit")
 	}
 }
 

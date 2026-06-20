@@ -5,6 +5,7 @@ import (
 	"github.com/zyedidia/generic/mapset"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -67,16 +68,15 @@ func roomsWithDoors(grid *world.Grid) map[string]bool {
 
 // EnsureSolvabilityDoorPower fixes room power so that no gatekeeper room creates a control-dependency deadlock.
 // Must be called after maintenance terminals are placed (so we know which rooms have a terminal).
-// A gatekeeper room R is one through which every path from start to exit goes. If R's doors are unpowered and
-// no room adjacent to R that has a maintenance terminal is reachable from start without entering R, the player
-// could never power R's doors. This function powers R's doors initially in that case.
+// A gatekeeper room R is one the player must pass through to expand from the lift shaft entry. If R's doors are
+// unpowered and no room adjacent to R that has a maintenance terminal is reachable from entry without entering R,
+// the player could never power R's doors. This function powers R's doors initially in that case.
 func EnsureSolvabilityDoorPower(g *state.Game) {
 	if g.Grid == nil {
 		return
 	}
-	start := g.Grid.StartCell()
-	exit := g.Grid.ExitCell()
-	if start == nil || exit == nil {
+	entry := PlayerEntryCell(g)
+	if entry == nil {
 		return
 	}
 	// Which rooms have at least one maintenance terminal (only those can control other rooms' power)
@@ -96,16 +96,42 @@ func EnsureSolvabilityDoorPower(g *state.Game) {
 			continue
 		}
 
-		// Reachable set when we block all doors into this room
-		reachableWithoutR := getReachableCellsBlockingDoorsInto(g.Grid, start, roomName)
+		reachableAll := getReachableCellsBlockingDoorsInto(g.Grid, entry, "")
+		reachableWithoutR := getReachableCellsBlockingDoorsInto(g.Grid, entry, roomName)
+		roomsAll := reachableNamedRooms(reachableAll)
+		roomsWithout := reachableNamedRooms(reachableWithoutR)
 
-		// Is the exit reachable without entering R? If yes, R is not a gatekeeper.
-		if reachableWithoutR.Has(exit) {
+		isGatekeeper := false
+		for name := range roomsAll {
+			if name == roomName || name == "Corridor" || generator.IsPlacementExcludedRoom(name) {
+				continue
+			}
+			if !roomsWithout[name] {
+				isGatekeeper = true
+				break
+			}
+		}
+		if !isGatekeeper {
+			if _, hadR := roomsAll[roomName]; hadR {
+				if _, hasR := roomsWithout[roomName]; !hasR {
+					otherRooms := 0
+					for name := range roomsAll {
+						if name != roomName && name != "Corridor" && !generator.IsPlacementExcludedRoom(name) {
+							otherRooms++
+						}
+					}
+					if otherRooms == 0 {
+						isGatekeeper = true
+					}
+				}
+			}
+		}
+		if !isGatekeeper {
 			continue
 		}
 
 		// R is a gatekeeper: check if any terminal room adjacent to R is reachable
-		// from start without entering R (player movement; locked doors still block the player).
+		// from entry without entering R (player movement; locked doors still block the player).
 		hasReachableAdjacent := false
 		for _, q := range GetAdjacentRoomNames(g.Grid, roomName) {
 			if q == roomName || !roomsWithTerminal[q] {

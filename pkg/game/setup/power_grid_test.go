@@ -27,6 +27,39 @@ func makePowerGridTestGrid(t *testing.T) (*state.Game, *world.Grid, *world.Cell,
 	return g, grid, grid.GetCell(0, 0), grid.GetCell(0, 1)
 }
 
+func TestCellsReachableFromPoweredGenerators_chainedRepairDevices(t *testing.T) {
+	g := state.NewGame()
+	grid := world.NewGrid(1, 3)
+	grid.MarkAsRoomWithName(0, 0, "RoomA", "")
+	grid.MarkAsRoomWithName(0, 1, "RoomA", "")
+	grid.MarkAsRoomWithName(0, 2, "RoomA", "")
+	grid.BuildAllCellConnections()
+	g.Grid = grid
+	grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell != nil {
+			gameworld.InitGameData(cell)
+		}
+	})
+	g.RoomDoorsPowered = map[string]bool{"RoomA": true}
+
+	gen := entities.NewGenerator("G", 1)
+	gen.InsertBatteriesAndStart(1)
+	gameworld.GetGameData(grid.GetCell(0, 0)).Generator = gen
+
+	valve := entities.NewRepairObjective("valve", entities.RepairPressureValve, "RoomA", 0, 1)
+	coupler := entities.NewRepairObjective("coupler", entities.RepairPowerCoupler, "RoomA", 0, 2)
+	gameworld.GetGameData(grid.GetCell(0, 1)).RepairDevice = valve
+	gameworld.GetGameData(grid.GetCell(0, 2)).RepairDevice = coupler
+
+	live := CellsReachableFromPoweredGenerators(g)
+	if !live.Has(grid.GetCell(0, 1)) {
+		t.Fatal("first repair device should receive grid power from generator neighbor")
+	}
+	if !live.Has(grid.GetCell(0, 2)) {
+		t.Fatal("chained repair device should receive grid power through adjacent repair housing")
+	}
+}
+
 func TestCellsReachableInPowerGrid_matchesRoomSet(t *testing.T) {
 	g, _, start, relayCell := makePowerGridTestGrid(t)
 	g.RoomDoorsPowered = map[string]bool{"RoomA": true, "RoomB": true}
@@ -280,6 +313,25 @@ func TestCanTraverseCellForPowerGrid_blocksFurniture(t *testing.T) {
 	_ = grid
 }
 
+func TestCanTraverseCellForPowerGrid_blocksRepairDevice(t *testing.T) {
+	g, grid, start, relayCell := makePowerGridTestGrid(t)
+	g.RoomDoorsPowered = map[string]bool{"RoomA": true, "RoomB": true}
+	gameworld.GetGameData(relayCell).RepairDevice = entities.NewRepairObjective(
+		"routing", entities.RepairSignalCalibrator, "Corridor", relayCell.Row, relayCell.Col,
+	)
+
+	if CanTraverseCellForPowerGrid(g, relayCell) {
+		t.Fatal("repair device should block power grid traversal")
+	}
+	rooms := RoomsReachableInPowerGrid(g, start)
+	for _, r := range rooms {
+		if r == "RoomB" {
+			t.Fatal("grid should not reach RoomB through repair device cell")
+		}
+	}
+	_ = grid
+}
+
 func TestRoomsFedByPoweredGeneratorGrid_requiresGridAndGenerator(t *testing.T) {
 	g, _, start, relayCell := makePowerGridTestGrid(t)
 	g.RoomDoorsPowered = map[string]bool{"RoomA": true, "RoomB": true}
@@ -457,5 +509,77 @@ func TestRestoreTerminalsInRooms_powerGrid(t *testing.T) {
 	}
 	if !termB.Powered {
 		t.Fatal("terminal should be powered")
+	}
+}
+
+func TestCellHasLivePower_repairDeviceAdjacentToLiveCell(t *testing.T) {
+	g := state.NewGame()
+	grid := world.NewGrid(3, 3)
+	g.Grid = grid
+	roomName := "Workshop"
+	for row := 0; row < 3; row++ {
+		for col := 0; col < 3; col++ {
+			c := grid.GetCell(row, col)
+			c.Room, c.Name, c.Discovered = true, roomName, true
+			gameworld.InitGameData(c)
+		}
+	}
+	grid.BuildAllCellConnections()
+
+	gen := entities.NewGenerator("G", 1)
+	gen.InsertBatteriesAndStart(1)
+	gameworld.GetGameData(grid.GetCell(1, 0)).Generator = gen
+
+	repair := entities.NewRepairObjective("routing-repair-deck3-0", entities.RepairSignalCalibrator, roomName, 1, 1)
+	repair.RequiresPower = true
+	gameworld.GetGameData(grid.GetCell(1, 1)).RepairDevice = repair
+
+	g.RoomDoorsPowered = map[string]bool{roomName: true}
+	PropagateRoomPowerOnlineFromGenerators(g)
+	ApplyGridConductivePower(g)
+
+	if !CellHasLivePower(g, grid.GetCell(1, 0)) {
+		t.Fatal("generator cell should have live power")
+	}
+	if !CellHasLivePower(g, grid.GetCell(1, 1)) {
+		t.Fatal("repair device cell adjacent to live pocket should have live power")
+	}
+}
+
+func TestCellHasLivePower_repairDeviceIsolatedPocketNotPowered(t *testing.T) {
+	g := state.NewGame()
+	grid := world.NewGrid(1, 7)
+	g.Grid = grid
+	roomName := "SplitRoom"
+	for _, col := range []int{0, 1, 2} {
+		c := grid.GetCell(0, col)
+		c.Room, c.Name, c.Discovered = true, roomName, true
+		gameworld.InitGameData(c)
+	}
+	for _, col := range []int{4, 5, 6} {
+		c := grid.GetCell(0, col)
+		c.Room, c.Name, c.Discovered = true, roomName, true
+		gameworld.InitGameData(c)
+	}
+	block := grid.GetCell(0, 3)
+	block.Room, block.Name, block.Discovered = true, "Corridor", true
+	gameworld.InitGameData(block)
+	gameworld.GetGameData(block).PowerRelay = entities.NewPowerRelayOpen()
+	grid.BuildAllCellConnections()
+
+	gen := entities.NewGenerator("G", 1)
+	gen.InsertBatteriesAndStart(1)
+	gameworld.GetGameData(grid.GetCell(0, 0)).Generator = gen
+
+	repair := entities.NewRepairObjective("waste", entities.RepairWastePump, roomName, 0, 5)
+	repair.RequiresPower = true
+	gameworld.GetGameData(grid.GetCell(0, 5)).RepairDevice = repair
+
+	g.RoomDoorsPowered = map[string]bool{roomName: true}
+	PropagateRoomPowerOnlineFromGenerators(g)
+	ApplyGridConductivePower(g)
+
+	if CellHasLivePower(g, grid.GetCell(0, 5)) {
+		t.Fatal("repair device in isolated pocket should not have live power")
 	}
 }

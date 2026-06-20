@@ -160,5 +160,5 @@ func showHazardTourCallout(g *state.Game, s *state.HazardTourSession) {
 	if hazard == nil {
 		return
 	}
-	renderer.AddCallout(t.Row, t.Col, formatHazardCallout(hazard), renderer.CalloutColorHazard, state.HazardTourHighlightMs)
+	renderer.AddCallout(t.Row, t.Col, formatHazardCallout(g, hazard), renderer.CalloutColorHazard, state.HazardTourHighlightMs)
 }

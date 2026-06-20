@@ -36,7 +36,7 @@ func placeBatteriesForGenerators(g *state.Game, avoid *mapset.Set[*world.Cell]) 
 
 	for i := 0; i < totalBatteries; i++ {
 		battery := world.NewItem("Battery")
-		placeItem(g, g.Grid.StartCell(), battery, avoid)
+		placeItem(g, PlayerEntryCell(g), battery, avoid)
 	}
 }
 

@@ -81,6 +81,10 @@ func ApplyCircuitPreset(g *state.Game, roomName string, preset CircuitPreset) st
 	if g == nil || roomName == "" {
 		return ""
 	}
+	if setup.IsAlwaysArmedOverlayRoom(roomName) {
+		setup.EnsureAlwaysArmedRoomPower(g, roomName)
+		return ""
+	}
 	doorsOn := preset == CircuitEssential || preset == CircuitFull
 	cctvOn := preset == CircuitFull
 
@@ -94,6 +98,7 @@ func ApplyCircuitPreset(g *state.Game, roomName string, preset CircuitPreset) st
 	}
 
 	setup.CancelRoomPowerOff(g, roomName)
+	setup.CancelGeneratorShutdownForRoom(g, roomName)
 
 	g.RoomDoorsPowered[roomName] = doorsOn
 	g.RoomCCTVPowered[roomName] = cctvOn

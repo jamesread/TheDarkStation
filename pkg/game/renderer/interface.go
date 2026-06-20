@@ -256,6 +256,19 @@ var (
 	CalloutColorMaintenance      = color.RGBA{255, 165, 0, 255}   // Orange for maintenance terminals
 )
 
+// DevicePulseRenderer is an optional interface for renderers that can briefly
+// highlight a device cell the player just changed ("the station noticed").
+type DevicePulseRenderer interface {
+	AddDevicePulse(row, col int)
+}
+
+// AddDevicePulse marks a cell as recently changed so the renderer can pulse it.
+func AddDevicePulse(row, col int) {
+	if dp, ok := Current.(DevicePulseRenderer); ok {
+		dp.AddDevicePulse(row, col)
+	}
+}
+
 // AddCallout adds a callout if the current renderer supports it
 func AddCallout(row, col int, message string, c color.Color, durationMs int) {
 	if cr, ok := Current.(CalloutRenderer); ok {

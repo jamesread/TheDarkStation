@@ -247,6 +247,24 @@ func TestCheckAdjacentInteractables_facesCycledTarget(t *testing.T) {
 	}
 }
 
+func TestCheckAdjacentInteractables_prefersFacingDirection(t *testing.T) {
+	g := makeTestGame(3, 3)
+	g.CurrentCell = g.Grid.GetCell(1, 1)
+	g.PlayerFacing = state.FaceWest
+
+	east := g.Grid.GetCell(1, 2)
+	west := g.Grid.GetCell(1, 0)
+	gameworld.GetGameData(east).Furniture = entities.NewFurniture("East Shelf", "east", "F")
+	gameworld.GetGameData(west).Furniture = entities.NewFurniture("West Shelf", "west", "F")
+
+	if !CheckAdjacentInteractables(g) {
+		t.Fatal("expected west furniture interaction first")
+	}
+	if g.LastInteractedCol != west.Col {
+		t.Fatalf("interacted col = %d, want west col %d", g.LastInteractedCol, west.Col)
+	}
+}
+
 func TestPickUpItemsOnFloor_Battery(t *testing.T) {
 	g := makeTestGame(2, 2)
 	battery := world.NewItem("Battery")
@@ -288,8 +306,29 @@ func TestPickUpItemsOnFloor_NonBatteryItem(t *testing.T) {
 	if g.Batteries != 0 {
 		t.Errorf("non-battery item should not increase battery count: got %d", g.Batteries)
 	}
-	if !g.OwnedItems.Has(keycard) {
-		t.Error("non-battery item should be added to OwnedItems")
+	if !g.HasRunKeycard("Keycard-A") {
+		t.Error("keycard should be added to run-wide inventory")
+	}
+}
+
+func TestPickUpItemsOnFloor_ReactorAuthorization(t *testing.T) {
+	g := makeTestGame(2, 2)
+	auth := world.NewItem("Reactor Authorization — Observatory")
+	g.CurrentCell.ItemsOnFloor.Put(auth)
+
+	PickUpItemsOnFloor(g)
+
+	if !g.HasRunKeycard(auth.Name) {
+		t.Fatal("reactor authorization should be added to run-wide inventory")
+	}
+	found := false
+	g.OwnedItems.Each(func(item *world.Item) {
+		if item != nil && item.Name == auth.Name {
+			found = true
+		}
+	})
+	if found {
+		t.Fatal("reactor authorization should not remain in deck inventory")
 	}
 }
 

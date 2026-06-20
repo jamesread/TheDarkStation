@@ -6,6 +6,7 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -139,19 +140,62 @@ func TestCompleteLongUse_startsWastePumpDrain(t *testing.T) {
 	}
 }
 
+func TestCheckAdjacentRepair_powerCouplerCranksInSequence(t *testing.T) {
+	g, cell, repair := powerCouplerTestGame(t)
+
+	if TryBeginLongUseOnAdjacent(g) {
+		t.Fatal("power coupler should not start long use")
+	}
+	if !CheckAdjacentRepairAtCell(g, cell) {
+		t.Fatal("first crank USE should consume interaction")
+	}
+	if !IsCouplerCrankActive(g) {
+		t.Fatal("power coupler should start crank session")
+	}
+	now := g.LongUse.LastAdvanceMs
+	for i := 0; i < 3; i++ {
+		CheckAdjacentRepairAtCell(g, cell)
+		now += 80
+		AdvanceCouplerCrankIfActive(g, now)
+	}
+	if repair.IsComplete() {
+		t.Fatal("should need more rapid cranks")
+	}
+	for i := 0; i < 2; i++ {
+		CheckAdjacentRepairAtCell(g, cell)
+		now += 80
+		AdvanceCouplerCrankIfActive(g, now)
+	}
+	if !repair.IsComplete() {
+		t.Fatal("power coupler should complete after rapid crank sequence")
+	}
+}
+
 func TestCheckAdjacentRepair_signalCalibrationCompletesInSequence(t *testing.T) {
 	g := state.NewGame()
 	grid := world.NewGrid(1, 2)
-	grid.MarkAsRoomWithName(0, 0, "A", "")
-	grid.MarkAsRoomWithName(0, 1, "Signal", "")
+	roomName := "Signal"
+	grid.MarkAsRoomWithName(0, 0, roomName, "")
+	grid.MarkAsRoomWithName(0, 1, roomName, "")
 	grid.BuildAllCellConnections()
 	grid.SetStartCellAt(0, 0)
 	g.Grid = grid
 	g.CurrentCell = grid.GetCell(0, 0)
 
-	repair := entities.NewRepairObjective("signal", entities.RepairSignalCalibrator, "Signal", 0, 1)
+	repair := entities.NewRepairObjective("signal", entities.RepairSignalCalibrator, roomName, 0, 1)
 	gameworld.GetGameData(grid.GetCell(0, 1)).RepairDevice = repair
 	g.RepairObjectives = []*entities.RepairObjective{repair}
+
+	gen := entities.NewGenerator("G", 1)
+	gen.InsertBatteriesAndStart(1)
+	gameworld.GetGameData(grid.GetCell(0, 0)).Generator = gen
+	g.AddGenerator(gen)
+	g.RoomDoorsPowered = map[string]bool{roomName: true}
+	setup.PropagateRoomPowerOnlineFromGenerators(g)
+	setup.ApplyGridConductivePower(g)
+	if !setup.CellHasLivePower(g, grid.GetCell(0, 1)) {
+		t.Fatal("signal repair cell should have live power for test setup")
+	}
 
 	for i := 0; i < entities.SignalCalibrationSteps; i++ {
 		if !CheckAdjacentRepairAtCell(g, grid.GetCell(0, 1)) {

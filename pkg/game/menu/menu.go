@@ -54,6 +54,21 @@ type DynamicMenuHandler interface {
 	GetMenuItems() []MenuItem
 }
 
+// InitialSelectionProvider optionally sets the first highlighted row when a menu opens.
+type InitialSelectionProvider interface {
+	InitialMenuSelection(items []MenuItem) int
+}
+
+// HorizontalTabNavigator optionally handles left/right on a horizontal tab strip.
+type HorizontalTabNavigator interface {
+	TryHorizontalTabNav(items []MenuItem, selected int, intent engineinput.Intent) (newSelected int, consumed bool, helpText string)
+}
+
+// TabStripNavigator optionally handles up/down around a horizontal tab strip.
+type TabStripNavigator interface {
+	TryVerticalTabNav(items []MenuItem, selected int, intent engineinput.Intent) (newSelected int, consumed bool)
+}
+
 // MaintenanceRoomProvider is an optional interface for handlers that display a maintenance view
 // for a specific room. When implemented, the room name is set on game state so the renderer can
 // highlight that room's wall cells on the map. selectedIndex and items are the current menu
@@ -90,15 +105,19 @@ type MenuRenderer interface {
 // RunMenu runs a generic menu with the given items and handler.
 func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 	selected := 0
-	helpText := ""
-
-	// Find first selectable item
-	for i, item := range items {
-		if item.IsSelectable() {
-			selected = i
-			break
+	if isp, ok := handler.(InitialSelectionProvider); ok {
+		selected = isp.InitialMenuSelection(items)
+	} else {
+		// Find first selectable item
+		for i, item := range items {
+			if item.IsSelectable() {
+				selected = i
+				break
+			}
 		}
 	}
+
+	helpText := ""
 
 	for {
 		advanceMenuTimers(g)
@@ -128,6 +147,27 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 			}
 			handler.OnExit()
 			return
+		}
+
+		if htn, ok := handler.(HorizontalTabNavigator); ok {
+			if newSel, consumed, ht := htn.TryHorizontalTabNav(items, selected, intent); consumed {
+				selected = newSel
+				helpText = ""
+				if ht != "" {
+					helpText = ht
+				}
+				handler.OnSelect(items[selected], selected)
+				continue
+			}
+		}
+
+		if tsv, ok := handler.(TabStripNavigator); ok {
+			if newSel, consumed := tsv.TryVerticalTabNav(items, selected, intent); consumed {
+				selected = newSel
+				helpText = ""
+				handler.OnSelect(items[selected], selected)
+				continue
+			}
 		}
 
 		if consumed, ht := handleCycleIntent(items, selected, intent); consumed {
@@ -263,6 +303,7 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 	selected := 0
 	helpText := ""
+	initialized := false
 
 	// Clear maintenance map overlay state when menu exits (all return paths)
 	defer func() {
@@ -275,6 +316,13 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 		advanceMenuTimers(g)
 
 		items := handler.GetMenuItems()
+
+		if !initialized {
+			if isp, ok := handler.(InitialSelectionProvider); ok {
+				selected = isp.InitialMenuSelection(items)
+			}
+			initialized = true
+		}
 
 		// Find first selectable item, or keep current if still valid
 		if selected >= len(items) || !items[selected].IsSelectable() {
@@ -313,6 +361,27 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 			}
 			handler.OnExit()
 			return
+		}
+
+		if htn, ok := handler.(HorizontalTabNavigator); ok {
+			if newSel, consumed, ht := htn.TryHorizontalTabNav(items, selected, intent); consumed {
+				selected = newSel
+				helpText = ""
+				if ht != "" {
+					helpText = ht
+				}
+				handler.OnSelect(items[selected], selected)
+				continue
+			}
+		}
+
+		if tsv, ok := handler.(TabStripNavigator); ok {
+			if newSel, consumed := tsv.TryVerticalTabNav(items, selected, intent); consumed {
+				selected = newSel
+				helpText = ""
+				handler.OnSelect(items[selected], selected)
+				continue
+			}
 		}
 
 		if consumed, ht := handleCycleIntent(items, selected, intent); consumed {

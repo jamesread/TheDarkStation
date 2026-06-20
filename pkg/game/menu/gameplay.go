@@ -8,8 +8,8 @@ type GameplayMenuAction int
 
 const (
 	GameplayMenuActionClose GameplayMenuAction = iota
-	GameplayMenuActionBindings
-	GameplayMenuActionVideo
+	GameplayMenuActionInventory
+	GameplayMenuActionSettings
 	GameplayMenuActionQuitToTitle
 )
 
@@ -34,10 +34,10 @@ func (m *GameplayMenuItem) GetHelpText() string {
 	switch m.Action {
 	case GameplayMenuActionClose:
 		return "Return to the game"
-	case GameplayMenuActionBindings:
-		return "Configure keyboard and gamepad bindings"
-	case GameplayMenuActionVideo:
-		return "Configure display settings"
+	case GameplayMenuActionInventory:
+		return "View run-wide inventory"
+	case GameplayMenuActionSettings:
+		return "Configure bindings and display settings"
 	case GameplayMenuActionQuitToTitle:
 		return "Return to the main menu"
 	default:
@@ -116,8 +116,8 @@ func (h *GameplayMenuHandler) ShouldQuitToTitle() bool {
 func (h *GameplayMenuHandler) GetMenuItems() []MenuItem {
 	return []MenuItem{
 		&GameplayMenuItem{Label: "Close Menu", Action: GameplayMenuActionClose},
-		&GameplayMenuItem{Label: "Bindings", Action: GameplayMenuActionBindings},
-		&GameplayMenuItem{Label: "Video", Action: GameplayMenuActionVideo},
+		&GameplayMenuItem{Label: "Inventory", Action: GameplayMenuActionInventory},
+		&GameplayMenuItem{Label: "Settings", Action: GameplayMenuActionSettings},
 		&GameplayMenuItem{Label: "Quit to Title", Action: GameplayMenuActionQuitToTitle},
 	}
 }

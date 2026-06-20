@@ -45,6 +45,15 @@ func TestApplyCircuitPreset_OnCancelsPendingOff(t *testing.T) {
 	}
 }
 
+func TestApplyCircuitPreset_OnCancelsDelayedShutdownCountdown(t *testing.T) {
+	g, termCell := makeMenuTestGame(t)
+	setup.ScheduleGeneratorShutdown(g, "RoomA", termCell.Row, termCell.Col, setup.PowerNowMs())
+	ApplyCircuitPreset(g, "RoomA", CircuitFull)
+	if pending, _, _, _ := setup.GeneratorShutdownPending(g, setup.PowerNowMs()); pending {
+		t.Fatal("turning room ON should cancel delayed shutdown countdown")
+	}
+}
+
 func TestApplyCircuitPreset_EssentialStillSupportedInternally(t *testing.T) {
 	g, _ := makeMenuTestGame(t)
 	ApplyCircuitPreset(g, "RoomA", CircuitEssential)

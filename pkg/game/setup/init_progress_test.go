@@ -19,13 +19,10 @@ func makeCorridorKeycardTrap(t *testing.T) (*state.Game, *world.Cell, *world.Cel
 	grid.MarkAsRoomWithName(0, 0, "StartRoom", "desc")
 	grid.MarkAsRoomWithName(1, 0, "StartRoom", "desc")
 	grid.MarkAsRoomWithName(0, 1, "Corridor", "ROOM_CORRIDOR")
-	grid.MarkAsRoomWithName(1, 1, "Corridor", "ROOM_CORRIDOR")
 	grid.MarkAsRoomWithName(0, 2, "NorthRoom", "desc")
-	grid.MarkAsRoomWithName(1, 2, "NorthRoom", "desc")
 	grid.MarkAsRoomWithName(0, 3, "SouthRoom", "desc")
-	grid.MarkAsRoomWithName(1, 3, "SouthRoom", "desc")
-	grid.SetStartCellAt(0, 0)
-	grid.SetExitCellAt(1, 3)
+	grid.SetExitCellAt(1, 0)
+	grid.SetStartCellAt(0, 3)
 	grid.BuildAllCellConnections()
 	grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell != nil {
@@ -63,6 +60,10 @@ func TestEnsureGeneratorSafePlacement_relocatesCorridorTrap(t *testing.T) {
 	gameworld.GetGameData(corridor).Generator = gen
 	g.AddGenerator(gen)
 
+	if generatorLocationOK(g, corridor) {
+		t.Fatal("precondition: corridor generator should fail location check")
+	}
+
 	EnsureGeneratorSafePlacement(g)
 
 	if gameworld.GetGameData(corridor).Generator != nil {
@@ -97,7 +98,7 @@ func TestEnsureKeycardReachability_movesUnreachableFloorKeycard(t *testing.T) {
 func TestFindValidGeneratorCell_rejectsCorridorTrap(t *testing.T) {
 	g, corridor, _, _ := makeCorridorKeycardTrap(t)
 	avoid := mapset.New[*world.Cell]()
-	got := findValidGeneratorCell(g, corridor.Name, g.Grid.StartCell(), &avoid)
+	got := findValidGeneratorCell(g, corridor.Name, PlayerEntryCell(g), &avoid)
 	if got == corridor {
 		t.Fatal("findValidGeneratorCell should not pick corridor chokepoint")
 	}

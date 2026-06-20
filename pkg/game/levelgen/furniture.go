@@ -7,8 +7,8 @@ import (
 	"github.com/zyedidia/generic/mapset"
 
 	"darkstation/pkg/engine/world"
-	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
@@ -27,10 +27,13 @@ func PlaceFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 
 	// For each unique room, try to place 1-2 furniture pieces
 	for _, roomName := range SortedRoomMapKeys(roomCells) {
+		if generator.IsPlacementExcludedRoom(roomName) {
+			continue
+		}
 		cells := roomCells[roomName]
 		templates := entities.GetAllFurnitureForRoom(roomName)
 		if len(templates) == 0 {
-			templates = entities.FurnitureFallbackForFunctionalLayer(deck.FunctionalType(g.Level))
+			templates = entities.FurnitureFallbackForTheme(g.ThemeForCurrentDeck())
 		}
 		if len(templates) == 0 {
 			continue
@@ -74,7 +77,9 @@ func PlaceFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 			// Don't place furniture on entry points, exit cells, or cells with other entities
 			if !avoid.Has(cell) && !cell.ExitCell && !entryPoints.Has(cell) &&
 				data.Generator == nil && data.Door == nil && data.Terminal == nil &&
-				data.Furniture == nil && data.Hazard == nil && data.HazardControl == nil {
+				data.Furniture == nil && data.Hazard == nil && data.HazardControl == nil &&
+				data.Puzzle == nil && data.MaintenanceTerm == nil &&
+				data.RepairDevice == nil && data.RepairBlocker == nil {
 				validCells = append(validCells, cell)
 			}
 		}
@@ -110,6 +115,9 @@ func PlaceFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 			used.Put(chosen)
 			furniture := entities.NewFurniture(template.Name, template.Description, template.Icon)
 			gameworld.GetGameData(chosen).Furniture = furniture
+			// Record in the shared avoid set so later placement passes (batteries,
+			// keycards, repairs) never target an occupied cell.
+			avoid.Put(chosen)
 			placedFurniture = append(placedFurniture, furniture)
 		}
 
@@ -117,6 +125,62 @@ func PlaceFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		if len(placedFurniture) > 0 {
 			hideItemsInFurniture(g, cells, placedFurniture, roomName)
 		}
+	}
+
+	if !gridHasFurniture(g) {
+		placeFallbackFurniture(g, avoid)
+	}
+}
+
+func gridHasFurniture(g *state.Game) bool {
+	if g == nil || g.Grid == nil {
+		return false
+	}
+	found := false
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if found || cell == nil {
+			return
+		}
+		if gameworld.GetGameData(cell).Furniture != nil {
+			found = true
+		}
+	})
+	return found
+}
+
+func placeFallbackFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
+	templates := entities.FurnitureFallbackForTheme(g.ThemeForCurrentDeck())
+	if len(templates) == 0 {
+		return
+	}
+	template := templates[0]
+	var fallback *world.Cell
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if fallback != nil || cell == nil || !cell.Room || cell.Name == "" || cell.Name == "Corridor" ||
+			generator.IsPlacementExcludedRoom(cell.Name) || cell.ExitCell {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.Generator != nil || data.Door != nil || data.Terminal != nil ||
+			data.Furniture != nil || data.Hazard != nil || data.HazardControl != nil ||
+			data.MaintenanceTerm != nil || data.Puzzle != nil ||
+			data.RepairDevice != nil || data.RepairBlocker != nil {
+			return
+		}
+		if avoid != nil && avoid.Has(cell) {
+			return
+		}
+		if !setup.CanPlaceBlockingEntity(g, cell) {
+			return
+		}
+		fallback = cell
+	})
+	if fallback == nil {
+		return
+	}
+	gameworld.GetGameData(fallback).Furniture = entities.NewFurniture(template.Name, template.Description, template.Icon)
+	if avoid != nil {
+		avoid.Put(fallback)
 	}
 }
 

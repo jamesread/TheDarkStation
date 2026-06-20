@@ -38,6 +38,9 @@ func RoomIsOnline(g *state.Game, roomName string) bool {
 	if g == nil || roomName == "" {
 		return false
 	}
+	if IsAlwaysArmedOverlayRoom(roomName) {
+		return true
+	}
 	return g.RoomPowerOnline != nil && g.RoomPowerOnline[roomName]
 }
 

@@ -9,8 +9,9 @@ import (
 
 	"github.com/leonelquinteros/gotext"
 
-	engineinput "darkstation/pkg/engine/input"
+	engineinput 	"darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/features"
 	gamemenu "darkstation/pkg/game/menu"
@@ -21,7 +22,7 @@ import (
 
 // calculateObjectives calculates the current level objectives based on game state
 func (e *EbitenRenderer) calculateObjectives(g *state.Game) []string {
-	if g == nil || g.Grid == nil {
+	if g == nil || g.Grid == nil || g.PerfMapScenario != "" {
 		return nil
 	}
 
@@ -102,6 +103,8 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 
 	e.snapshot.valid = true
 	e.snapshot.level = g.Level
+	e.snapshot.perfMapScenario = g.PerfMapScenario
+	e.snapshot.deckTitle = deck.ThemeDisplayName(g.ThemeForCurrentDeck())
 	e.snapshot.playerRow = g.CurrentCell.Row
 	e.snapshot.playerCol = g.CurrentCell.Col
 	e.snapshot.playerFacing = g.PlayerFacing
@@ -115,14 +118,27 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 	e.snapshot.roomLabels = e.refreshRoomLabels(g)
 	e.snapshot.envPlaques = e.refreshEnvPlaques(g)
 
-	// Copy owned items
+	// Copy owned items and run-wide keycards
 	// Collect and sort items deterministically
 	e.snapshot.ownedItems = make([]string, 0)
 	g.OwnedItems.Each(func(item *world.Item) {
+		if item == nil || item.Name == "" {
+			return
+		}
+		if state.IsRunWideKeycardName(item.Name) || item.Name == "Map" {
+			return
+		}
 		e.snapshot.ownedItems = append(e.snapshot.ownedItems, item.Name)
 	})
-	// Sort items for deterministic display order
 	sort.Strings(e.snapshot.ownedItems)
+
+	e.snapshot.runKeycards = make([]string, 0)
+	g.RunInventory.Each(func(item *world.Item) {
+		if item != nil && item.Name != "" {
+			e.snapshot.runKeycards = append(e.snapshot.runKeycards, item.Name)
+		}
+	})
+	sort.Strings(e.snapshot.runKeycards)
 
 	// Copy generator states
 	e.snapshot.generators = make([]generatorState, len(g.Generators))
@@ -223,6 +239,8 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 			progress: p,
 		})
 	}
+
+	e.snapshotDevicePulses(nowUnixMilli)
 
 	e.snapshot.slimePops = e.snapshot.slimePops[:0]
 	for _, pop := range g.SlimePops {

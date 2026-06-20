@@ -8,6 +8,7 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
@@ -21,7 +22,7 @@ type repairCandidate struct {
 
 // PlaceRepairObjectives adds deck-wide repair chains that gate the exit lift.
 func PlaceRepairObjectives(g *state.Game, avoid *mapset.Set[*world.Cell]) {
-	if g == nil || g.Grid == nil || g.Grid.StartCell() == nil || g.Grid.ExitCell() == nil {
+	if g == nil || g.Grid == nil || setup.PlayerEntryCell(g) == nil {
 		return
 	}
 	if avoid == nil {
@@ -30,12 +31,13 @@ func PlaceRepairObjectives(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 	}
 	g.RepairObjectives = nil
 
-	candidates := collectRepairCandidates(g, avoid)
+	candidates := collectExitGatingRepairCandidates(g, avoid)
 	if len(candidates) == 0 {
 		return
 	}
 
-	types := repairTypesForLevel(g.Level)
+	exitGate := PickExitGateKind(g.Level)
+	types := repairChainForLevel(g.Level, exitGate)
 	fractions := []float64{0.65, 0.25, 0.45, 0.85}
 	var placed []*entities.RepairObjective
 	usedRooms := make(map[string]bool)
@@ -47,16 +49,20 @@ func PlaceRepairObjectives(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		if typ == entities.RepairWastePump {
 			repair = entities.NewRepairObjective(id, typ, "", -1, -1)
 			cell = placeWastePumpObjective(g, repair, candidates, avoid)
-		} else {
-			cell = pickRepairCandidate(candidates, fractions[i%len(fractions)], usedRooms)
-			if cell != nil {
-				repair = entities.NewRepairObjective(id, typ, cell.Name, cell.Row, cell.Col)
+			if cell == nil {
+				continue
 			}
+		} else {
+			cell = pickValidatedRepairCandidate(g, candidates, fractions[i%len(fractions)], usedRooms, avoid)
+			if cell == nil {
+				break
+			}
+			repair = entities.NewRepairObjective(id, typ, cell.Name, cell.Row, cell.Col)
 		}
-		if cell == nil || repair == nil {
+		if repair == nil {
 			break
 		}
-		repair.RequiresPower = typ == entities.RepairPowerCoupler || typ == entities.RepairWastePump
+		repair.RequiresPower = entities.TypeRequiresPower(typ)
 		if len(placed) > 0 {
 			repair.PrereqIDs = []string{placed[len(placed)-1].ID}
 		}
@@ -76,30 +82,45 @@ func PlaceRepairObjectives(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 	g.RepairObjectives = placed
 }
 
-func repairTypesForLevel(level int) []entities.RepairType {
+func repairChainForLevel(level int, exitGate ExitGateKind) []entities.RepairType {
+	var chain []entities.RepairType
 	if level >= 6 {
-		return []entities.RepairType{
+		chain = []entities.RepairType{
 			entities.RepairPressureValve,
 			entities.RepairSignalCalibrator,
 			entities.RepairPowerCoupler,
-			entities.RepairWastePump,
 		}
-	}
-	if level >= 3 {
-		return []entities.RepairType{
+	} else if level >= 3 {
+		chain = []entities.RepairType{
 			entities.RepairPressureValve,
 			entities.RepairPowerCoupler,
-			entities.RepairWastePump,
 		}
+	} else {
+		chain = []entities.RepairType{entities.RepairPressureValve}
 	}
-	return []entities.RepairType{
-		entities.RepairPressureValve,
-		entities.RepairWastePump,
+	if exitGate == ExitGateSlime {
+		chain = append(chain, entities.RepairWastePump)
 	}
+	return chain
 }
 
 func collectRepairCandidates(g *state.Game, avoid *mapset.Set[*world.Cell]) []repairCandidate {
-	dist := distancesFromStart(g.Grid, g.Grid.StartCell())
+	return collectExitGatingRepairCandidates(g, avoid)
+}
+
+// collectExitGatingRepairCandidates returns device cells for local lift-gating repairs,
+// limited to rooms reachable or powerable from the player entry pocket at init.
+func collectExitGatingRepairCandidates(g *state.Game, avoid *mapset.Set[*world.Cell]) []repairCandidate {
+	candidates := collectRepairCandidatesUnfiltered(g, avoid)
+	filtered := filterExitGatingRepairCandidates(g, candidates)
+	if len(filtered) > 0 {
+		return filtered
+	}
+	return fallbackExitGatingRepairCandidates(g, avoid)
+}
+
+func collectRepairCandidatesUnfiltered(g *state.Game, avoid *mapset.Set[*world.Cell]) []repairCandidate {
+	dist := distancesFromStart(g.Grid, setup.PlayerEntryCell(g))
 	var preferred, fallback []repairCandidate
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if !validRepairDeviceCell(g, cell, avoid) {
@@ -117,8 +138,44 @@ func collectRepairCandidates(g *state.Game, avoid *mapset.Set[*world.Cell]) []re
 	return append(preferred, fallback...)
 }
 
+func filterExitGatingRepairCandidates(g *state.Game, candidates []repairCandidate) []repairCandidate {
+	if g == nil {
+		return nil
+	}
+	var out []repairCandidate
+	for _, candidate := range candidates {
+		if candidate.cell == nil || !setup.ExitGatingRepairRoomAccessible(g, candidate.cell.Name) {
+			continue
+		}
+		out = append(out, candidate)
+	}
+	return out
+}
+
+func fallbackExitGatingRepairCandidates(g *state.Game, avoid *mapset.Set[*world.Cell]) []repairCandidate {
+	if g == nil || g.Grid == nil {
+		return nil
+	}
+	entry := setup.PlayerEntryCell(g)
+	var out []repairCandidate
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !validRepairDeviceCell(g, cell, avoid) {
+			return
+		}
+		if !setup.ExitGatingRepairRoomAccessible(g, cell.Name) {
+			return
+		}
+		out = append(out, repairCandidate{cell: cell, dist: manhattan(cell, entry)})
+	})
+	sortRepairCandidates(out)
+	return out
+}
+
 func validRepairDeviceCell(g *state.Game, cell *world.Cell, avoid *mapset.Set[*world.Cell]) bool {
-	if cell == nil || !cell.Room || avoid.Has(cell) || cell == g.Grid.StartCell() || cell == g.Grid.ExitCell() {
+	if cell == nil || !cell.Room || avoid.Has(cell) || cell == setup.PlayerEntryCell(g) {
+		return false
+	}
+	if generator.IsPlacementExcludedRoom(cell.Name) || cell.ExitCell {
 		return false
 	}
 	data := gameworld.GetGameData(cell)
@@ -129,6 +186,25 @@ func validRepairDeviceCell(g *state.Game, cell *world.Cell, avoid *mapset.Set[*w
 		return false
 	}
 	return setup.CanPlaceBlockingEntity(g, cell)
+}
+
+// pickValidatedRepairCandidate picks repair device cells like pickRepairCandidate but
+// re-validates each pick against the CURRENT grid state. The candidate list was
+// collected (and validated) before any repair in this chain was placed; earlier
+// placements in the same chain can invalidate later candidates (two individually
+// legal devices may jointly seal off rooms), so each pick must pass
+// CanPlaceBlockingEntity again at placement time.
+func pickValidatedRepairCandidate(g *state.Game, candidates []repairCandidate, fraction float64, usedRooms map[string]bool, avoid *mapset.Set[*world.Cell]) *world.Cell {
+	for {
+		cell := pickRepairCandidate(candidates, fraction, usedRooms)
+		if cell == nil {
+			return nil
+		}
+		if validRepairDeviceCell(g, cell, avoid) {
+			return cell
+		}
+		// pickRepairCandidate consumed this entry; try the next-best candidate.
+	}
 }
 
 func pickRepairCandidate(candidates []repairCandidate, fraction float64, usedRooms map[string]bool) *world.Cell {
@@ -173,8 +249,11 @@ func placeWastePumpObjective(g *state.Game, repair *entities.RepairObjective, ca
 		return nil
 	}
 	for _, cells := range collectExitAdjacentBlockerGroups(g, exit, avoid) {
-		pumpCell := pickRepairCandidateInRoom(candidates, cells[0].Name, cells, avoid)
+		pumpCell := pickRepairCandidateInRoom(g, candidates, cells[0].Name, cells, avoid)
 		if pumpCell == nil {
+			continue
+		}
+		if !setup.ExitGatingRepairRoomAccessible(g, pumpCell.Name) {
 			continue
 		}
 		placeRepairBlockerCells(repair, cells, avoid)
@@ -186,7 +265,7 @@ func placeWastePumpObjective(g *state.Game, repair *entities.RepairObjective, ca
 	return nil
 }
 
-func pickRepairCandidateInRoom(candidates []repairCandidate, roomName string, exclude []*world.Cell, avoid *mapset.Set[*world.Cell]) *world.Cell {
+func pickRepairCandidateInRoom(g *state.Game, candidates []repairCandidate, roomName string, exclude []*world.Cell, avoid *mapset.Set[*world.Cell]) *world.Cell {
 	if roomName == "" {
 		return nil
 	}
@@ -199,6 +278,11 @@ func pickRepairCandidateInRoom(candidates []repairCandidate, roomName string, ex
 	for i := range candidates {
 		cell := candidates[i].cell
 		if cell == nil || cell.Name != roomName || excluded[cell] || !validRepairDeviceCellForAvoid(cell, avoid) {
+			continue
+		}
+		// Re-validate against the current grid: earlier devices in this chain were
+		// placed after the candidate list was collected.
+		if !validRepairDeviceCell(g, cell, avoid) {
 			continue
 		}
 		candidates[i].cell = nil
@@ -266,7 +350,10 @@ func collectExitAdjacentBlockerGroups(g *state.Game, exit *world.Cell, avoid *ma
 }
 
 func validRepairBlockerCell(g *state.Game, cell *world.Cell, avoid *mapset.Set[*world.Cell]) bool {
-	if cell == nil || !cell.Room || cell == g.Grid.StartCell() || cell == g.Grid.ExitCell() || avoid.Has(cell) {
+	if cell == nil || !cell.Room || cell == setup.PlayerEntryCell(g) || avoid.Has(cell) {
+		return false
+	}
+	if generator.IsPlacementExcludedRoom(cell.Name) || cell.ExitCell {
 		return false
 	}
 	data := gameworld.GetGameData(cell)

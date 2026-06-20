@@ -151,7 +151,7 @@ func canPlaceDoorsForRoom(g *state.Game, candidate roomCandidate, avoid *mapset.
 	// This check is done by the caller with roomsWithDoors
 
 	// Check if all entry cells are available and reachable
-	currentlyReachable := getReachableCells(g.Grid, g.Grid.StartCell(), lockedDoorCells)
+	currentlyReachable := InitialReachableWithLockedDoors(g, lockedDoorCells)
 	for _, cell := range entryCells {
 		if avoid.Has(cell) || lockedDoorCells.Has(cell) || !currentlyReachable.Has(cell) {
 			return false
@@ -164,7 +164,7 @@ func canPlaceDoorsForRoom(g *state.Game, candidate roomCandidate, avoid *mapset.
 	for _, cell := range entryCells {
 		testLocked.Put(cell)
 	}
-	reachableWithDoors := getReachableCells(g.Grid, g.Grid.StartCell(), &testLocked)
+	reachableWithDoors := InitialReachableWithLockedDoors(g, &testLocked)
 
 	// Must actually block something
 	if reachableWithDoors.Size() >= currentlyReachable.Size() {
@@ -185,10 +185,10 @@ func placeRoomDoors(g *state.Game, candidate roomCandidate, avoid *mapset.Set[*w
 	for _, cell := range entryCells {
 		testLocked.Put(cell)
 	}
-	reachableWithDoors := getReachableCells(g.Grid, g.Grid.StartCell(), &testLocked)
+	reachableWithDoors := InitialReachableWithLockedDoors(g, &testLocked)
 
 	// Place the keycard in the area reachable BEFORE these doors
-	keycardRoom := findRoomInReachable(reachableWithDoors, avoid)
+	keycardRoom := findRoomInReachable(g, reachableWithDoors, avoid)
 	if keycardRoom == nil {
 		return
 	}

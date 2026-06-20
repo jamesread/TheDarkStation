@@ -11,6 +11,17 @@ type Furniture struct {
 	Icon          string      // Icon to display on the map
 	Checked       bool        // Whether the player has examined this furniture
 	ContainedItem *world.Item // Item hidden in this furniture (if any)
+	PowerConduit  bool        // Hard-linked power feed; walkable and conductive
+}
+
+// NewEmergencyPowerConduit creates a static deck 1 feed between ship and lift shaft.
+func NewEmergencyPowerConduit() *Furniture {
+	return &Furniture{
+		Name:         "Emergency power conduit",
+		Description:  "Hard-linked feed from the ship reactor to the lift shaft grid.",
+		Icon:         "═",
+		PowerConduit: true,
+	}
 }
 
 // NewFurniture creates a new furniture piece
@@ -19,7 +30,6 @@ func NewFurniture(name, description, icon string) *Furniture {
 		Name:        name,
 		Description: description,
 		Icon:        icon,
-		Checked:     false,
 	}
 }
 

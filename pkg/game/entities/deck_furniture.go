@@ -4,6 +4,12 @@ import (
 	"darkstation/pkg/game/deck"
 )
 
+// FurnitureFallbackForTheme returns cold technical templates when RoomFurniture
+// has no substring match for BSP thematic room names.
+func FurnitureFallbackForTheme(theme deck.Theme) []FurnitureTemplate {
+	return FurnitureFallbackForFunctionalLayer(deck.PlaqueLayer(theme))
+}
+
 // FurnitureFallbackForFunctionalLayer returns cold technical templates when RoomFurniture
 // has no substring match for BSP thematic room names (Story 5.1 optional alignment).
 func FurnitureFallbackForFunctionalLayer(ft deck.Type) []FurnitureTemplate {

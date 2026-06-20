@@ -6,6 +6,7 @@ import (
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/levelseed"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -61,10 +62,8 @@ func TestPlaceHazards_mapTxtSeed_hasSolvableControls(t *testing.T) {
 
 	locked := lockedDoorCells(g)
 	for _, hazardCell := range hazardCells(g) {
+		// Match EnsureHazardControlsSolvable: vent/control must be reachable without entering this hazard.
 		blocked := locked.clone()
-		for _, other := range hazardCells(g) {
-			blocked.put(other)
-		}
 		blocked.put(hazardCell)
 		reach := reachableWithBlocked(g, blocked)
 
@@ -153,7 +152,10 @@ func (r reachSet) has(c *world.Cell) bool { _, ok := r[c]; return ok }
 
 func reachableWithBlocked(g *state.Game, blocked blockedCells) reachSet {
 	out := reachSet{}
-	start := g.Grid.StartCell()
+	start := setup.PlayerEntryCell(g)
+	if start == nil {
+		return out
+	}
 	queue := []*world.Cell{start}
 	for len(queue) > 0 {
 		cur := queue[0]

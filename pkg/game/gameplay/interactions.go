@@ -29,8 +29,8 @@ func logInteractDebugSnapshot(g *state.Game, phase string) {
 		phase, pc.Row, pc.Col, g.LastInteractedRow, g.LastInteractedCol,
 		g.InteractionPlayerRow, g.InteractionPlayerCol, g.InteractionsCount)
 
-	dirs := []string{"N", "S", "E", "W"}
-	cells := []*world.Cell{pc.North, pc.South, pc.East, pc.West}
+	dirs := []string{"F", "R", "B", "L"}
+	cells := state.AdjacentCellsClockwiseFromFacing(pc, g.PlayerFacing)
 	for i, cell := range cells {
 		if cell == nil {
 			log.Printf("[Interact] %s: neighbor %s: nil", phase, dirs[i])
@@ -93,7 +93,8 @@ func countAdjacentInteractionCandidates(g *state.Game, neighbors []*world.Cell) 
 
 // CheckAdjacentInteractables checks adjacent cells for interactables.
 // Generators are handled in a first pass (any direction) so a generator is not skipped when
-// another direction has e.g. a maintenance terminal or CCTV that would come earlier in plain N,S,E,W order.
+// another direction has e.g. a maintenance terminal or CCTV that would come earlier in scan order.
+// Adjacent cells are scanned clockwise from the player's facing (facing cell first).
 // Cycles through interactables when player hasn't moved, skipping the previously interacted cell.
 // If there is only one adjacent interactable cell, last-interacted cycling is cleared so the first
 // scan always hits that target (no "empty" pass that relies on a second scan).
@@ -114,12 +115,7 @@ func CheckAdjacentInteractables(g *state.Game) bool {
 		g.InteractionPlayerCol = g.CurrentCell.Col
 	}
 
-	neighbors := []*world.Cell{
-		g.CurrentCell.North,
-		g.CurrentCell.South,
-		g.CurrentCell.East,
-		g.CurrentCell.West,
-	}
+	neighbors := state.AdjacentCellsClockwiseFromFacing(g.CurrentCell, g.PlayerFacing)
 
 	if countAdjacentInteractionCandidates(g, neighbors) <= 1 {
 		g.LastInteractedRow = -1
@@ -166,7 +162,25 @@ func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLa
 		}
 	}
 
-	// Pass 2: blocked exit lift (hazard tour when lift is powered but hazards remain)
+	// Pass 2: lift shaft terminal (ready or blocked)
+	for _, cell := range neighbors {
+		if skipCell(cell) {
+			continue
+		}
+		if cell != nil && cell.ExitCell {
+			if setup.ExitLiftReady(g) || setup.ExitLiftState(g) == state.ExitLiftLockedIncomplete {
+				if TryUseLift(g) {
+					FaceTowardAdjacentCell(g, cell)
+					g.LastInteractedRow = cell.Row
+					g.LastInteractedCol = cell.Col
+					g.InteractionsCount++
+					return true
+				}
+			}
+		}
+	}
+
+	// Pass 3: blocked exit lift (hazard tour when lift is powered but hazards remain)
 	for _, cell := range neighbors {
 		if skipCell(cell) {
 			continue
@@ -181,7 +195,7 @@ func tryAdjacentInteractableScan(g *state.Game, neighbors []*world.Cell, honorLa
 		}
 	}
 
-	// Pass 3: furniture, terminals, puzzles, hazard controls, repairs, maintenance
+	// Pass 4: furniture, terminals, puzzles, hazard controls, repairs, maintenance
 	for _, cell := range neighbors {
 		if skipCell(cell) {
 			continue
@@ -272,6 +286,13 @@ func CheckAdjacentGeneratorAtCell(g *state.Game, cell *world.Cell) bool {
 
 	gen := gameworld.GetGameData(cell).Generator
 
+	if gen.Permanent {
+		calloutText := fmt.Sprintf("POWERED{%s}\nSUBTLE{Always online}", gen.Name)
+		renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorGeneratorOn, 0)
+		ToggleGeneratorPowerGridOverlay(g, cell)
+		return true
+	}
+
 	// Build tooltip message with generator status and power information (UNPOWERED{}/POWERED{} for headline + border tint).
 	var calloutText strings.Builder
 	if gen.IsPowered() {
@@ -322,31 +343,54 @@ func CheckAdjacentGeneratorAtCell(g *state.Game, cell *world.Cell) bool {
 }
 
 func PickUpItemsOnFloor(g *state.Game) {
-	g.CurrentCell.ItemsOnFloor.Each(func(item *world.Item) {
-		g.CurrentCell.ItemsOnFloor.Remove(item)
+	pickUpItemsOnCell(g, g.CurrentCell)
+}
+
+// PickUpAdjacentFloorItemsOnBlockingDevices collects floor loot sitting on cells
+// blocked by repair housings (e.g. unlock keycards that spawned before drop-cell fix).
+func PickUpAdjacentFloorItemsOnBlockingDevices(g *state.Game) {
+	if g == nil || g.CurrentCell == nil {
+		return
+	}
+	for _, n := range g.CurrentCell.GetNeighbors() {
+		if n == nil || n.ItemsOnFloor.Size() == 0 || !gameworld.RepairDeviceBlocksMovement(n) {
+			continue
+		}
+		pickUpItemsOnCell(g, n)
+	}
+}
+
+func pickUpItemsOnCell(g *state.Game, cell *world.Cell) {
+	if g == nil || cell == nil {
+		return
+	}
+	cell.ItemsOnFloor.Each(func(item *world.Item) {
+		cell.ItemsOnFloor.Remove(item)
 
 		if item.Name == "Map" {
 			g.HasMap = true
 			g.OwnedItems.Put(item)
-			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, "Picked up: ITEM{Map}", renderer.CalloutColorItem, 0)
+			renderer.AddCallout(cell.Row, cell.Col, "Picked up: ITEM{Map}", renderer.CalloutColorItem, 0)
+		} else if state.IsRunWideKeycardName(item.Name) {
+			g.AddRunKeycard(world.NewItem(item.Name))
+			msg := fmt.Sprintf("Picked up: KEYCARD{%s}", item.Name)
+			renderer.AddCallout(cell.Row, cell.Col, msg, renderer.CalloutColorKeycard, 0)
 		} else if strings.Contains(strings.ToLower(item.Name), "battery") {
 			g.AddBatteries(1)
 			msg := fmt.Sprintf("Picked up: BATTERY{%s}", item.Name)
-			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, msg, renderer.CalloutColorBattery, 0)
+			renderer.AddCallout(cell.Row, cell.Col, msg, renderer.CalloutColorBattery, 0)
 		} else {
 			g.OwnedItems.Put(item)
 			msg, c := floorPickupOwnedItemCallout(item.Name)
-			renderer.AddCallout(g.CurrentCell.Row, g.CurrentCell.Col, msg, c, 0)
+			renderer.AddCallout(cell.Row, cell.Col, msg, c, 0)
 		}
 	})
-
 }
 
 // floorPickupOwnedItemCallout returns markup and AddCallout color for a carried item (not Map/Battery pickup paths).
 func floorPickupOwnedItemCallout(itemName string) (string, color.RGBA) {
-	l := strings.ToLower(itemName)
 	switch {
-	case strings.Contains(l, "keycard"):
+	case state.IsRunWideKeycardName(itemName):
 		return fmt.Sprintf("Picked up: KEYCARD{%s}", itemName), renderer.CalloutColorKeycard
 	default:
 		return fmt.Sprintf("Picked up: ITEM{%s}", itemName), renderer.CalloutColorItem
@@ -358,7 +402,7 @@ func furnitureFoundItemSegment(itemName string) string {
 	switch {
 	case strings.Contains(l, "battery"):
 		return fmt.Sprintf("BATTERY{%s}", itemName)
-	case strings.Contains(l, "keycard"):
+	case state.IsRunWideKeycardName(itemName):
 		return fmt.Sprintf("KEYCARD{%s}", itemName)
 	default:
 		return fmt.Sprintf("ITEM{%s}", itemName)
@@ -413,6 +457,7 @@ func CheckAdjacentGenerators(g *state.Game) {
 			if gen.IsPowered() {
 				logMessage(g, "ITEM{%s} is now powered!", gen.Name)
 				renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("POWERED{%s - online}", gen.Name), renderer.CalloutColorGeneratorOn, 0)
+				renderer.AddDevicePulse(cell.Row, cell.Col)
 				setup.NotifyPowerGridChanged(g)
 				UpdateLightingExploration(g)
 				logMessage(g, "Power supply: %dw available", g.GetAvailablePower())
@@ -537,6 +582,10 @@ func CheckAdjacentFurnitureAtCell(g *state.Game, cell *world.Cell) bool {
 			g.AddBatteries(1)
 			calloutText := fmt.Sprintf("%s\n%s", furnitureCalloutHeading(furniture.Name), furnitureCalloutFoundWithItem(item.Name))
 			renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
+		} else if state.IsRunWideKeycardName(item.Name) {
+			g.AddRunKeycard(world.NewItem(item.Name))
+			calloutText := fmt.Sprintf("%s\n%s", furnitureCalloutHeading(furniture.Name), furnitureCalloutFoundWithItem(item.Name))
+			renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
 		} else {
 			g.OwnedItems.Put(item)
 			calloutText := fmt.Sprintf("%s\n%s", furnitureCalloutHeading(furniture.Name), furnitureCalloutFoundWithItem(item.Name))
@@ -586,6 +635,7 @@ func CheckAdjacentPowerRelayAtCell(g *state.Game, cell *world.Cell) bool {
 	}
 	msg := fmt.Sprintf("RELAY{%s}\nSUBTLE{Routing: }ACTION{%s}", "Power routing relay", stateLabel)
 	renderer.AddCallout(cell.Row, cell.Col, msg, renderer.CalloutColorMaintenance, 0)
+	renderer.AddDevicePulse(cell.Row, cell.Col)
 	setup.NotifyPowerGridChanged(g)
 	return true
 }

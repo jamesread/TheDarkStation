@@ -13,8 +13,7 @@ type MainMenuAction int
 
 const (
 	MainMenuActionGenerate MainMenuAction = iota
-	MainMenuActionBindings
-	MainMenuActionVideo
+	MainMenuActionSettings
 	MainMenuActionPerfMap
 	MainMenuActionQuit
 )
@@ -40,10 +39,8 @@ func (m *MainMenuItem) GetHelpText() string {
 	switch m.Action {
 	case MainMenuActionGenerate:
 		return "Start a new game on Deck 1"
-	case MainMenuActionBindings:
-		return "Configure keyboard and gamepad bindings"
-	case MainMenuActionVideo:
-		return "Configure display settings"
+	case MainMenuActionSettings:
+		return "Configure bindings and display settings"
 	case MainMenuActionQuit:
 		return "Exit the game"
 	default:
@@ -147,8 +144,7 @@ func (h *MainMenuHandler) ShouldQuit() bool {
 func (h *MainMenuHandler) GetMenuItems() []MenuItem {
 	return []MenuItem{
 		&MainMenuItem{Label: "Generate", Action: MainMenuActionGenerate},
-		&MainMenuItem{Label: "Bindings", Action: MainMenuActionBindings},
-		&MainMenuItem{Label: "Video", Action: MainMenuActionVideo},
+		&MainMenuItem{Label: "Settings", Action: MainMenuActionSettings},
 		&MainMenuItem{Label: "Quit", Action: MainMenuActionQuit},
 	}
 }

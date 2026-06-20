@@ -2,11 +2,12 @@ package generator
 
 import (
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/deck"
 )
 
 // GridGenerator is an interface for map generation algorithms
 type GridGenerator interface {
-	Generate(level int) *world.Grid
+	Generate(level int, theme deck.Theme) *world.Grid
 	Name() string
 }
 

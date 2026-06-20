@@ -120,6 +120,7 @@ func NewBindingsMenuHandler(fromMainMenu bool) *BindingsMenuHandler {
 			Name: "System",
 			Actions: []engineinput.Action{
 				engineinput.ActionOpenMenu,
+				engineinput.ActionOpenInventory,
 				engineinput.ActionCancel,
 				engineinput.ActionQuit,
 			},
@@ -163,7 +164,6 @@ func (h *BindingsMenuHandler) GetInstructions(selected MenuItem) string {
 	if !ok {
 		return fmt.Sprintf("%s, %s.", engineinput.HintMenuSelect(), exitHint)
 	}
-
 	if !bindingItem.NonRebindable {
 		return fmt.Sprintf("%s, %s, %s.", engineinput.HintMenuSelect(), engineinput.HintMenuEditBinding(), exitHint)
 	}
@@ -218,8 +218,8 @@ func (h *BindingsMenuHandler) ShouldCloseOnAnyAction() bool {
 	return false // Bindings menu only closes on menu/quit actions
 }
 
-// GetMenuItems returns the menu items for the bindings menu.
-func (h *BindingsMenuHandler) GetMenuItems() []MenuItem {
+// CoreMenuItems returns binding rows without navigation chrome (used by SettingsMenuHandler).
+func (h *BindingsMenuHandler) CoreMenuItems() []MenuItem {
 	items := []MenuItem{
 		&BindingHeaderItem{Label: "Action\tKeyboard\tController"},
 	}
@@ -232,12 +232,15 @@ func (h *BindingsMenuHandler) GetMenuItems() []MenuItem {
 			})
 		}
 	}
+	return items
+}
 
-	// Add "Back" option at the end if opened from main menu
+// GetMenuItems returns the menu items for the bindings menu.
+func (h *BindingsMenuHandler) GetMenuItems() []MenuItem {
+	items := h.CoreMenuItems()
 	if h.fromMainMenu {
 		items = append(items, &BackMenuItem{})
 	}
-
 	return items
 }
 

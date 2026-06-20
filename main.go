@@ -11,7 +11,6 @@ import (
 	"github.com/leonelquinteros/gotext"
 
 	engineinput "darkstation/pkg/engine/input"
-	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/devtools"
 	"darkstation/pkg/game/gameplay"
 	gamemenu "darkstation/pkg/game/menu"
@@ -60,7 +59,8 @@ func main() {
 
 	// Initialize the Ebiten renderer
 	ebitRenderer := ebitenRenderer.New()
-	ebitRenderer.SetLongUseAdvancer(gameplay.AdvanceLongUseIfActive)
+	ebitRenderer.SetLongUseAdvancer(gameplay.AdvanceInteractionProgress)
+	ebitRenderer.SetRepairTimerAdvancer(gameplay.OnRepairTimersAdvanced)
 	ebitRenderer.SetHazardClearAdvancer(gameplay.AdvanceHazardClearIfActive)
 	ebitRenderer.SetHazardTourAdvancer(gameplay.AdvanceHazardTourIfActive)
 	ebitRenderer.SetHintRefresher(func(g *state.Game) {
@@ -135,14 +135,8 @@ func runMainMenuInLoop() (gamemenu.MainMenuAction, string) {
 
 		action := handler.GetSelectedAction()
 
-		// Handle bindings menu as a sub-menu
-		if action == gamemenu.MainMenuActionBindings {
-			gameplay.RunBindingsMenu(g, true) // true = from main menu, shows "Back" option
-			// After bindings menu closes, continue the main menu loop
-			continue
-		}
-		if action == gamemenu.MainMenuActionVideo {
-			gameplay.RunVideoMenu(g)
+		if action == gamemenu.MainMenuActionSettings {
+			gameplay.RunSettingsMenu(g, true)
 			continue
 		}
 
@@ -186,22 +180,14 @@ func mainLoop(g *state.Game) {
 
 	if g.ExitAnimating {
 		elapsed := time.Now().UnixMilli() - g.ExitAnimStartTime
-		const exitAnimDuration = 2000 // 2 seconds (matches drawExitAnimation)
+		const exitAnimDuration = 2000
 		if elapsed >= exitAnimDuration {
 			g.ExitAnimating = false
-			gameplay.AdvanceLevel(g)
-		}
-	} else if g.CurrentCell.ExitCell {
-		// Final deck: lift has no destination; game complete (GDD §10.2, §11)
-		if deck.IsFinalDeck(g.Level) {
-			gameplay.TriggerGameComplete(g)
-		} else if !g.ExitAnimating {
-			g.ExitAnimating = true
-			g.ExitAnimStartTime = time.Now().UnixMilli()
 		}
 	}
 
 	gameplay.PickUpItemsOnFloor(g)
+	gameplay.PickUpAdjacentFloorItemsOnBlockingDevices(g)
 	gameplay.CheckAdjacentGenerators(g)
 	gameplay.UpdateLightingExploration(g)
 
@@ -222,7 +208,7 @@ func mainLoop(g *state.Game) {
 
 	// Get and process input (tiered input system -> Intent -> game logic)
 	gameplay.ProcessIntent(g, renderer.Current.GetInput())
-	if gameplay.IsLongUseActive(g) {
+	if gameplay.IsHoldLongUseActive(g) {
 		gameplay.WaitForLongUseComplete(g)
 	}
 	if gameplay.IsHazardClearActive(g) {

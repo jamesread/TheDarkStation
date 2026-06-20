@@ -18,6 +18,7 @@ var (
 	colorFloorVisitedBg   = color.RGBA{44, 44, 64, 255}    // Slightly lighter floor background for visited
 	colorDoorLocked       = color.RGBA{255, 255, 0, 255}   // Bright yellow
 	colorDoorUnlocked     = color.RGBA{0, 220, 0, 255}     // Bright green
+	colorDoorBg           = color.RGBA{30, 30, 46, 255}    // Door tile plate — darker than walls so doorways read as openings
 	colorKeycard          = color.RGBA{100, 150, 255, 255} // Bright blue
 	colorItem             = color.RGBA{210, 185, 110, 255} // Tan / sand — floor pickups, ITEM{} tooltip markup
 	colorBattery          = color.RGBA{255, 200, 100, 255} // Orange for batteries
@@ -31,6 +32,8 @@ var (
 	colorMaintenanceBg    = color.RGBA{58, 38, 12, 255}    // Dark orange tile plate (pairs with colorMaintenance)
 	colorRepair           = color.RGBA{0, 220, 220, 255}   // Cyan for repair devices
 	colorRepairBg         = color.RGBA{12, 48, 52, 255}    // Dark cyan repair tile plate
+	colorRepairConduit    = color.RGBA{255, 255, 0, 255}   // Bright yellow — unfixed conduit splice
+	colorRepairConduitBg  = color.RGBA{52, 52, 10, 255}    // Dark gold plate for conduit faults
 	colorFurniture        = color.RGBA{255, 150, 255, 255} // Bright pink
 	colorFurnitureCheck   = color.RGBA{180, 105, 242, 255} // Violet-purple (checked; natural hue shift from pink)
 	colorExitLocked       = color.RGBA{255, 100, 100, 255} // Bright red — lift locked (generators down)
@@ -53,6 +56,19 @@ var (
 	colorToxicSlimeBg      = color.RGBA{58, 92, 18, 245}   // Murky green-yellow floor stain
 	colorToxicSlimePop     = color.RGBA{170, 230, 48, 255} // Bright pop flash while draining
 
+	// Knowledge-tier palette (information economy): dark cells render as memory or floor plan.
+	colorRemembered   = color.RGBA{112, 118, 150, 255} // Glyphs seen lit before, now dark (identity, no state)
+	colorRememberedBg = color.RGBA{26, 26, 42, 255}    // Tile plate for remembered-dark cells
+	colorLayout       = color.RGBA{66, 70, 96, 255}    // Floor-plan-only knowledge (Map item / dark discovery)
+	colorLayoutBg     = color.RGBA{20, 20, 32, 255}    // Tile plate for floor-plan-only cells
+
+	// Deck 1 west overlay room (Ship)
+	colorShipFloor        = color.RGBA{72, 188, 210, 255}  // Cool hull teal
+	colorShipFloorVisited = color.RGBA{118, 220, 235, 255} // Brighter teal when visited
+	colorShipFloorBg      = color.RGBA{14, 42, 52, 255}     // Dark hull plate
+	colorShipFloorVisitedBg = color.RGBA{20, 56, 66, 255}   // Visited hull plate
+	colorShipWall           = color.RGBA{108, 198, 208, 255} // Hull bulkhead foreground
+	colorShipWallBg         = color.RGBA{8, 28, 38, 255}     // Dark bulkhead plate (teal family)
 	// Callout colors
 	ColorCalloutInfo    = color.RGBA{200, 200, 255, 255} // Light blue for info
 	ColorCalloutSuccess = color.RGBA{100, 255, 150, 255} // Green for success
@@ -66,6 +82,7 @@ var (
 // Icon constants - Unicode characters for proper font rendering
 const (
 	IconWall               = "▒"
+	IconShipHullWall       = "▓" // Deck 1 ship bulkhead plating
 	IconUnvisited          = "●"
 	IconVisited            = "○"
 	IconVoid               = " "
@@ -90,6 +107,7 @@ const (
 	IconRepairSignal   = "S" // Signal calibrator repair
 	IconRepairCoupler  = "C" // Power coupler repair
 	IconRepairPump     = "P" // Waste pump repair
+	IconRepairConduit  = "=" // Burned conduit splice repair (grid fault)
 	IconToxicSlime     = "~" // Repair-gated toxic slime
 )
 
@@ -116,6 +134,8 @@ var roomFloorIcons = map[string][2]string{
 	"Mess Hall":       {"○", "●"},
 	"Airlock":         {"╳", "╳"}, // Special areas
 	"Corridor":        {"░", "░"}, // Corridors
+	"Lift Shaft":      {"▦", "▦"}, // Core lift shaft hub (mesh grating)
+	"Ship": {"⬢", "⬡"}, // Deck 1 player vessel hull
 }
 
 // Tile size constraints

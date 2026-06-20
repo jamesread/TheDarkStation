@@ -8,7 +8,9 @@ import (
 	"github.com/zyedidia/generic/mapset"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/state"
+	gameworld "darkstation/pkg/game/world"
 )
 
 // GetAdjacentRoomNames returns room names that are adjacent to the given room.
@@ -119,20 +121,25 @@ func getReachableCells(grid *world.Grid, start *world.Cell, lockedDoors *mapset.
 }
 
 // findRoomInReachable finds a random room cell within the reachable set
-func findRoomInReachable(reachable *mapset.Set[*world.Cell], avoid *mapset.Set[*world.Cell]) *world.Cell {
+func findRoomInReachable(g *state.Game, reachable *mapset.Set[*world.Cell], avoid *mapset.Set[*world.Cell]) *world.Cell {
 	var candidates []*world.Cell
 	reachable.Each(func(cell *world.Cell) {
-		if cell.Name != "Corridor" && !avoid.Has(cell) {
-			candidates = append(candidates, cell)
+		if !ValidFloorLootPlacementCell(g, cell, avoid) {
+			return
 		}
+		candidates = append(candidates, cell)
 	})
 
 	if len(candidates) == 0 {
-		// Fallback to any reachable cell
+		// Fallback to any reachable cell outside the lift shaft pocket.
 		reachable.Each(func(cell *world.Cell) {
-			if !avoid.Has(cell) {
-				candidates = append(candidates, cell)
+			if avoid.Has(cell) || cell.ExitCell || generator.IsPlacementExcludedRoom(cell.Name) {
+				return
 			}
+			if cell.Name == generator.ShaftRoomName || IsLiftShaftBoundsCell(g, cell) {
+				return
+			}
+			candidates = append(candidates, cell)
 		})
 	}
 
@@ -147,6 +154,9 @@ func findRoomInReachable(reachable *mapset.Set[*world.Cell], avoid *mapset.Set[*
 // collectReachableRooms collects all reachable rooms from a starting cell using BFS
 func collectReachableRooms(start *world.Cell, avoid *mapset.Set[*world.Cell]) []*world.Cell {
 	var rooms []*world.Cell
+	if start == nil {
+		return rooms
+	}
 	visited := mapset.New[*world.Cell]()
 	queue := []*world.Cell{start}
 
@@ -189,12 +199,73 @@ func manhattanDistance(a, b *world.Cell) int {
 	return rowDist + colDist
 }
 
-// findRoom finds a random reachable room at an appropriate distance based on level
+// ValidFloorLootPlacementCell reports whether floor loot may be placed on cell at setup time.
+func ValidFloorLootPlacementCell(g *state.Game, cell *world.Cell, avoid *mapset.Set[*world.Cell]) bool {
+	if cell == nil || !cell.Room || cell.ExitCell {
+		return false
+	}
+	if avoid != nil && avoid.Has(cell) {
+		return false
+	}
+	if cell.Name == "Corridor" || generator.IsPlacementExcludedRoom(cell.Name) {
+		return false
+	}
+	if IsLiftShaftBoundsCell(g, cell) {
+		return false
+	}
+	data := gameworld.GetGameData(cell)
+	if data.Generator != nil || data.Door != nil || data.Furniture != nil ||
+		data.Terminal != nil || data.Puzzle != nil || data.MaintenanceTerm != nil ||
+		data.Hazard != nil || data.HazardControl != nil || data.RepairDevice != nil ||
+		data.RepairBlocker != nil || cell.ItemsOnFloor.Size() > 0 {
+		return false
+	}
+	if g != nil {
+		ok, _ := CanEnterCellAtInit(g, cell)
+		return ok
+	}
+	return true
+}
+
+func initReachableLootCandidates(g *state.Game, avoid *mapset.Set[*world.Cell]) []*world.Cell {
+	var out []*world.Cell
+	collect := func(rooms map[string]bool) {
+		if g == nil || g.Grid == nil {
+			return
+		}
+		g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+			if cell == nil || !rooms[cell.Name] {
+				return
+			}
+			if ValidFloorLootPlacementCell(g, cell, avoid) {
+				out = append(out, cell)
+			}
+		})
+	}
+	collect(lootRelocationRoomNames(g))
+	if len(out) > 0 {
+		return out
+	}
+	strict := make(map[string]bool)
+	InitialReachableCells(g).Each(func(cell *world.Cell) {
+		if cell != nil && cell.Name != "" && cell.Name != "Corridor" &&
+			!generator.IsPlacementExcludedRoom(cell.Name) && !IsLiftShaftBoundsCell(g, cell) {
+			strict[cell.Name] = true
+		}
+	})
+	collect(strict)
+	return out
+}
+
+// findRoom finds a random init-reachable room at an appropriate distance from the player entry.
 func findRoom(g *state.Game, start *world.Cell, avoid *mapset.Set[*world.Cell]) *world.Cell {
-	rooms := collectReachableRooms(start, avoid)
+	if start == nil {
+		start = PlayerEntryCell(g)
+	}
+	rooms := initReachableLootCandidates(g, avoid)
 
 	if len(rooms) == 0 {
-		return start
+		return nil
 	}
 
 	// Calculate minimum distance based on level
@@ -242,6 +313,9 @@ func findRoom(g *state.Game, start *world.Cell, avoid *mapset.Set[*world.Cell]) 
 // placeItem places an item in a random reachable room at an appropriate distance based on level
 func placeItem(g *state.Game, start *world.Cell, item *world.Item, avoid *mapset.Set[*world.Cell]) *world.Cell {
 	room := findRoom(g, start, avoid)
+	if room != nil && IsLiftShaftBoundsCell(g, room) && room != PlayerEntryCell(g) {
+		room = nil
+	}
 	if room != nil {
 		room.ItemsOnFloor.Put(item)
 		avoid.Put(room)

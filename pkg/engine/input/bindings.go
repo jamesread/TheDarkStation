@@ -59,6 +59,8 @@ func FormatBindingCode(code string) string {
 		return "Enter"
 	case "menu":
 		return "F10"
+	case "f":
+		return "F"
 	default:
 		return code
 	}

@@ -38,6 +38,10 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		RunGameplayMenu(g)
 		return
 
+	case engineinput.ActionOpenInventory:
+		gamemenu.RunInventoryMenu(g)
+		return
+
 	case engineinput.ActionHint:
 		idx := rand.Intn(len(g.Hints))
 		logMessage(g, "%s", g.Hints[idx])
@@ -84,7 +88,7 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		return
 
 	case engineinput.ActionMoveEast:
-		CancelLongUse(g)
+		abandonCouplerCrankOnMove(g)
 		g.NavStyle = state.NavStyleNSEW
 		if g.CurrentCell == nil {
 			return
@@ -93,7 +97,7 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		return
 
 	case engineinput.ActionMoveWest:
-		CancelLongUse(g)
+		abandonCouplerCrankOnMove(g)
 		g.NavStyle = state.NavStyleNSEW
 		if g.CurrentCell == nil {
 			return
@@ -102,7 +106,7 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		return
 
 	case engineinput.ActionMoveNorth:
-		CancelLongUse(g)
+		abandonCouplerCrankOnMove(g)
 		g.NavStyle = state.NavStyleNSEW
 		if g.CurrentCell == nil {
 			return
@@ -111,7 +115,7 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		return
 
 	case engineinput.ActionMoveSouth:
-		CancelLongUse(g)
+		abandonCouplerCrankOnMove(g)
 		g.NavStyle = state.NavStyleNSEW
 		if g.CurrentCell == nil {
 			return
@@ -139,6 +143,11 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 			log.Printf("[Interact] ProcessIntent: started long-use hold interaction")
 			return
 		}
+		if g.CurrentCell != nil && g.CurrentCell.ExitCell {
+			if TryUseLift(g) {
+				return
+			}
+		}
 		interacted := CheckAdjacentInteractables(g)
 		log.Printf("[Interact] ProcessIntent: CheckAdjacentInteractables returned %v", interacted)
 		if !interacted {
@@ -158,34 +167,47 @@ func RunGameplayMenu(g *state.Game) {
 
 	// Handle menu selection
 	switch handler.GetSelectedAction() {
-	case gamemenu.GameplayMenuActionBindings:
-		// Open bindings menu (from gameplay menu, so show "Back" option)
-		RunBindingsMenu(g, true) // true = from menu, shows "Back" option
-		// After bindings menu closes, return to gameplay menu
-		// (User can press F10 again to reopen gameplay menu)
-	case gamemenu.GameplayMenuActionVideo:
-		RunVideoMenu(g)
+	case gamemenu.GameplayMenuActionInventory:
+		gamemenu.RunInventoryMenu(g)
+	case gamemenu.GameplayMenuActionSettings:
+		RunSettingsMenu(g, false)
 	case gamemenu.GameplayMenuActionQuitToTitle:
 		QuitToTitleMenu(g)
 	}
 }
 
-// RunBindingsMenu presents a simple bindings configuration menu using the generic menu system.
-// If fromMainMenu is true, a "Back" option will be available to return to the main menu.
-func RunBindingsMenu(g *state.Game, fromMainMenu bool) {
-	handler := gamemenu.NewBindingsMenuHandler(fromMainMenu)
-	items := handler.GetMenuItems()
-	gamemenu.RunMenu(g, items, handler)
+// RunSettingsMenu opens the unified settings menu (bindings and video tabs).
+// If fromMainMenu is true, Back returns to the title screen.
+func RunSettingsMenu(g *state.Game, fromMainMenu bool) {
+	handler := gamemenu.NewSettingsMenuHandler(fromMainMenu)
+	gamemenu.RunMenuDynamic(g, handler)
 }
 
-// RunVideoMenu presents display settings.
+// RunBindingsMenu opens settings on the bindings tab (legacy entry point).
+func RunBindingsMenu(g *state.Game, fromMainMenu bool) {
+	handler := gamemenu.NewSettingsMenuHandlerWithTab(fromMainMenu, gamemenu.SettingsTabBindings)
+	gamemenu.RunMenuDynamic(g, handler)
+}
+
+// RunVideoMenu opens settings on the video tab (legacy entry point).
 func RunVideoMenu(g *state.Game) {
-	handler := gamemenu.NewVideoMenuHandler()
+	handler := gamemenu.NewSettingsMenuHandlerWithTab(false, gamemenu.SettingsTabVideo)
 	gamemenu.RunMenuDynamic(g, handler)
 }
 
 // RunMaintenanceMenu shows the maintenance terminal menu with room devices and power consumption using the generic menu system.
 func RunMaintenanceMenu(g *state.Game, cell *world.Cell, maintenanceTerm *entities.MaintenanceTerminal) {
 	handler := gamemenu.NewMaintenanceMenuHandler(g, cell, maintenanceTerm)
+	gamemenu.RunMenuDynamic(g, handler)
+}
+
+// RunRoutingCouplerMenu opens the lift routing coupler alignment mini-game.
+func RunRoutingCouplerMenu(g *state.Game, cell *world.Cell, repair *entities.RepairObjective) {
+	if g == nil || repair == nil {
+		return
+	}
+	handler := gamemenu.NewRoutingCouplerMenuHandler(g, cell, repair, func() {
+		completeRepair(g, repair, cell)
+	})
 	gamemenu.RunMenuDynamic(g, handler)
 }

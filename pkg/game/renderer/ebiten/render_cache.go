@@ -1,6 +1,8 @@
 package ebiten
 
 import (
+	"time"
+
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 )
@@ -136,6 +138,11 @@ func (e *EbitenRenderer) refreshEnvPlaques(g *state.Game) []envPlaque {
 	return plaques
 }
 
+// mapAnimBucketMs sets how often the tile buffer redraws while the snapshot is
+// otherwise unchanged, so ambient animation (shimmer, flicker, pulses) plays
+// during idle. 50ms = 20 redraws/s, well under the effect periods.
+const mapAnimBucketMs = 50
+
 func (e *EbitenRenderer) mapDrawCacheHit(snapSeq uint64, startRow, startCol, bufW, bufH int) bool {
 	c := &e.mapDrawCache
 	if !c.valid || c.snapSeq != snapSeq {
@@ -150,19 +157,23 @@ func (e *EbitenRenderer) mapDrawCacheHit(snapSeq uint64, startRow, startCol, buf
 	if c.tileSize != e.tileSize || c.viewRows != e.viewportRows || c.viewCols != e.viewportCols {
 		return false
 	}
+	if c.animBucket != time.Now().UnixMilli()/mapAnimBucketMs {
+		return false
+	}
 	return true
 }
 
 func (e *EbitenRenderer) storeMapDrawCache(snapSeq uint64, startRow, startCol int, bufW, bufH int) {
 	e.mapDrawCache = mapDrawCache{
-		valid:    true,
-		snapSeq:  snapSeq,
-		startRow: startRow,
-		startCol: startCol,
-		bufW:     bufW,
-		bufH:     bufH,
-		tileSize: e.tileSize,
-		viewRows: e.viewportRows,
-		viewCols: e.viewportCols,
+		valid:      true,
+		snapSeq:    snapSeq,
+		startRow:   startRow,
+		startCol:   startCol,
+		bufW:       bufW,
+		bufH:       bufH,
+		tileSize:   e.tileSize,
+		viewRows:   e.viewportRows,
+		viewCols:   e.viewportCols,
+		animBucket: time.Now().UnixMilli() / mapAnimBucketMs,
 	}
 }

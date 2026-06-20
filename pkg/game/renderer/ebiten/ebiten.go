@@ -64,6 +64,11 @@ func (e *EbitenRenderer) SetHazardTourAdvancer(fn HazardTourAdvanceFunc) {
 	e.hazardTourAdvancer = fn
 }
 
+// SetRepairTimerAdvancer registers the gameplay hook after timed repair completion.
+func (e *EbitenRenderer) SetRepairTimerAdvancer(fn RepairTimerAdvanceFunc) {
+	e.repairTimerAdvancer = fn
+}
+
 // SetHintRefresher registers a hook to refresh on-map control callouts when the primary input device changes.
 func (e *EbitenRenderer) SetHintRefresher(fn HintRefresher) {
 	e.hintRefresher = fn

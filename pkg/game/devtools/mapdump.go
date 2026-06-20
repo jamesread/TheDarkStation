@@ -46,6 +46,12 @@ func cellSymbol(g *state.Game, cell *world.Cell, revealedOnly bool) rune {
 		return 'P'
 	case data.MaintenanceTerm != nil:
 		return 'M'
+	case data.RepairDevice != nil:
+		return 'R'
+	case data.PowerRelay != nil:
+		return 'r'
+	case gameworld.HasBlockingRepairBlocker(cell):
+		return '~'
 	case data.Furniture != nil:
 		return 'F'
 	case data.Hazard != nil && data.Hazard.IsBlocking():
@@ -119,6 +125,9 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 	fmt.Fprintln(f, "--- Metadata ---")
 	fmt.Fprintf(f, "level: %d\n", g.Level)
 	fmt.Fprintf(f, "level_seed: %s\n", levelseed.Format(g.LevelSeed))
+	if g.LevelGenAttempts > 0 {
+		fmt.Fprintf(f, "level_gen_attempts: %d\n", g.LevelGenAttempts)
+	}
 	fmt.Fprintf(f, "grid_rows: %d\n", rows)
 	fmt.Fprintf(f, "grid_cols: %d\n", cols)
 	fmt.Fprintf(f, "coordinate_system: x,y (0-based)\n")
@@ -151,7 +160,7 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 
 	// --- Legend ---
 	fmt.Fprintln(f, "--- Legend (cell symbols) ---")
-	fmt.Fprintln(f, ". = walkable empty  # = unrevealed or wall  D = door  G = generator  T = CCTV terminal  P = puzzle terminal  M = maintenance terminal  F = furniture  ! = blocking hazard  C = hazard control  i = items on floor  @ = player  E = exit")
+	fmt.Fprintln(f, ". = walkable empty  # = unrevealed or wall  D = door  G = generator  T = CCTV terminal  P = puzzle terminal  M = maintenance terminal  R = repair device  r = power relay  ~ = repair blocker (toxic slime)  F = furniture  ! = blocking hazard  C = hazard control  i = items on floor  @ = player  E = exit")
 	fmt.Fprintln(f, "")
 
 	// --- Map: Revealed only ---
@@ -190,6 +199,26 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 		fmt.Fprintln(f, "solvability_warnings:")
 		for _, w := range report.Warnings {
 			fmt.Fprintf(f, "  - %s\n", w)
+		}
+	}
+	fmt.Fprintln(f, "")
+
+	// --- Simulated playthrough (from current state: greedy fixed-point player) ---
+	fmt.Fprintln(f, "--- Simulated playthrough (from current state) ---")
+	sim := setup.SimulatePlaythrough(g)
+	fmt.Fprintf(f, "solvable: %v\n", sim.Solvable)
+	if len(sim.Failures) > 0 {
+		fmt.Fprintln(f, "failures:")
+		for _, failure := range sim.Failures {
+			fmt.Fprintf(f, "  - %s\n", failure)
+		}
+	}
+	if len(sim.Trace) == 0 {
+		fmt.Fprintln(f, "trace: (no actions available)")
+	} else {
+		fmt.Fprintln(f, "trace:")
+		for _, step := range sim.Trace {
+			fmt.Fprintf(f, "  - %s\n", step)
 		}
 	}
 	fmt.Fprintln(f, "")
@@ -429,6 +458,54 @@ func DumpRevealedMapToFile(g *state.Game) (string, error) {
 		info := entities.HazardTypes[c.Type]
 		hazardFixed := c.Hazard != nil && c.Hazard.Fixed
 		fmt.Fprintf(f, "  %s name: %q type: %s activated: %v hazard_fixed: %v description: %q\n", formatXY(col, row), c.Name, info.Name, c.Activated, hazardFixed, c.Description)
+	})
+	fmt.Fprintln(f, "")
+
+	// Repair objectives (devices block movement; blockers are clearable slime)
+	fmt.Fprintln(f, "Repairs:")
+	for _, rep := range g.RepairObjectives {
+		if rep == nil {
+			continue
+		}
+		segment := ""
+		if rep.SegmentLabel != "" {
+			segment = fmt.Sprintf(" segment: %q", rep.SegmentLabel)
+		}
+		fmt.Fprintf(f, "  %s id: %q name: %q type: %s room: %q status: %s requires_power: %v skip_exit_gate: %v prereqs: %q%s\n",
+			formatXY(rep.DeviceCol, rep.DeviceRow), rep.ID, rep.Name, rep.Type, rep.RoomName,
+			rep.Status, rep.RequiresPower, rep.SkipExitGate, rep.PrereqIDs, segment)
+		for _, bc := range rep.BlockerCellList() {
+			fmt.Fprintf(f, "    blocker: %s name: %q blocking: %v\n",
+				formatXY(bc.Col, bc.Row), rep.BlockerName, rep.BlockerBlocksCell(bc.Row, bc.Col))
+		}
+	}
+	fmt.Fprintln(f, "")
+
+	// Conservation policies (deterministic station automation rules)
+	fmt.Fprintln(f, "Conservation policies:")
+	if len(g.Policies) == 0 {
+		fmt.Fprintln(f, "  (none)")
+	}
+	for _, p := range g.Policies {
+		if p == nil {
+			continue
+		}
+		fmt.Fprintf(f, "  id: %q code: %q kind: %s overridden: %v rule: %q\n",
+			p.ID, p.Code, p.Kind, p.Overridden, p.RuleText())
+	}
+	fmt.Fprintln(f, "")
+
+	// Power relays (open relays interrupt grid conduction until closed)
+	fmt.Fprintln(f, "Power relays:")
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil {
+			return
+		}
+		relay := gameworld.GetGameData(cell).PowerRelay
+		if relay == nil {
+			return
+		}
+		fmt.Fprintf(f, "  %s closed: %v\n", formatXY(col, row), relay.Closed)
 	})
 	fmt.Fprintln(f, "")
 

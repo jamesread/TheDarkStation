@@ -10,10 +10,14 @@ import (
 // BlockingPlacementValidator amortizes the expensive invariants behind
 // CanPlaceBlockingEntity when many candidate blockers are tested against the
 // same level state.
+//
+// The cached base state goes stale once a blocker is committed: after each
+// committed placement, construct a new validator (or fall back to
+// CanPlaceBlockingEntity) before validating further candidates.
 type BlockingPlacementValidator struct {
 	g                 *state.Game
 	exitReachable     bool
-	cutsExitPath      map[*world.Cell]bool
+	cutsRegion        map[*world.Cell]bool
 	baseInitReachable *mapset.Set[*world.Cell]
 	baseInitRooms     map[string]bool
 	keycards          []keycardLocation
@@ -24,7 +28,7 @@ func NewBlockingPlacementValidator(g *state.Game) *BlockingPlacementValidator {
 	if g == nil || g.Grid == nil {
 		return v
 	}
-	v.exitReachable, v.cutsExitPath = completionExitCutCells(g)
+	v.exitReachable, v.cutsRegion = completionRegionCutCells(g)
 	v.baseInitReachable = InitialReachableCells(g)
 	v.baseInitRooms = reachableNamedRooms(v.baseInitReachable)
 	v.keycards = keycardLocations(g)
@@ -38,7 +42,7 @@ func (v *BlockingPlacementValidator) CanPlace(candidate *world.Cell) bool {
 	if candidate.ItemsOnFloor.Size() > 0 {
 		return false
 	}
-	if !v.exitReachable || v.cutsExitPath[candidate] {
+	if !v.exitReachable || v.cutsRegion[candidate] {
 		return false
 	}
 	if !v.blockingPlacementPreservesNavAccess(candidate) {
@@ -96,17 +100,21 @@ func keycardsStillAccessibleFromLocations(locations []keycardLocation, base, wit
 	return true
 }
 
-func completionExitCutCells(g *state.Game) (bool, map[*world.Cell]bool) {
+// completionRegionCutCells returns whether the exit is reachable at completion and the
+// set of cells whose blocking would sever ANY completion-reachable cell from the entry
+// (articulation points of the completion-passability graph). This is the cached
+// equivalent of CompletionRegionPreserved + ExitReachableWhenCompletable.
+func completionRegionCutCells(g *state.Game) (bool, map[*world.Cell]bool) {
 	out := make(map[*world.Cell]bool)
 	if g == nil || g.Grid == nil {
 		return false, out
 	}
-	start := g.Grid.StartCell()
+	entry := PlayerEntryCell(g)
 	exit := g.Grid.ExitCell()
-	if start == nil || exit == nil {
+	if entry == nil || exit == nil {
 		return true, out
 	}
-	if !isPassableAtLevelCompletion(start, nil) || !isPassableAtLevelCompletion(exit, nil) {
+	if !isPassableAtLevelCompletion(entry, nil) || !isPassableAtLevelCompletion(exit, nil) {
 		return false, out
 	}
 
@@ -136,7 +144,7 @@ func completionExitCutCells(g *state.Game) (bool, map[*world.Cell]bool) {
 				if low[n] < low[cell] {
 					low[cell] = low[n]
 				}
-				if subtreeHasExit[n] && low[n] >= discovery[cell] {
+				if low[n] >= discovery[cell] {
 					out[cell] = true
 				}
 				continue
@@ -147,11 +155,11 @@ func completionExitCutCells(g *state.Game) (bool, map[*world.Cell]bool) {
 		}
 	}
 
-	visit(start)
-	if !subtreeHasExit[start] {
+	visit(entry)
+	if !subtreeHasExit[entry] {
 		return false, out
 	}
-	out[start] = true
+	out[entry] = true
 	out[exit] = true
 	return true, out
 }

@@ -24,7 +24,7 @@ func TestGetCellRenderOptions_exitLiftStates(t *testing.T) {
 	grid.SetExitCell(exit)
 	exit.Discovered = true
 	gameworld.InitGameData(grid.GetCell(0, 0))
-	gameworld.InitGameData(exit)
+	gameworld.InitGameData(exit).LightsOn = true // illuminated: full-detail tier
 	g.Grid = grid
 	g.HasMap = true
 	g.RoomDoorsPowered["Start"] = true
@@ -71,7 +71,7 @@ func TestGetTileCustomBg_exitLiftPulsingBgOnlyWhenReady(t *testing.T) {
 	grid.SetExitCell(exit)
 	exit.Discovered = true
 	gameworld.InitGameData(grid.GetCell(0, 0))
-	gameworld.InitGameData(exit)
+	gameworld.InitGameData(exit).LightsOn = true // illuminated: full-detail tier
 	g.Grid = grid
 	g.HasMap = true
 	g.RoomDoorsPowered["Start"] = true
@@ -109,7 +109,9 @@ func TestGetTileCustomBg_focusedGeneratorIsDarkGreen(t *testing.T) {
 	genCell := grid.GetCell(0, 1)
 	genCell.Discovered = true
 	gameworld.InitGameData(g.CurrentCell)
-	gameworld.InitGameData(genCell).Generator = entities.NewGenerator("G", 1)
+	genData := gameworld.InitGameData(genCell)
+	genData.LightsOn = true // illuminated: full-detail tier
+	genData.Generator = entities.NewGenerator("G", 1)
 
 	snap := &renderSnapshot{
 		playerRow:      0,
@@ -134,7 +136,9 @@ func TestGetCellRenderOptions_generatorHasDarkGreenBackground(t *testing.T) {
 	g.Grid = grid
 	genCell := grid.GetCell(0, 0)
 	genCell.Discovered = true
-	gameworld.InitGameData(genCell).Generator = entities.NewGenerator("G", 1)
+	genData := gameworld.InitGameData(genCell)
+	genData.LightsOn = true // illuminated: full-detail tier
+	genData.Generator = entities.NewGenerator("G", 1)
 
 	snap := &renderSnapshot{playerRow: -1, playerCol: -1}
 	opts := e.getCellRenderOptions(g, genCell, snap, false)

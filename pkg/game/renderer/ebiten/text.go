@@ -67,7 +67,18 @@ func (e *EbitenRenderer) monoGlyphMeasure(char string, face *text.GoTextFace) gl
 	return m
 }
 
-// drawColoredText draws text with a specific color using sans-serif font for UI
+// drawUILeftTextTop draws UI text with topY as the top edge of the glyphs (matches credits layout).
+func (e *EbitenRenderer) drawUILeftTextTop(screen *ebiten.Image, str string, x, topY int, col color.Color, face *text.GoTextFace) {
+	if str == "" || face == nil {
+		return
+	}
+	translated := dynamicGet(str)
+	op := &text.DrawOptions{}
+	op.GeoM.Translate(float64(x), float64(topY))
+	op.ColorScale.ScaleWithColor(col)
+	text.Draw(screen, translated, face, op)
+}
+
 // Translates the string using gettext before drawing.
 // If the string is not a translation key, gotext.Get will return it unchanged.
 func (e *EbitenRenderer) drawColoredText(screen *ebiten.Image, str string, x, y int, col color.Color) {

@@ -42,13 +42,13 @@ func PlacePuzzles(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 
 	for i := 0; i < numPuzzles && i < len(puzzleSolutions); i++ {
 		// Find a room for the puzzle
-		puzzleRoom := FindRoom(g, g.Grid.StartCell(), avoid)
+		puzzleRoom := FindRoom(g, setup.PlayerEntryCell(g), avoid)
 		if puzzleRoom == nil {
 			continue
 		}
 
 		// Place on a cell that is not an articulation point (global) and does not disconnect the room (R8)
-		placeCell := FindNonArticulationCellInRoom(g.Grid, g.Grid.StartCell(), puzzleRoom, avoid, &lockedDoors)
+		placeCell := FindNonArticulationCellInRoom(g.Grid, setup.PlayerEntryCell(g), puzzleRoom, avoid, &lockedDoors)
 		if placeCell == nil {
 			placeCell = puzzleRoom
 		}
@@ -94,7 +94,7 @@ func PlacePuzzles(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		avoid.Put(placeCell)
 
 		// Place the code in a furniture description in a different room
-		codeRoom := FindRoom(g, g.Grid.StartCell(), avoid)
+		codeRoom := FindRoom(g, setup.PlayerEntryCell(g), avoid)
 		if codeRoom != nil && codeRoom != puzzleRoom {
 			// Find furniture in this room and add code to its description
 			roomCells := []*world.Cell{}

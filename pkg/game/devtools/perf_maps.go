@@ -34,6 +34,9 @@ var PerfMapScenarios = []string{
 	"walls",
 }
 
+// PerfMapLevel marks g.Level while a console perfmap scenario is active.
+const PerfMapLevel = 997
+
 // SwitchToPerfMap loads a deterministic performance test map. Scenarios isolate one
 // rendering variable at a time while keeping the map fully revealed.
 func SwitchToPerfMap(g *state.Game, scenario string) string {
@@ -98,7 +101,8 @@ func newPerfGrid(rows, cols int) *world.Grid {
 func resetPerfGameState(g *state.Game, grid *world.Grid) {
 	g.Grid = grid
 	g.CurrentDeckID = deck.TotalDecks
-	g.Level = 997
+	g.Level = PerfMapLevel
+	g.PerfMapScenario = ""
 	g.LevelSeed = 0
 	g.OwnedItems = mapset.New[*world.Item]()
 	g.Generators = make([]*entities.Generator, 0)
@@ -120,10 +124,10 @@ func resetPerfGameState(g *state.Game, grid *world.Grid) {
 	g.GeneratorShutdownAt = 0
 	g.GeneratorShutdownRow = -1
 	g.GeneratorShutdownCol = -1
+	g.GeneratorShutdownRoomName = ""
 	g.LongUse = nil
 	g.HazardClear = nil
 	g.HazardTour = nil
-	g.AlwaysLitApplied = true
 	g.ClearMessages()
 }
 
@@ -327,6 +331,7 @@ func finalizePerfMap(g *state.Game, grid *world.Grid, scenario string) {
 	})
 	g.RebuildGeneratorsFromGrid()
 	setup.NotifyPowerGridChanged(g)
+	g.PerfMapScenario = scenario
 	g.AddHint("Performance map: " + scenario)
 }
 

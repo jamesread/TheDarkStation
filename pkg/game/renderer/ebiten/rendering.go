@@ -63,8 +63,9 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 			return
 		}
 
-		// Draw floating tiles background for main menu (on top of background fill, before menu overlay)
-		if genericMenuActive && title == "The Dark Station" {
+		// Drifting tile field for title screen and its sub-menus (bindings, video).
+		if titleScreenFloatingTilesMenu(title) {
+			e.ensureFloatingTiles(screenWidth, screenHeight)
 			e.drawFloatingTilesBackground(screen)
 		}
 
@@ -513,12 +514,14 @@ func (e *EbitenRenderer) drawTileToBuffer(buf *ebiten.Image, startRow, startCol,
 		// Draw floor under the player (player drawn separately as overlay)
 		underfootOptions := e.getCellRenderOptions(g, cell, snap, true)
 		customBg := e.getTileCustomBg(g, cell, snap, &underfootOptions, pg)
-		e.drawTileWithBg(buf, " ", x, y, colorBackground, underfootOptions.HasBackground, customBg)
+		bg, _ := e.ambientTileColors(g, cell, snap, &underfootOptions, customBg)
+		e.drawTileWithBg(buf, " ", x, y, colorBackground, underfootOptions.HasBackground, bg)
 		return
 	}
 
 	customBg := e.getTileCustomBg(g, cell, snap, &cellRenderOptions, pg)
-	e.drawTileWithBg(buf, cellRenderOptions.Icon, x, y, cellRenderOptions.Color, cellRenderOptions.HasBackground, customBg)
+	bg, fg := e.ambientTileColors(g, cell, snap, &cellRenderOptions, customBg)
+	e.drawTileWithBg(buf, cellRenderOptions.Icon, x, y, fg, cellRenderOptions.HasBackground, bg)
 }
 
 // getTileCustomBg returns the background color for a cell (focus, hazard, floor, exit, etc.).
@@ -534,19 +537,22 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 			}
 		}
 	}
+	// Live-detail cells expose entity state (power, locks, charge) through colored
+	// plates; remembered/layout-tier cells keep their neutral knowledge-tier plates.
+	liveDetail := cell != nil && (!cell.Room || cellKnowledgeTier(g, cell) == knowledgeLive)
 	needsClearing := false
-	if cell != nil && (g.HasMap || cell.Discovered) {
+	if liveDetail {
 		if gameworld.HasBlockingHazard(cell) || gameworld.HasLockedDoor(cell) {
 			needsClearing = true
 		}
 	}
 	if cell != nil {
-		if (g.HasMap || cell.Discovered) && gameworld.HasBlockingHazard(cell) {
+		if liveDetail && gameworld.HasBlockingHazard(cell) {
 			customBg = colorHazardBackground
 			if alpha := hazardClearVisualAlpha(snap, cell); alpha < 1 {
 				customBg = e.applyAlpha(colorHazardBackground, alpha)
 			}
-		} else if (g.HasMap || cell.Discovered) && gameworld.HasDoor(cell) {
+		} else if liveDetail && gameworld.HasDoor(cell) {
 			roomName := gameworld.GetGameData(cell).Door.RoomName
 			if !snapCellHasLivePower(snap, cell) {
 				if snapRoomManualEgressReleased(snap, roomName) {
@@ -555,16 +561,16 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 					customBg = colorHazardBackground
 				}
 			}
-		} else if (g.HasMap || cell.Discovered) && gameworld.HasMaintenanceTerminal(cell) {
+		} else if liveDetail && gameworld.HasMaintenanceTerminal(cell) {
 			data := gameworld.GetGameData(cell)
 			if data.MaintenanceTerm != nil && !data.MaintenanceTerm.Powered {
 				customBg = colorHazardBackground
 			}
-		} else if (g.HasMap || cell.Discovered) && gameworld.HasTerminal(cell) {
+		} else if liveDetail && gameworld.HasTerminal(cell) {
 			if cell.Room && !snapRoomCCTVPowered(snap, cell.Name) {
 				customBg = colorHazardBackground
 			}
-		} else if (g.HasMap || cell.Discovered) && gameworld.HasHazardControl(cell) {
+		} else if liveDetail && gameworld.HasHazardControl(cell) {
 			if cell.Room && !snapRoomCCTVPowered(snap, cell.Name) {
 				customBg = colorHazardBackground
 			}
@@ -590,7 +596,7 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 		if customBg == nil && opts != nil && opts.BackgroundColor != nil {
 			customBg = opts.BackgroundColor
 		}
-		if customBg == nil && isGeneratorRenderIcon(opts) {
+		if customBg == nil && liveDetail && isGeneratorRenderIcon(opts) {
 			customBg = colorGeneratorFocusBg
 		} else if customBg == nil && needsClearing {
 			if opts != nil {
@@ -598,7 +604,7 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 			} else {
 				customBg = colorBlockedBackground
 			}
-		} else if customBg == nil && gameworld.HasPoweredGenerator(cell) {
+		} else if customBg == nil && liveDetail && gameworld.HasPoweredGenerator(cell) {
 			customBg = colorWallBgPowered
 		} else if customBg == nil && (isFocused || isInteractable) {
 			if opts != nil {
@@ -606,7 +612,7 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 			} else {
 				customBg = colorFocusBackground
 			}
-		} else if cell != nil && cell.ExitCell && (g.HasMap || cell.Discovered) && setup.ExitLiftReady(g) {
+		} else if cell != nil && cell.ExitCell && liveDetail && setup.ExitLiftReady(g) {
 			customBg = e.getPulsingExitBackgroundColor()
 		}
 	}
@@ -749,6 +755,8 @@ func glyphDescription(ch string) string {
 		return "power coupler repair"
 	case IconRepairPump:
 		return "waste pump repair"
+	case IconRepairConduit:
+		return "burned conduit splice repair"
 	case IconToxicSlime:
 		return "toxic slime blocker"
 	case "*":
@@ -761,6 +769,8 @@ func glyphDescription(ch string) string {
 		return "unvisited command floor"
 	case "░":
 		return "corridor floor"
+	case "▦":
+		return "lift shaft floor"
 	default:
 		return "map cell glyph"
 	}
@@ -1567,12 +1577,69 @@ func (e *EbitenRenderer) getDirectionText(g *state.Game, cell *world.Cell, direc
 	return direction
 }
 
+func deckHeaderText(snap *renderSnapshot) string {
+	if snap == nil {
+		return ""
+	}
+	if snap.perfMapScenario != "" {
+		return "perfmap " + snap.perfMapScenario
+	}
+	if snap.deckTitle != "" {
+		return fmt.Sprintf(gotext.Get("DECK_HEADER"), snap.level, snap.deckTitle)
+	}
+	return fmt.Sprintf(gotext.Get("DECK_NUMBER"), snap.level)
+}
+
+func statusBarHasInventory(snap *renderSnapshot) bool {
+	if snap == nil {
+		return false
+	}
+	return len(snap.runKeycards) > 0 || len(snap.ownedItems) > 0 || snap.batteries > 0 || snap.hasMap
+}
+
+func statusBarInventoryMarkup(snap *renderSnapshot) string {
+	if snap == nil {
+		return ""
+	}
+	invLabel := gotext.Get("INVENTORY")
+	invParts := []string{invLabel}
+	needsComma := false
+	for _, itemName := range snap.runKeycards {
+		if needsComma {
+			invParts = append(invParts, ",")
+		}
+		invParts = append(invParts, fmt.Sprintf("KEYCARD{%s}", itemName))
+		needsComma = true
+	}
+	if snap.hasMap {
+		if needsComma {
+			invParts = append(invParts, ",")
+		}
+		invParts = append(invParts, "ITEM{Map}")
+		needsComma = true
+	}
+	for _, itemName := range snap.ownedItems {
+		if needsComma {
+			invParts = append(invParts, ",")
+		}
+		invParts = append(invParts, fmt.Sprintf("ITEM{%s}", itemName))
+		needsComma = true
+	}
+	if snap.batteries > 0 {
+		if needsComma {
+			invParts = append(invParts, ",")
+		}
+		invParts = append(invParts, fmt.Sprintf("ACTION{Batteries x%d}", snap.batteries))
+	}
+	return strings.Join(invParts, " ")
+}
+
 // drawStatusBarFromSnapshot draws deck/objectives plus inventory and generator lines using snapshot data.
 // Caller supplies anchor x,y so panel/outlining aligns with layout (window top-left in gameplay).
 func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, x, y, width, height int) {
 	// Check if there's anything to show
 	hasObjectives := len(snap.objectives) > 0
-	hasInventory := len(snap.ownedItems) > 0 || snap.batteries > 0
+	hasInventory := statusBarHasInventory(snap)
 	hasGenerators := len(snap.generators) > 0
 
 	// Always show at least the deck number
@@ -1616,9 +1683,8 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 
 	// Calculate the maximum width needed for all text lines
 	maxTextWidth := 0.0
-	// Deck number text - uses title face (larger), measure with that
-	deckTextFormat := gotext.Get("DECK_NUMBER")
-	deckText := fmt.Sprintf(deckTextFormat, snap.level)
+	// Deck header - uses title face (larger), measure with that
+	deckText := deckHeaderText(snap)
 	deckWidth := e.getTextWidthWithFace(deckText, titleFace)
 	if deckWidth > maxTextWidth {
 		maxTextWidth = deckWidth
@@ -1641,23 +1707,7 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 		}
 	}
 	if hasInventory {
-		// Build inventory text with markup for width calculation (same format as rendering)
-		invLabel := gotext.Get("INVENTORY")
-		invParts := []string{invLabel}
-		for i, itemName := range snap.ownedItems {
-			if i > 0 {
-				invParts = append(invParts, ",")
-			}
-			invParts = append(invParts, fmt.Sprintf("ITEM{%s}", itemName))
-		}
-		if snap.batteries > 0 {
-			if len(snap.ownedItems) > 0 {
-				invParts = append(invParts, ",")
-			}
-			invParts = append(invParts, fmt.Sprintf("ACTION{Batteries x%d}", snap.batteries))
-		}
-		invText := strings.Join(invParts, " ")
-		// Calculate width using parsed segments (actual text width, not markup)
+		invText := statusBarInventoryMarkup(snap)
 		segments := e.parseMarkup(invText)
 		textWidth := 0.0
 		for _, seg := range segments {
@@ -1723,10 +1773,9 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 
 	currentY := firstLineY
 
-	// Deck number (always first line, uses title font)
+	// Deck header (always first line, uses title font)
 	if hasDeckNumber {
-		deckTextFormat := gotext.Get("DECK_NUMBER")
-		deckText := fmt.Sprintf(deckTextFormat, snap.level)
+		deckText := deckHeaderText(snap)
 		e.drawColoredTextWithFace(screen, deckText, x, currentY, colorAction, e.getSansBoldTitleFontFace())
 		currentY += firstLineHeight
 		// Add a small gap between deck number and objectives
@@ -1753,24 +1802,7 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 
 	// Inventory line (only if not empty)
 	if hasInventory {
-		// Build inventory text with item colors using markup, commas in default color
-		invLabel := gotext.Get("INVENTORY")
-		invParts := []string{invLabel}
-		for i, itemName := range snap.ownedItems {
-			if i > 0 {
-				invParts = append(invParts, ",") // Comma in default text color
-			}
-			invParts = append(invParts, fmt.Sprintf("ITEM{%s}", itemName))
-		}
-		if snap.batteries > 0 {
-			if len(snap.ownedItems) > 0 {
-				invParts = append(invParts, ",") // Comma in default text color
-			}
-			invParts = append(invParts, fmt.Sprintf("ACTION{Batteries x%d}", snap.batteries))
-		}
-		invText := strings.Join(invParts, " ")
-
-		// Parse markup to apply item colors (commas will be in default color)
+		invText := statusBarInventoryMarkup(snap)
 		segments := e.parseMarkup(invText)
 		e.drawColoredTextSegments(screen, segments, x, currentY)
 		currentY += lineHeight
@@ -1888,7 +1920,7 @@ func (e *EbitenRenderer) drawLongUseProgress(screen *ebiten.Image, snap *renderS
 	vector.StrokeRect(screen, float32(x+margin), float32(barY), float32(barW), float32(barH), 1, border, false)
 }
 
-// drawGeneratorShutdownCountdown renders the delayed-shutdown timer over the maintenance terminal cell.
+// drawGeneratorShutdownCountdown renders the delayed room-shutdown timer over the maintenance terminal cell.
 func (e *EbitenRenderer) drawGeneratorShutdownCountdown(screen *ebiten.Image, snap *renderSnapshot, mapScrX, mapScrY float64, startRow, startCol int) {
 	if !snap.generatorShutdownActive {
 		return

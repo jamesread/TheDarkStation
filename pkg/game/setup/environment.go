@@ -50,8 +50,8 @@ func ApplyEnvironmentalSignage(g *state.Game) {
 		return
 	}
 
-	ft := deck.FunctionalType(g.Level)
-	keys := deck.EnvironmentalPlaqueKeys(ft)
+	ft := g.ThemeForCurrentDeck()
+	keys := deck.EnvironmentalPlaqueKeys(deck.PlaqueLayer(ft))
 	if len(keys) == 0 {
 		return
 	}
@@ -92,7 +92,7 @@ func ApplyEnvironmentalSignage(g *state.Game) {
 		if cell == nil {
 			continue
 		}
-		idx := (int(ft) + pos[0]*31 + pos[1]*17 + i*13) % len(keys)
+		idx := (int(deck.PlaqueLayer(ft)) + pos[0]*31 + pos[1]*17 + i*13) % len(keys)
 		if idx < 0 {
 			idx = -idx
 		}

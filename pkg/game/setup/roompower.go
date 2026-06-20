@@ -33,6 +33,10 @@ func InitRoomPower(g *state.Game) {
 	})
 
 	for _, roomName := range sortedRoomNames(roomNames) {
+		if IsAlwaysArmedOverlayRoom(roomName) {
+			EnsureAlwaysArmedRoomPower(g, roomName)
+			continue
+		}
 		g.RoomDoorsPowered[roomName] = false
 		g.RoomCCTVPowered[roomName] = false
 		g.RoomLightsPowered[roomName] = true // lights on by default (0w; toggled at maintenance terminal)

@@ -28,6 +28,9 @@ func TestSwitchToPerfMap_scenariosLoad(t *testing.T) {
 			if !g.HasMap {
 				t.Fatal("performance maps should be fully visible")
 			}
+			if g.PerfMapScenario != scenario {
+				t.Fatalf("PerfMapScenario = %q, want %q", g.PerfMapScenario, scenario)
+			}
 		})
 	}
 }

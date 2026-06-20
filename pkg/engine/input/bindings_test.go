@@ -71,6 +71,15 @@ func TestSetSingleBindingReservedCodes(t *testing.T) {
 	}
 }
 
+func TestOpenInventoryDefaultBindings(t *testing.T) {
+	if got := MapToIntent(NewDebouncedInput(RawInput{Device: DeviceKeyboard, Code: "f"})).Action; got != ActionOpenInventory {
+		t.Fatalf("f = %v, want ActionOpenInventory", got)
+	}
+	if got := MapToIntent(NewDebouncedInput(RawInput{Device: DeviceGamepad, Code: "gamepad_y"})).Action; got != ActionOpenInventory {
+		t.Fatalf("gamepad_y = %v, want ActionOpenInventory", got)
+	}
+}
+
 func TestQuitIsEscapeAndCancelIsBackOnly(t *testing.T) {
 	tests := []struct {
 		code string
