@@ -12,6 +12,7 @@ import (
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/gamemode"
 	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/levelgen"
 	"darkstation/pkg/game/renderer"
@@ -27,20 +28,27 @@ func GenerateGrid(g *state.Game, level int) *world.Grid {
 	if g != nil {
 		theme = g.ThemeForDeck(level - 1)
 	}
-	return generator.DefaultGenerator.Generate(level, theme)
+	opts := generator.GenerateOptionsFromMode(g.Mode())
+	return generator.BSP.GenerateWithOptions(level, theme, opts)
 }
 
 // BuildGame creates a new game instance with optional starting level (Phase 3.2, 3.4).
-// Current deck is set from startLevel; deck is generated on first entry (no load).
+// Uses the default SinglePlayerPuzzle mode.
 func BuildGame(startLevel int) *state.Game {
+	return BuildGameWithMode(startLevel, gamemode.SinglePlayerPuzzle)
+}
+
+// BuildGameWithMode creates a new game in the given mode.
+func BuildGameWithMode(startLevel int, modeID gamemode.ID) *state.Game {
 	g := state.NewGame()
+	g.SetMode(modeID)
 
 	// Current deck by ID; Level = 1-based display (Phase 3.2)
 	if startLevel < 1 {
 		startLevel = 1
 	}
-	if startLevel > deck.TotalDecks {
-		startLevel = deck.TotalDecks
+	if startLevel > g.TotalDecks() {
+		startLevel = g.TotalDecks()
 	}
 	g.CurrentDeckID = startLevel - 1
 	g.Level = g.CurrentDeckID + 1
@@ -50,10 +58,10 @@ func BuildGame(startLevel int) *state.Game {
 
 	// Generate current deck on first entry (no stored state yet)
 	generateLevel(g, startLevel, seed)
-	if startLevel == 1 {
-		SpawnOnDeckEntry(g, SpawnModeShip)
-	} else {
+	if g.LevelGen().BatteryHunt || startLevel != 1 {
 		SpawnOnDeckEntry(g, SpawnModeLiftShaft)
+	} else {
+		SpawnOnDeckEntry(g, SpawnModeShip)
 	}
 	UpdateLightingExploration(g)
 
@@ -101,7 +109,11 @@ func generateLevel(g *state.Game, level int, seed int64) {
 		g.Grid = GenerateGrid(g, level)
 		setupLevel(g, attemptReport)
 		g.LevelGenAttempts = attempt + 1
-		if setup.SimulatePlaythrough(g).Solvable {
+		solvable := true
+		if g.LevelGen().RunSimulateGate {
+			solvable = setup.SimulatePlaythrough(g).Solvable
+		}
+		if solvable {
 			break
 		}
 	}
@@ -225,65 +237,92 @@ func setupLevel(g *state.Game, report func(string)) {
 	g.ResetObservationCueAnnounced()
 	g.ResetLinkageTokensSeen()
 
+	if g.LevelGen().BatteryHunt {
+		setupBatteryHuntLevel(g, report)
+		return
+	}
+
 	report("Installing core systems")
 	config := setup.SetupLevel(g)
 	avoid := &config.Avoid
 	lockedDoorCells := &config.LockedDoorCells
-	if g.Level == 1 {
+	if g.Level == 1 && g.LevelGen().BootstrapDeck1Ship {
 		setup.BootstrapDeck1ShipSystems(g, avoid)
 	}
-	minimalSystems := deck.IsFinalDeck(g.Level) // Final deck: minimal rooms/systems (GDD §10.2)
+	minimalSystems := g.IsFinalDeckLevel(g.Level) // Final deck: minimal rooms/systems (GDD §10.2)
 
 	report("Placing environmental hazards")
-	if g.Level >= 2 && !minimalSystems {
+	if g.LevelGen().PlaceHazards && g.Level >= 2 && !minimalSystems {
 		levelgen.PlaceHazards(g, avoid, lockedDoorCells)
 		levelgen.EnsureHazardControlsSolvable(g)
 		levelgen.EnsureHazardSolutionsDisjoint(g)
 	}
 
 	report("Furnishing rooms")
-	if !minimalSystems {
+	if g.LevelGen().PlaceFurniture && !minimalSystems {
 		levelgen.PlaceFurniture(g, avoid)
 	}
 
 	report("Deploying puzzle terminals")
-	if g.Level >= 2 && !minimalSystems {
+	if g.LevelGen().PlacePuzzles && g.Level >= 2 && !minimalSystems {
 		levelgen.PlacePuzzles(g, avoid)
 	}
 
 	report("Routing maintenance")
-	levelgen.PlaceMaintenanceTerminals(g, avoid)
+	if g.LevelGen().PlaceMaintenanceTerminals {
+		levelgen.PlaceMaintenanceTerminals(g, avoid)
+	}
 
 	report("Staging repair objectives")
-	levelgen.PlaceRepairObjectives(g, avoid)
+	if g.LevelGen().PlaceRepairObjectives {
+		levelgen.PlaceRepairObjectives(g, avoid)
+	}
 
 	report("Placing deck unlock objectives")
-	levelgen.PlaceUnlockObjectives(g, avoid)
+	if g.ItemPlacement().PlaceUnlockObjectives && g.Mode().UsesCrossDeckUnlocks {
+		levelgen.PlaceUnlockObjectives(g, avoid)
+	}
 
 	report("Ensuring reachability")
 	setup.EnsureInitProgressReachability(g)
 	setup.EnsureInteractableNavAccess(g)
 	setup.EnsureProgressionNavAccess(g)
-	setup.EnsureExitGatingRepairReachability(g)
+	if g.LevelGen().PlaceRepairObjectives {
+		setup.EnsureExitGatingRepairReachability(g)
+	}
 
 	report("Energizing power grid")
-	setup.EnsureSolvabilityDoorPower(g)
-	setup.EnsureEntryAdjacentDoorPower(g)
-	setup.InitMaintenanceTerminalPower(g)
+	if g.LevelGen().PlaceDoors {
+		setup.EnsureSolvabilityDoorPower(g)
+		setup.EnsureEntryAdjacentDoorPower(g)
+	}
+	if g.LevelGen().PlaceMaintenanceTerminals {
+		setup.InitMaintenanceTerminalPower(g)
+	}
 	setup.EnsureGeneratorRoomBootstrap(g)
-	setup.PlaceAdditionalGenerators(g, avoid)
+	if g.LevelGen().PlaceAdditionalGenerators {
+		setup.PlaceAdditionalGenerators(g, avoid)
+	}
 	setup.PlaceBatteries(g, avoid)
 	setup.EnsureFloorLootReachability(g)
 
 	report("Checking exit routes")
 	setup.EnsureExitReachability(g)
-	setup.EnsureExitGatingRepairReachability(g)
+	if g.LevelGen().PlaceRepairObjectives {
+		setup.EnsureExitGatingRepairReachability(g)
+	}
 	setup.ApplyEnvironmentalSignage(g)
 	setup.ApplyObservationLedPuzzleCues(g)
 	setup.ApplyMultiHopLinkage(g)
-	setup.ApplyPowerRelays(g)
-	levelgen.PlaceConduitFaults(g, avoid)
-	levelgen.PlaceConservationPolicies(g)
+	if g.LevelGen().PlaceRelays {
+		setup.ApplyPowerRelays(g)
+	}
+	if g.LevelGen().PlaceConduitFaults {
+		levelgen.PlaceConduitFaults(g, avoid)
+	}
+	if g.ItemPlacement().PlaceConservationPolicies {
+		levelgen.PlaceConservationPolicies(g)
+	}
 
 	report("Balancing power grid")
 	setup.EnsureInitialPowerBalance(g)
@@ -292,16 +331,38 @@ func setupLevel(g *state.Game, report func(string)) {
 
 	report("Finalizing deck")
 	setup.EnsureLiftShaftEntryClearance(g)
-	setup.EnsureEntryAdjacentDoorPower(g)
-	setup.EnsureKeycardReachability(g)
-	setup.ForceMaintBootstrapOK(g)
+	if g.LevelGen().PlaceDoors {
+		setup.EnsureEntryAdjacentDoorPower(g)
+		setup.EnsureKeycardReachability(g)
+	}
+	if g.LevelGen().PlaceMaintenanceTerminals {
+		setup.ForceMaintBootstrapOK(g)
+	}
 
 	report("Adjusting unlock routing")
-	levelgen.EnsureRoutingCouplerNavAccess(g)
+	if g.ItemPlacement().PlaceUnlockObjectives {
+		levelgen.EnsureRoutingCouplerNavAccess(g)
+		levelgen.SyncKeycardPayoffRegistration(g)
+	}
 	setup.EnsureProgressionNavAccess(g)
-	setup.EnsureExitGatingRepairReachability(g)
-	levelgen.SyncKeycardPayoffRegistration(g)
+	if g.LevelGen().PlaceRepairObjectives {
+		setup.EnsureExitGatingRepairReachability(g)
+	}
 	setup.EnsureFloorLootReachability(g)
+}
+
+func setupBatteryHuntLevel(g *state.Game, report func(string)) {
+	report("Installing core systems")
+	config := setup.SetupBatteryHuntLevel(g)
+	avoid := &config.Avoid
+
+	report("Balancing power grid")
+	setup.EnsureInitialPowerBalance(g)
+	setup.ApplyGridConductivePower(g)
+
+	report("Finalizing deck")
+	setup.EnsureFloorLootReachability(g)
+	_ = avoid
 }
 
 func applyLoadedDeckFixups(g *state.Game) {
@@ -352,7 +413,7 @@ func ResetLevel(g *state.Game) {
 
 // AdvanceLevel moves to the next deck when unlocked. Prefer TravelToDeck for lift routing.
 func AdvanceLevel(g *state.Game) {
-	nextID, ok := deck.NextDeckID(g.CurrentDeckID)
+	nextID, ok := g.NextDeckID(g.CurrentDeckID)
 	if !ok {
 		return
 	}
@@ -365,8 +426,8 @@ func JumpToDeck(g *state.Game, targetLevel int) error {
 	if g == nil {
 		return fmt.Errorf("no game state")
 	}
-	if targetLevel < 1 || targetLevel > deck.TotalDecks {
-		return fmt.Errorf("deck must be between 1 and %d", deck.TotalDecks)
+	if targetLevel < 1 || targetLevel > g.TotalDecks() {
+		return fmt.Errorf("deck must be between 1 and %d", g.TotalDecks())
 	}
 	if targetLevel == g.Level {
 		return nil

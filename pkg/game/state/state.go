@@ -9,6 +9,7 @@ import (
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/gamemode"
 	"darkstation/pkg/game/unlocks"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -65,6 +66,9 @@ type Game struct {
 
 	CurrentDeckID int                // 0-based deck index (source of truth for which deck we're in)
 	DeckStates    map[int]*DeckState // Per-deck generated state; key = deck ID (0-based)
+
+	// GameMode selects deck count, unlock rules, and item placement for this run.
+	GameMode gamemode.Mode
 
 	// Run-wide progression (persists across deck travel).
 	RunSeed            int64
@@ -123,9 +127,9 @@ type Game struct {
 	RoomPowerOffPending map[string]int64
 
 	// GeneratorShutdownAt is a delayed room circuit shutdown requested from a maintenance terminal.
-	GeneratorShutdownAt      int64
-	GeneratorShutdownRow     int
-	GeneratorShutdownCol     int
+	GeneratorShutdownAt       int64
+	GeneratorShutdownRow      int
+	GeneratorShutdownCol      int
 	GeneratorShutdownRoomName string
 
 	// ObservationCueVisited prevents duplicate corridor-stamp callouts per cell (Story 5.2).
@@ -204,6 +208,7 @@ type PowerPropEntry struct {
 // NewGame creates a new game instance
 func NewGame() *Game {
 	return &Game{
+		GameMode:              gamemode.Default(),
 		OwnedItems:            mapset.New[*world.Item](),
 		PlayerFacing:          FaceNorth,
 		HasMap:                false,
@@ -585,10 +590,10 @@ func (g *Game) HasItem(item *world.Item) bool {
 // Does not increment past the final deck (deck.TotalDecks).
 // Used when advancing without per-deck store (e.g. legacy path). Prefer gameplay.AdvanceLevel for graph-based advance.
 func (g *Game) AdvanceLevel() {
-	if g.Level < deck.TotalDecks {
+	if g.Level < g.TotalDecks() {
 		g.Level++
 	}
-	if g.CurrentDeckID < deck.FinalDeckIndex {
+	if g.CurrentDeckID < g.FinalDeckIndex() {
 		g.CurrentDeckID++
 	}
 	g.OwnedItems = mapset.New[*world.Item]()

@@ -9,11 +9,21 @@ import (
 
 // BuildUnlockPlan creates a theme-aware unlock graph for a run.
 func BuildUnlockPlan(runSeed int64, themes map[int]deck.Theme) *Plan {
+	return BuildUnlockPlanFor(runSeed, themes, deck.TotalDecks)
+}
+
+// BuildUnlockPlanFor creates an unlock graph sized for totalDecks.
+func BuildUnlockPlanFor(runSeed int64, themes map[int]deck.Theme, totalDecks int) *Plan {
+	if totalDecks < 1 {
+		totalDecks = 1
+	}
 	rng := rand.New(rand.NewSource(runSeed ^ 0x5851f42d4c957f2d))
 	p := &Plan{RunSeed: runSeed}
 
-	addReactorAuthorizationChain(p, rng, themes)
-	addProceduralRequirements(p, rng, themes)
+	if totalDecks > 4 {
+		addReactorAuthorizationChain(p, rng, themes)
+	}
+	addProceduralRequirements(p, rng, themes, totalDecks)
 	addLifeSupportGates(p, themes)
 
 	return p
@@ -51,9 +61,12 @@ func addReactorAuthorizationChain(p *Plan, rng *rand.Rand, themes map[int]deck.T
 	})
 }
 
-func addProceduralRequirements(p *Plan, rng *rand.Rand, themes map[int]deck.Theme) {
-	hasRouting := map[int]bool{4: true} // deck 5 from reactor chain
-	for targetLevel := 3; targetLevel <= deck.TotalDecks; targetLevel++ {
+func addProceduralRequirements(p *Plan, rng *rand.Rand, themes map[int]deck.Theme, totalDecks int) {
+	hasRouting := map[int]bool{}
+	if totalDecks > 4 {
+		hasRouting[4] = true // deck 5 from reactor chain
+	}
+	for targetLevel := 3; targetLevel <= totalDecks; targetLevel++ {
 		targetID := targetLevel - 1
 		if deck.IsDeckAlwaysReachable(targetID) {
 			continue

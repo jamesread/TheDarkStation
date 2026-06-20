@@ -13,8 +13,16 @@ type RunProgress struct {
 	LiftRoutingPowered map[int]bool
 	ReactorOnline      bool
 	DeckThemes         map[int]deck.Theme
+	TotalDecks         int
 	HasKeycard         func(name string) bool
 	RepairComplete     func(repairID string) bool
+}
+
+func totalDecksFor(p RunProgress) int {
+	if p.TotalDecks > 0 {
+		return p.TotalDecks
+	}
+	return deck.TotalDecks
 }
 
 // IsRequirementSatisfied checks run-wide progress for one requirement.
@@ -39,7 +47,8 @@ func IsRequirementSatisfied(p RunProgress, req Requirement) bool {
 
 // IsDeckTravelUnlocked reports whether the lift menu may travel to deckID.
 func IsDeckTravelUnlocked(p RunProgress, deckID int) bool {
-	if deckID < 0 || deckID >= deck.TotalDecks {
+	total := totalDecksFor(p)
+	if deckID < 0 || deckID >= total {
 		return false
 	}
 	if IsDeckAlwaysReachable(deckID) {
@@ -68,7 +77,7 @@ func DeckTravelBlockReason(p RunProgress, deckID int) string {
 	if IsDeckTravelUnlocked(p, deckID) {
 		return ""
 	}
-	if deckID < 0 || deckID >= deck.TotalDecks {
+	if deckID < 0 || deckID >= totalDecksFor(p) {
 		return "Invalid deck"
 	}
 	if IsDeckAlwaysReachable(deckID) {

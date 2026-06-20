@@ -94,8 +94,9 @@ func TestDeckTravelBlockReason_ReactorOnline(t *testing.T) {
 	}
 	p := RunProgress{
 		Plan:               plan,
-		LiftRoutingPowered: map[int]bool{5: true},
+		LiftRoutingPowered: map[int]bool{0: true, 1: true, 2: true, 3: true, 4: true, 5: true},
 		ReactorOnline:      false,
+		TotalDecks:         10,
 	}
 	reason := DeckTravelBlockReason(p, 5)
 	if reason != "Needs: Reactor Control online" {

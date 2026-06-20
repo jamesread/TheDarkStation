@@ -98,8 +98,17 @@ func (p *Plan) ForTarget(targetDeckID int) []Requirement {
 
 // InitialLiftRouting returns deck IDs with lift routing powered at run start (decks 1–2).
 func InitialLiftRouting() map[int]bool {
+	return InitialLiftRoutingFor(deck.TotalDecks)
+}
+
+// InitialLiftRoutingFor returns starting lift routing for a run with totalDecks.
+func InitialLiftRoutingFor(totalDecks int) map[int]bool {
+	if totalDecks < 1 {
+		totalDecks = 1
+	}
 	m := make(map[int]bool, 2)
-	m[0] = true
-	m[1] = true
+	for id := 0; id < totalDecks && id < 2; id++ {
+		m[id] = true
+	}
 	return m
 }

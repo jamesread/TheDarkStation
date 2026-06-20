@@ -62,6 +62,9 @@ func (d *DevMenuItem) GetHelpText() string {
 	case DevMenuActionLoadSeed:
 		return "Regenerate the current deck from a hexadecimal seed (for map reproduction)"
 	case DevMenuActionJumpToDeck:
+		if d.G != nil {
+			return fmt.Sprintf("Jump to any deck (1–%d); loads saved state or generates if not yet visited", d.G.TotalDecks())
+		}
 		return fmt.Sprintf("Jump to any deck (1–%d); loads saved state or generates if not yet visited", deck.TotalDecks)
 	case DevMenuActionListCurrentCellChars:
 		return "Show deduplicated map-cell glyphs currently visible in the viewport"
@@ -172,7 +175,7 @@ func (h *DevMenuHandler) OnActivate(item gamemenu.MenuItem, index int) (bool, st
 	case DevMenuActionJumpToDeck:
 		deckText, ok := gamemenu.RunTextInputDialog(h.g, gamemenu.TextInputOptions{
 			Title:   "Jump to deck",
-			Prompt:  fmt.Sprintf("Enter deck number (1–%d)", deck.TotalDecks),
+			Prompt:  fmt.Sprintf("Enter deck number (1–%d)", h.g.TotalDecks()),
 			Initial: fmt.Sprintf("%d", h.g.Level),
 		})
 		if !ok {

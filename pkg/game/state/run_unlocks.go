@@ -30,6 +30,7 @@ func (g *Game) RunUnlockProgress() unlocks.RunProgress {
 		LiftRoutingPowered: g.LiftRoutingPowered,
 		ReactorOnline:      g.ReactorOnline,
 		DeckThemes:         g.DeckThemes,
+		TotalDecks:         g.TotalDecks(),
 		HasKeycard:         g.HasRunKeycard,
 		RepairComplete:     g.IsRepairCompleteOnAnyDeck,
 	}
@@ -115,11 +116,17 @@ func (g *Game) InitRunUnlocks(runSeed int64) {
 	if g == nil {
 		return
 	}
+	total := g.TotalDecks()
 	g.RunSeed = runSeed
-	g.DeckThemes = deck.AssignThemes(runSeed)
-	g.UnlockPlan = unlocks.BuildUnlockPlan(runSeed, g.DeckThemes)
+	g.DeckThemes = deck.AssignThemesFor(runSeed, total)
+	mode := g.Mode()
+	if mode.UsesCrossDeckUnlocks {
+		g.UnlockPlan = unlocks.BuildUnlockPlanFor(runSeed, g.DeckThemes, total)
+	} else {
+		g.UnlockPlan = &unlocks.Plan{RunSeed: runSeed}
+	}
 	g.UnlockSatisfied = make(map[string]bool)
-	g.LiftRoutingPowered = unlocks.InitialLiftRouting()
+	g.LiftRoutingPowered = unlocks.InitialLiftRoutingFor(total)
 	g.ReactorOnline = false
 }
 

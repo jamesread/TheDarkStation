@@ -5,8 +5,6 @@ import (
 	"time"
 
 	"github.com/leonelquinteros/gotext"
-
-	"darkstation/pkg/game/deck"
 )
 
 // CompletionCreditLineIDs lists gettext msgids for the end credits roll.
@@ -51,7 +49,7 @@ func (g *Game) SnapshotRunStats() RunStats {
 	if g == nil {
 		return stats
 	}
-	stats.DecksCompleted = deck.TotalDecks
+	stats.DecksCompleted = g.TotalDecks()
 	stats.Movements = g.MovementCount
 	stats.Interactions = g.InteractionsCount
 	return stats

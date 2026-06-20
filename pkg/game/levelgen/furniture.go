@@ -121,7 +121,7 @@ func PlaceFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 			placedFurniture = append(placedFurniture, furniture)
 		}
 
-		// Chance to hide items from the floor in furniture (40% per item)
+		// Chance to hide items from the floor in furniture
 		if len(placedFurniture) > 0 {
 			hideItemsInFurniture(g, cells, placedFurniture, roomName)
 		}
@@ -186,6 +186,14 @@ func placeFallbackFurniture(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 
 // hideItemsInFurniture moves items from floor cells into furniture with a chance
 func hideItemsInFurniture(g *state.Game, roomCells []*world.Cell, furniture []*entities.Furniture, roomName string) {
+	prefs := g.ItemPlacement()
+	if !prefs.HideItemsInFurniture {
+		return
+	}
+	chance := prefs.HideInFurnitureChancePct
+	if chance <= 0 {
+		return
+	}
 	// Find items on the floor in this room (keycards, patch kits - not batteries or maps)
 	for _, cell := range roomCells {
 		if cell.ItemsOnFloor.Size() == 0 {
@@ -196,8 +204,7 @@ func hideItemsInFurniture(g *state.Game, roomCells []*world.Cell, furniture []*e
 		cell.ItemsOnFloor.Each(func(item *world.Item) {
 			// Only hide keycards and patch kits - items that are part of puzzles
 			if ContainsSubstring(item.Name, "Keycard") || item.Name == "Patch Kit" {
-				// 50% chance to hide in furniture
-				if levelrand.Intn(100) < 50 {
+				if levelrand.Intn(100) < chance {
 					itemsToMove = append(itemsToMove, item)
 				}
 			}

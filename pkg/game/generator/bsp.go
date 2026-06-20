@@ -43,6 +43,11 @@ const (
 // Generate creates a new grid using BSP algorithm.
 // Deck theme drives room naming; final deck uses minimal layout.
 func (g *BSPGenerator) Generate(level int, theme deck.Theme) *world.Grid {
+	return g.GenerateWithOptions(level, theme, GenerateOptions{})
+}
+
+// GenerateWithOptions creates a grid with mode-specific layout overrides.
+func (g *BSPGenerator) GenerateWithOptions(level int, theme deck.Theme, opts GenerateOptions) *world.Grid {
 	grid := &world.Grid{}
 
 	// Reset room counter for this level
@@ -50,9 +55,19 @@ func (g *BSPGenerator) Generate(level int, theme deck.Theme) *world.Grid {
 
 	roomBases, roomAdjectives := deck.RoomNamesForTheme(theme)
 
+	layoutLevel := level
+	if opts.LayoutLevel > 0 {
+		layoutLevel = opts.LayoutLevel
+	}
+
 	// Grid size: airlock, bull-curve middle decks, minimal final deck.
-	isFinal := deck.IsFinalDeck(level)
-	rows, cols := deckGridDimensions(level)
+	isFinal := deck.IsFinalDeck(layoutLevel)
+	rows, cols := deckGridDimensions(layoutLevel)
+	if opts.PlayRows > 0 && opts.PlayCols > 0 {
+		const wallBorder = 2
+		rows = opts.PlayRows + wallBorder
+		cols = opts.PlayCols + wallBorder
+	}
 
 	grid.Build(rows, cols)
 
@@ -66,17 +81,17 @@ func (g *BSPGenerator) Generate(level int, theme deck.Theme) *world.Grid {
 	// Core lift shaft: reserve a centered leaf (shaft + wall ring) before random splits,
 	// so BSP rooms never overlap it and corridors connect it like any other room.
 	bspRoot := root
-	if level == 1 {
+	if level == 1 && !opts.SkipDeck1ShipOverlay {
 		bspRoot = reserveDeck1WestOverlayLeaf(root, rows, cols)
 	}
-	reserveShaftLeaf(bspRoot, rows, cols, level)
+	reserveShaftLeaf(bspRoot, rows, cols, layoutLevel)
 
 	// More splits at higher levels for more rooms; final deck keeps fewer splits (not zero).
-	minSize := minNodeSize - (level / 3)
+	minSize := minNodeSize - (layoutLevel / 3)
 	if minSize < 6 {
 		minSize = 6
 	}
-	if isFinal {
+	if isFinal && opts.PlayRows == 0 && opts.PlayCols == 0 {
 		minSize = 7 // 14×8 playable area can split into 2–3 rooms; 14 prevented any split
 	}
 	splitBSP(root, minSize)
@@ -87,20 +102,20 @@ func (g *BSPGenerator) Generate(level int, theme deck.Theme) *world.Grid {
 	// Carve rooms into the grid (the shaft is carved as a regular room)
 	carveRooms(grid, root)
 
-	if level == 1 {
+	if level == 1 && !opts.SkipDeck1ShipOverlay {
 		CarveDeck1ShipAndDock(grid)
 	}
 
 	// Connect rooms with corridors (after deck 1 west overlay is carved as rooms).
 	connectRooms(grid, root)
 
-	if level == 1 {
+	if level == 1 && !opts.SkipDeck1ShipOverlay {
 		// Corridors may intrude into the overlay pocket; restore the fixed ship layout.
 		CarveDeck1ShipAndDock(grid)
 	}
 
 	// Mark the shaft center as the exit/lift cell.
-	MarkShaftExit(grid, level)
+	MarkShaftExit(grid, layoutLevel)
 
 	// Build cell connections first so we can calculate path distances
 	grid.BuildAllCellConnections()
@@ -108,10 +123,10 @@ func (g *BSPGenerator) Generate(level int, theme deck.Theme) *world.Grid {
 	// Start outside the shaft when possible; exit is in the shaft center.
 	// Deck 1 start is already set inside the Ship by CarveDeck1ShipAndDock.
 	rooms := collectRooms(root)
-	if level == 1 && grid.StartCell() != nil && grid.StartCell().Name == ShipRoomName {
+	if level == 1 && !opts.SkipDeck1ShipOverlay && grid.StartCell() != nil && grid.StartCell().Name == ShipRoomName {
 		// keep ship spawn
 	} else if len(rooms) >= 1 {
-		pickStartCellOutsideShaft(grid, rooms, level)
+		pickStartCellOutsideShaft(grid, rooms, layoutLevel)
 	} else {
 		// Fallback to center
 		centerRow, centerCol := grid.CenterPosition()

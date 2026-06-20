@@ -9,6 +9,7 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/gamemode"
 	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
@@ -25,7 +26,10 @@ func PlaceHazards(g *state.Game, avoid *mapset.Set[*world.Cell], lockedDoorCells
 	}
 
 	numHazards := hazardCountForLevel(g.Level)
-	hazardTypes := hazardTypesForLevel(g.Level)
+	hazardTypes := filterHazardTypesForMode(hazardTypesForLevel(g.Level), g.ItemPlacement())
+	if len(hazardTypes) == 0 {
+		return
+	}
 
 	blocked := mapset.New[*world.Cell]()
 	lockedDoorCells.Each(func(c *world.Cell) { blocked.Put(c) })
@@ -73,6 +77,19 @@ func hazardTypesForLevel(level int) []entities.HazardType {
 		types = append(types, entities.HazardRadiation)
 	}
 	return types
+}
+
+func filterHazardTypesForMode(types []entities.HazardType, prefs gamemode.ItemPlacementPrefs) []entities.HazardType {
+	if prefs.PlaceHazardSolutionItems {
+		return types
+	}
+	var out []entities.HazardType
+	for _, ht := range types {
+		if info, ok := entities.HazardTypes[ht]; ok && !info.RequiresItem {
+			out = append(out, ht)
+		}
+	}
+	return out
 }
 
 func collectHazardCandidateCells(g *state.Game, lockedDoorCells, blocked *mapset.Set[*world.Cell]) []*world.Cell {

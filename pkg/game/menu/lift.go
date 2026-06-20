@@ -69,7 +69,7 @@ type LiftMenuHandler struct {
 // NewLiftMenuHandler builds a lift menu for the current game state.
 func NewLiftMenuHandler(g *state.Game) *LiftMenuHandler {
 	h := &LiftMenuHandler{g: g, selectedDeckID: -1}
-	for deckID := 0; deckID < deck.TotalDecks; deckID++ {
+	for deckID := 0; deckID < g.TotalDecks(); deckID++ {
 		level := deckID + 1
 		blocked := ""
 		if !g.IsDeckTravelUnlocked(deckID) {

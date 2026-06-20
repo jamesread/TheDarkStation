@@ -138,10 +138,23 @@ func IsLifeSupportTheme(t Theme) bool {
 
 // AssignThemes returns the theme for each deck ID (0-based) for a run seed.
 func AssignThemes(runSeed int64) map[int]Theme {
-	themes := make(map[int]Theme, TotalDecks)
+	return AssignThemesFor(runSeed, TotalDecks)
+}
+
+// AssignThemesFor returns deck themes for a run with the given deck count.
+func AssignThemesFor(runSeed int64, totalDecks int) map[int]Theme {
+	if totalDecks < 1 {
+		totalDecks = 1
+	}
+	themes := make(map[int]Theme, totalDecks)
 	themes[0] = ThemeAirlock
-	themes[4] = ThemeReactorControl // deck 5
-	themes[FinalDeckIndex] = ThemeExitDeck
+	finalIdx := FinalDeckIndexFor(totalDecks)
+	if finalIdx > 0 {
+		themes[finalIdx] = ThemeExitDeck
+	}
+	if totalDecks > 4 {
+		themes[4] = ThemeReactorControl // deck 5
+	}
 
 	assignable := make([]Theme, 0, len(assignableThemes))
 	for _, t := range assignableThemes {
@@ -152,8 +165,8 @@ func AssignThemes(runSeed int64) map[int]Theme {
 	}
 	rng := rand.New(rand.NewSource(runSeed))
 
-	earlySlots := []int{1, 2, 3}    // decks 2–4
-	lateSlots := []int{5, 6, 7, 8}   // decks 6–9
+	earlySlots := filterDeckSlots([]int{1, 2, 3}, totalDecks)
+	lateSlots := filterDeckSlots([]int{5, 6, 7, 8}, totalDecks)
 
 	shuffleThemes(rng, assignable)
 	earlyPool := append([]Theme(nil), assignable...)
@@ -179,12 +192,22 @@ func AssignThemes(runSeed int64) map[int]Theme {
 		}
 	}
 
-	for id := 0; id < TotalDecks; id++ {
+	for id := 0; id < totalDecks; id++ {
 		if themes[id] == "" {
 			themes[id] = ThemeCargoLogistics
 		}
 	}
 	return themes
+}
+
+func filterDeckSlots(slots []int, totalDecks int) []int {
+	var out []int
+	for _, id := range slots {
+		if id >= 0 && id < totalDecks {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func shuffleThemes(rng *rand.Rand, themes []Theme) {

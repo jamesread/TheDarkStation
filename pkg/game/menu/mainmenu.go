@@ -38,7 +38,7 @@ func (m *MainMenuItem) IsSelectable() bool {
 func (m *MainMenuItem) GetHelpText() string {
 	switch m.Action {
 	case MainMenuActionGenerate:
-		return "Start a new game on Deck 1"
+		return "Choose a game mode and start a new run"
 	case MainMenuActionSettings:
 		return "Configure bindings and display settings"
 	case MainMenuActionQuit:

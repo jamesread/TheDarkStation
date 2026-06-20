@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"darkstation/pkg/engine/world"
-	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/generator"
 	gamemenu "darkstation/pkg/game/menu"
 	"darkstation/pkg/game/renderer"
@@ -27,8 +26,8 @@ func TravelToDeck(g *state.Game, targetLevel int) error {
 	if g == nil {
 		return fmt.Errorf("no game state")
 	}
-	if targetLevel < 1 || targetLevel > deck.TotalDecks {
-		return fmt.Errorf("deck must be between 1 and %d", deck.TotalDecks)
+	if targetLevel < 1 || targetLevel > g.TotalDecks() {
+		return fmt.Errorf("deck must be between 1 and %d", g.TotalDecks())
 	}
 	targetID := targetLevel - 1
 	if targetID == g.CurrentDeckID {
@@ -115,7 +114,7 @@ func TryUseLift(g *state.Game) bool {
 		return false
 	}
 
-	if deck.IsFinalDeck(g.Level) {
+	if g.IsFinalDeckLevel(g.Level) {
 		TriggerGameComplete(g)
 		return true
 	}
