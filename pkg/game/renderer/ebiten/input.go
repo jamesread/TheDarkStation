@@ -85,16 +85,7 @@ func (e *EbitenRenderer) Update() error {
 	}
 
 	intent := e.pollGameplayIntent()
-	if intent.Action != engineinput.ActionNone {
-		if intent.Action == engineinput.ActionInteract {
-			log.Printf("[Interact] input: dispatch ActionInteract")
-		}
-		select {
-		case e.inputChan <- intent:
-		default:
-			log.Printf("[Interact] input: WARNING dropped intent (inputChan full) action=%v", intent.Action)
-		}
-	}
+	e.enqueueGameplayIntent(intent)
 
 	// Camera pan for maintenance menu: once per Update tick, not per Draw (Draw can run
 	// multiple times per frame; time-based interpolation there caused visible jitter).
@@ -387,92 +378,31 @@ func (e *EbitenRenderer) checkGamepadInput() engineinput.Intent {
 			return intent
 		}
 
-		// Analog stick (left stick) movement
-		// Axes: 0 = X (left = -1, right = +1), 1 = Y (up = -1, down = +1)
-		const deadZone = 0.5 // Threshold to avoid drift
-		const axisX = 0
-		const axisY = 1
-
-		stickX := ebiten.GamepadAxisValue(id, axisX)
-		stickY := ebiten.GamepadAxisValue(id, axisY)
-
-		// Check horizontal movement (left/right) with key repeat
-		stickCodeLeft := fmt.Sprintf("gamepad_%d_stick_left", id)
-		if stickX < -deadZone {
-			if e.shouldRepeatKey(func() bool { return stickX < -deadZone }, stickCodeLeft) {
-				return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
-					Device: engineinput.DeviceGamepad,
-					Code:   "gamepad_dpad_left",
-				}))
-			}
-		}
-		stickCodeRight := fmt.Sprintf("gamepad_%d_stick_right", id)
-		if stickX > deadZone {
-			if e.shouldRepeatKey(func() bool { return stickX > deadZone }, stickCodeRight) {
-				return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
-					Device: engineinput.DeviceGamepad,
-					Code:   "gamepad_dpad_right",
-				}))
-			}
-		}
-
-		// Check vertical movement (up/down) with key repeat
-		stickCodeUp := fmt.Sprintf("gamepad_%d_stick_up", id)
-		if stickY < -deadZone {
-			if e.shouldRepeatKey(func() bool { return stickY < -deadZone }, stickCodeUp) {
-				return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
-					Device: engineinput.DeviceGamepad,
-					Code:   "gamepad_dpad_up",
-				}))
-			}
-		}
-		stickCodeDown := fmt.Sprintf("gamepad_%d_stick_down", id)
-		if stickY > deadZone {
-			if e.shouldRepeatKey(func() bool { return stickY > deadZone }, stickCodeDown) {
-				return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
-					Device: engineinput.DeviceGamepad,
-					Code:   "gamepad_dpad_down",
-				}))
-			}
-		}
-
-		// Directional pad (D‑pad) movement with key repeat
-		// Typical mapping on many XInput-style controllers under Ebiten:
-		//  - Up:    11
-		//  - Right: 12
-		//  - Down:  13
-		//  - Left:  14
-		code := fmt.Sprintf("gamepad_%d_14", id)
-		if e.shouldRepeatKey(func() bool { return ebiten.IsGamepadButtonPressed(id, ebiten.GamepadButton14) }, code) {
-			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
-				Device: engineinput.DeviceGamepad,
-				Code:   "gamepad_dpad_left",
-			}))
-		}
-		code = fmt.Sprintf("gamepad_%d_12", id)
-		if e.shouldRepeatKey(func() bool { return ebiten.IsGamepadButtonPressed(id, ebiten.GamepadButton12) }, code) {
-			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
-				Device: engineinput.DeviceGamepad,
-				Code:   "gamepad_dpad_right",
-			}))
-		}
-		code = fmt.Sprintf("gamepad_%d_11", id)
-		if e.shouldRepeatKey(func() bool { return ebiten.IsGamepadButtonPressed(id, ebiten.GamepadButton11) }, code) {
-			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
-				Device: engineinput.DeviceGamepad,
-				Code:   "gamepad_dpad_up",
-			}))
-		}
-		code = fmt.Sprintf("gamepad_%d_13", id)
-		if e.shouldRepeatKey(func() bool { return ebiten.IsGamepadButtonPressed(id, ebiten.GamepadButton13) }, code) {
-			return engineinput.MapToIntent(engineinput.NewDebouncedInput(engineinput.RawInput{
-				Device: engineinput.DeviceGamepad,
-				Code:   "gamepad_dpad_down",
-			}))
+		// Navigation: D-pad first, then debounced left stick (same repeat rate as keyboard).
+		if nav := e.pollGamepadNavigation(id); nav.Action != engineinput.ActionNone {
+			return nav
 		}
 	}
 
 	return engineinput.Intent{Action: engineinput.ActionNone}
+}
+
+func (e *EbitenRenderer) enqueueGameplayIntent(intent engineinput.Intent) {
+	if intent.Action == engineinput.ActionNone {
+		return
+	}
+	if isMovementIntent(intent) && len(e.inputChan) > 0 {
+		// Do not queue another step until gameplay consumes the previous one.
+		return
+	}
+	if intent.Action == engineinput.ActionInteract {
+		log.Printf("[Interact] input: dispatch ActionInteract")
+	}
+	select {
+	case e.inputChan <- intent:
+	default:
+		log.Printf("[Interact] input: WARNING dropped intent (inputChan full) action=%v", intent.Action)
+	}
 }
 
 func isDeveloperMenuGamepadChordJustPressed(id ebiten.GamepadID) bool {

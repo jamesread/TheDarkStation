@@ -43,6 +43,7 @@ func New() *EbitenRenderer {
 		inputChan:           make(chan engineinput.Intent, 10),
 		running:             false,
 		stickState:          make(map[ebiten.GamepadID]struct{ x, y float64 }),
+		gamepadNavDir:       make(map[ebiten.GamepadID]string),
 		bindingCaptureStick: make(map[ebiten.GamepadID]struct{ x, y float64 }),
 		keyRepeatState:      make(map[string]keyRepeatInfo),
 		monoGlyphMetrics:    make(map[string]glyphMetrics),

@@ -303,6 +303,10 @@ type EbitenRenderer struct {
 	stickState      map[ebiten.GamepadID]struct{ x, y float64 }
 	stickStateMutex sync.RWMutex
 
+	// gamepadNavDir tracks the latched navigation direction per controller.
+	gamepadNavDir   map[ebiten.GamepadID]string
+	gamepadNavMutex sync.Mutex
+
 	// Key repeat state tracking
 	// Maps key/button codes to their repeat state
 	keyRepeatState      map[string]keyRepeatInfo
