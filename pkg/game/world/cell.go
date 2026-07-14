@@ -18,7 +18,10 @@ type GameCellData struct {
 	Hazard          *entities.Hazard              // Environmental hazard in this cell (if any)
 	HazardControl   *entities.HazardControl       // Hazard control panel in this cell (if any)
 	MaintenanceTerm *entities.MaintenanceTerminal // Maintenance terminal in this cell (if any)
+	RepairDevice    *entities.RepairObjective     // Deck repair device in this cell (if any)
+	RepairBlocker   *entities.RepairObjective     // Repair-gated blocker in this cell (if any)
 	LightsOn        bool                          // Whether lights are on in this cell
+	GridLit         bool                          // Grid-powered illumination (excludes headlamp); cached for cheap cone refresh
 	Lighted         bool                          // Whether this cell has been lit (stays explored)
 	// EnvPlaqueMsgID is an optional gettext msgid for diegetic corridor signage (Story 5.1).
 	// Empty means no plaque on this cell.
@@ -27,6 +30,8 @@ type GameCellData struct {
 	LinkageTag string
 	// PowerRelay (power-routing Phase 3): corridor routing switch; nil on non-relay cells.
 	PowerRelay *entities.PowerRelay
+	// PendingUnlockKeycard spawns as floor loot when local exit-gating repairs complete.
+	PendingUnlockKeycard string
 }
 
 // InitGameData initializes game data for a cell if not already set
@@ -48,6 +53,18 @@ func GetGameData(cell *world.Cell) *GameCellData {
 func HasFurniture(cell *world.Cell) bool {
 	data := GetGameData(cell)
 	return data.Furniture != nil
+}
+
+// FurnitureBlocksMovement reports whether furniture on the cell blocks the player.
+func FurnitureBlocksMovement(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	return data.Furniture != nil && !data.Furniture.PowerConduit
+}
+
+// FurnitureBlocksPowerGrid reports whether furniture on the cell blocks power conduction.
+func FurnitureBlocksPowerGrid(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	return data.Furniture != nil && !data.Furniture.PowerConduit
 }
 
 // HasUncheckedFurniture returns true if this cell has furniture that hasn't been examined
@@ -168,6 +185,61 @@ func HasUnsolvedPuzzle(cell *world.Cell) bool {
 func HasMaintenanceTerminal(cell *world.Cell) bool {
 	data := GetGameData(cell)
 	return data.MaintenanceTerm != nil
+}
+
+// HasRepairDevice returns true if this cell contains a repair objective device.
+func HasRepairDevice(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	return data.RepairDevice != nil
+}
+
+// HasIncompleteRepairDevice returns true for a repair device that still needs attention.
+func HasIncompleteRepairDevice(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	return data.RepairDevice != nil && !data.RepairDevice.IsComplete()
+}
+
+// RepairDeviceBlocksMovement reports whether a repair device on this cell is
+// physically impassable. Conduit splices sit in the floor channel and stay
+// walkable (they interrupt power, not movement); every other repair housing
+// blocks the cell.
+func RepairDeviceBlocksMovement(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	r := data.RepairDevice
+	if r == nil {
+		return false
+	}
+	return r.Type != entities.RepairConduitSplice
+}
+
+// RepairDeviceBlocksPowerGrid reports whether a repair device on this cell interrupts
+// power conduction. A completed conduit splice conducts again; every other repair
+// device blocks the grid while present (its housing occupies the conduit run).
+func RepairDeviceBlocksPowerGrid(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	r := data.RepairDevice
+	if r == nil {
+		return false
+	}
+	if r.Type == entities.RepairConduitSplice {
+		return !r.IsComplete()
+	}
+	return true
+}
+
+// HasRepairBlocker returns true if this cell contains a repair-gated blocker.
+func HasRepairBlocker(cell *world.Cell) bool {
+	data := GetGameData(cell)
+	return data.RepairBlocker != nil
+}
+
+// HasBlockingRepairBlocker returns true if the repair-gated blocker is still impassable.
+func HasBlockingRepairBlocker(cell *world.Cell) bool {
+	if cell == nil {
+		return false
+	}
+	data := GetGameData(cell)
+	return data.RepairBlocker != nil && data.RepairBlocker.BlockerBlocksCell(cell.Row, cell.Col)
 }
 
 // AreLightsOn returns true if lights are on in this cell

@@ -61,6 +61,42 @@ func TestSetSingleBindingReservedCodes(t *testing.T) {
 	if bindings["arrow_up"] != ActionMoveNorth {
 		t.Fatal("arrow_up must stay reserved for movement")
 	}
+	SetSingleBinding(ActionHint, "q")
+	if bindings["q"] != ActionCancel {
+		t.Fatal("q must stay reserved for cancel")
+	}
+	SetSingleBinding(ActionHint, "gamepad_b")
+	if bindings["gamepad_b"] != ActionCancel {
+		t.Fatal("gamepad_b must stay reserved for cancel")
+	}
+}
+
+func TestOpenInventoryDefaultBindings(t *testing.T) {
+	if got := MapToIntent(NewDebouncedInput(RawInput{Device: DeviceKeyboard, Code: "f"})).Action; got != ActionOpenInventory {
+		t.Fatalf("f = %v, want ActionOpenInventory", got)
+	}
+	if got := MapToIntent(NewDebouncedInput(RawInput{Device: DeviceGamepad, Code: "gamepad_y"})).Action; got != ActionOpenInventory {
+		t.Fatalf("gamepad_y = %v, want ActionOpenInventory", got)
+	}
+}
+
+func TestQuitIsEscapeAndCancelIsBackOnly(t *testing.T) {
+	tests := []struct {
+		code string
+		want Action
+	}{
+		{code: "escape", want: ActionQuit},
+		{code: "q", want: ActionCancel},
+		{code: "quit", want: ActionNone},
+		{code: "gamepad_b", want: ActionCancel},
+	}
+
+	for _, tt := range tests {
+		got := MapToIntent(NewDebouncedInput(RawInput{Device: DeviceKeyboard, Code: tt.code})).Action
+		if got != tt.want {
+			t.Fatalf("MapToIntent(%q) = %v, want %v", tt.code, got, tt.want)
+		}
+	}
 }
 
 func TestFormatBindingCode(t *testing.T) {

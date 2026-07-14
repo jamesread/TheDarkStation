@@ -43,7 +43,7 @@ func placeCCTVTerminals(g *state.Game, avoid *mapset.Set[*world.Cell], roomEntri
 	roomNames := collectUniqueRoomNames(g.Grid)
 
 	for i := 0; i < numTerminals; i++ {
-		terminalRoom := findRoom(g, g.Grid.StartCell(), avoid)
+		terminalRoom := findRoom(g, PlayerEntryCell(g), avoid)
 		if terminalRoom == nil || len(roomNames) == 0 {
 			continue
 		}
@@ -148,7 +148,9 @@ func filterValidTerminalCells(roomCells []*world.Cell, entryPoints *mapset.Set[*
 		// Don't place terminal on entry points, exit cells, or cells with other entities
 		if !avoid.Has(cell) && !cell.ExitCell && !entryPoints.Has(cell) &&
 			data.Generator == nil && data.Door == nil && data.Terminal == nil &&
-			data.Furniture == nil && data.Hazard == nil && data.HazardControl == nil {
+			data.Furniture == nil && data.Hazard == nil && data.HazardControl == nil &&
+			data.MaintenanceTerm == nil && data.RepairDevice == nil && data.RepairBlocker == nil &&
+			cell.ItemsOnFloor.Size() == 0 {
 			validCells = append(validCells, cell)
 		}
 	}

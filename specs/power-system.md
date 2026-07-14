@@ -155,24 +155,38 @@ Player-facing maintenance flow (Controls vs Diagnostics modes, circuit presets O
 
 ## 6. Lighting and Exploration
 
-### 6.1 Lights and Power
+### 6.1 Power-driven lighting
 
-- **Lights** (per-cell “lights on” state) do **not** consume power.
-- **Available power** still controls whether lights are considered “on” for exploration:
-  - If **`GetAvailablePower() > 0`** and the cell was **visited**, lights are turned on for that cell (`LightsOn = true`, `Lighted = true`, cell stays discovered/visited).
-  - If **`GetAvailablePower() <= 0`**:
-    - Lights off for that cell.
-    - Cells **within a small radius of the player** (e.g. 3×3) remain visible regardless.
-    - Other cells that are not “permanently lighted” can fade (discovered/visited cleared) so the map darkens when power is low.
+Lighting is driven by the **physical grid**, not a global available-power check (`pkg/game/gameplay/lighting.go`):
 
-So: lighting **visibility** depends on available power, but lighting does **not** add to consumption.
+- A cell's **`LightsOn`** is true when it is on a **live conduit** from a powered generator (`CellHasLivePower`) and, for named rooms, the room's lights circuit is enabled (`RoomLightsPowered`). Corridors light directly from the conduit.
+- The player carries a **headlamp** (`HeadlampRadius`): cells within radius and line-of-sight render live regardless of grid power.
+- **`Lighted`** is sticky: once a cell has been seen lit, the player **remembers** its contents even after it goes dark again.
+- Lights do **not** consume wattage.
 
-### 6.2 Update Order
+### 6.2 Knowledge tiers (rendering)
+
+The renderer classifies each cell (`cellKnowledgeTier` in `pkg/game/renderer/ebiten/cell.go`):
+
+| Tier | Condition | Shown |
+|------|-----------|-------|
+| `knowledgeUnknown` | Never seen, no map | Nothing (`#`) |
+| `knowledgeLayout` | Discovered dark, or Map item | Architecture only, no entities |
+| `knowledgeRemembered` | Seen lit before, dark now | Entity identity in neutral dim colors, no live state |
+| `knowledgeLive` | Currently lit / in headlamp range | Full detail incl. power state colors |
+
+Callouts are gated the same way: unseen controls and repair devices get generic hints rather than named solutions.
+
+### 6.3 Update Order
 
 - Each update (e.g. after movement or interaction):
   1. **Consumption** is recalculated and stored in `PowerConsumption`.
   2. **Supply** is recalculated via `UpdatePowerSupply()`.
-  3. **Available power** is used to decide lights on/off and exploration (e.g. `UpdateLightingExploration`).
+  3. **`UpdateLightingExploration`** applies power-driven lighting (live conduits + room light toggles) and the headlamp.
+
+### 6.4 Grid faults
+
+Conduction can be interrupted by **tripped breakers** (open `PowerRelay`) and **burned conduits** (`RepairConduitSplice` repairs). Diagnosis and repair flow are specified in [`faults-and-diagnosis.md`](faults-and-diagnosis.md).
 
 ---
 

@@ -126,29 +126,28 @@ func ShortOutIfOverload(g *state.Game, protectedRoomName string) bool {
 		return false
 	}
 
-	type consumer struct{ room, kind string }
-	var list []consumer
+	var list []shedConsumer
 	for roomName, on := range g.RoomPowerOnline {
 		if roomName == protectedRoomName || !on || !roomHasCellOnGrid(g, roomName, grid) {
 			continue
 		}
-		list = append(list, consumer{roomName, "doors"})
+		if IsAlwaysArmedOverlayRoom(roomName) {
+			continue
+		}
+		list = append(list, shedConsumer{roomName, "doors"})
 	}
 	for roomName, on := range g.RoomCCTVPowered {
 		if roomName == protectedRoomName || !on {
 			continue
 		}
+		if IsAlwaysArmedOverlayRoom(roomName) {
+			continue
+		}
 		if g.RoomPowerOnline != nil && g.RoomPowerOnline[roomName] && roomHasCellOnGrid(g, roomName, grid) {
-			list = append(list, consumer{roomName, "cctv"})
+			list = append(list, shedConsumer{roomName, "cctv"})
 		}
 	}
-	for i := 0; i < len(list); i++ {
-		for j := i + 1; j < len(list); j++ {
-			if list[j].room < list[i].room || (list[j].room == list[i].room && list[j].kind == "doors" && list[i].kind == "cctv") {
-				list[i], list[j] = list[j], list[i]
-			}
-		}
-	}
+	sortShedQueue(g, list)
 
 	shortOut := false
 	for _, c := range list {
@@ -157,6 +156,9 @@ func ShortOutIfOverload(g *state.Game, protectedRoomName string) bool {
 			break
 		}
 		if c.kind == "doors" && g.RoomDoorsPowered[c.room] {
+			if IsAlwaysArmedOverlayRoom(c.room) {
+				continue
+			}
 			g.RoomDoorsPowered[c.room] = false
 			if g.RoomPowerOnline != nil {
 				g.RoomPowerOnline[c.room] = false
@@ -166,6 +168,9 @@ func ShortOutIfOverload(g *state.Game, protectedRoomName string) bool {
 			}
 			shortOut = true
 		} else if c.kind == "cctv" && g.RoomCCTVPowered[c.room] {
+			if IsAlwaysArmedOverlayRoom(c.room) {
+				continue
+			}
 			g.RoomCCTVPowered[c.room] = false
 			shortOut = true
 		}
@@ -214,29 +219,22 @@ func PreviewShortOutIfOverload(g *state.Game, protectedRoomName string, doorsOn,
 		return nil
 	}
 
-	type consumer struct{ room, kind string }
-	var list []consumer
+	var list []shedConsumer
 	for roomName, on := range online {
 		if roomName == protectedRoomName || !on || !roomHasCellOnGrid(g, roomName, grid) {
 			continue
 		}
-		list = append(list, consumer{roomName, "doors"})
+		list = append(list, shedConsumer{roomName, "doors"})
 	}
 	for roomName, on := range cctv {
 		if roomName == protectedRoomName || !on {
 			continue
 		}
 		if online[roomName] && roomHasCellOnGrid(g, roomName, grid) {
-			list = append(list, consumer{roomName, "cctv"})
+			list = append(list, shedConsumer{roomName, "cctv"})
 		}
 	}
-	for i := 0; i < len(list); i++ {
-		for j := i + 1; j < len(list); j++ {
-			if list[j].room < list[i].room || (list[j].room == list[i].room && list[j].kind == "doors" && list[i].kind == "cctv") {
-				list[i], list[j] = list[j], list[i]
-			}
-		}
-	}
+	sortShedQueue(g, list)
 
 	var shed []PowerShedEntry
 	for _, c := range list {
@@ -305,29 +303,22 @@ func PreviewRoomPresetConsumption(g *state.Game, roomName string, doorsOn, cctvO
 		return before, afterApply, afterShed
 	}
 
-	type consumer struct{ room, kind string }
-	var list []consumer
+	var list []shedConsumer
 	for r, on := range online {
 		if r == roomName || !on || !roomHasCellOnGrid(g, r, grid) {
 			continue
 		}
-		list = append(list, consumer{r, "doors"})
+		list = append(list, shedConsumer{r, "doors"})
 	}
 	for r, on := range cctv {
 		if r == roomName || !on {
 			continue
 		}
 		if online[r] && roomHasCellOnGrid(g, r, grid) {
-			list = append(list, consumer{r, "cctv"})
+			list = append(list, shedConsumer{r, "cctv"})
 		}
 	}
-	for i := 0; i < len(list); i++ {
-		for j := i + 1; j < len(list); j++ {
-			if list[j].room < list[i].room || (list[j].room == list[i].room && list[j].kind == "doors" && list[i].kind == "cctv") {
-				list[i], list[j] = list[j], list[i]
-			}
-		}
-	}
+	sortShedQueue(g, list)
 	for _, c := range list {
 		if afterShed <= supply {
 			break
@@ -346,13 +337,40 @@ func PreviewRoomPresetConsumption(g *state.Game, roomName string, doorsOn, cctvO
 	return before, afterApply, afterShed
 }
 
+// shedConsumer is one room circuit in the overload shed queue.
+type shedConsumer struct{ room, kind string }
+
+// sortShedQueue orders the shed queue deterministically: rooms targeted by an
+// active shed-first conservation policy go first, then by room name, doors
+// before cctv within a room. The same ordering drives both the real short-out
+// and the menu previews so the player always sees what the station will do.
+func sortShedQueue(g *state.Game, list []shedConsumer) {
+	shedFirst := ShedFirstRooms(g)
+	rank := func(c shedConsumer) int {
+		if shedFirst[c.room] {
+			return 0
+		}
+		return 1
+	}
+	for i := 0; i < len(list); i++ {
+		for j := i + 1; j < len(list); j++ {
+			ri, rj := rank(list[i]), rank(list[j])
+			if rj < ri ||
+				(rj == ri && (list[j].room < list[i].room ||
+					(list[j].room == list[i].room && list[j].kind == "doors" && list[i].kind == "cctv"))) {
+				list[i], list[j] = list[j], list[i]
+			}
+		}
+	}
+}
+
 func calculateConsumptionFromMaps(g *state.Game, online, cctv map[string]bool, grid *mapset.Set[*world.Cell]) int {
 	if g == nil || g.Grid == nil {
 		return 0
 	}
 	rawConsumption := 0
 	doorRoomCounted := make(map[string]bool)
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+	accumulate := func(cell *world.Cell) {
 		if cell == nil || !cell.Room {
 			return
 		}
@@ -363,32 +381,34 @@ func calculateConsumptionFromMaps(g *state.Game, online, cctv map[string]bool, g
 				doorRoomCounted[data.Door.RoomName] = true
 			}
 		}
-		if grid != nil && !grid.Has(cell) {
-			return
-		}
 		if data.Terminal != nil && cctv[cell.Name] && online[cell.Name] {
 			rawConsumption += 10
 		}
 		if data.Puzzle != nil && data.Puzzle.IsSolved() {
 			rawConsumption += 3
 		}
-	})
+	}
+	if grid == nil {
+		g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+			accumulate(cell)
+		})
+	} else {
+		grid.Each(accumulate)
+	}
 	params := deck.DecayParamsForDeck(g.CurrentDeckID)
 	return int(float64(rawConsumption) * params.PowerCostMultiplier)
 }
 
 func roomHasCellOnGrid(g *state.Game, roomName string, grid *mapset.Set[*world.Cell]) bool {
-	if g == nil || g.Grid == nil || roomName == "" || grid == nil {
+	if g == nil || roomName == "" || grid == nil {
 		return false
 	}
 	found := false
-	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+	grid.Each(func(cell *world.Cell) {
 		if found || cell == nil || cell.Name != roomName {
 			return
 		}
-		if grid.Has(cell) {
-			found = true
-		}
+		found = true
 	})
 	return found
 }
@@ -420,8 +440,8 @@ func EnsureInitialPowerBalance(g *state.Game) {
 	}
 
 	startRoom := ""
-	if start := g.Grid.StartCell(); start != nil {
-		startRoom = start.Name
+	if entry := PlayerEntryCell(g); entry != nil {
+		startRoom = entry.Name
 	}
 
 	for pass := 0; pass < initialPowerBalanceMaxPasses && AnyArmedGridOverloaded(g); pass++ {
@@ -447,6 +467,7 @@ func EnsureInitialPowerBalance(g *state.Game) {
 			break
 		}
 		SyncInitialPowerState(g)
+		EnsureAlwaysArmedOverlayRoomPower(g)
 	}
 }
 

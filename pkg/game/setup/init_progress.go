@@ -8,6 +8,7 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
@@ -22,12 +23,12 @@ func InitialReachableCellsWithExtraBlock(g *state.Game, extraBlocked *world.Cell
 	if g == nil || g.Grid == nil {
 		return &empty
 	}
-	start := g.Grid.StartCell()
-	if start == nil {
+	entry := PlayerEntryCell(g)
+	if entry == nil {
 		return &empty
 	}
 	reachable := mapset.New[*world.Cell]()
-	queue := []*world.Cell{start}
+	queue := []*world.Cell{entry}
 	for len(queue) > 0 {
 		cur := queue[0]
 		queue = queue[1:]
@@ -37,7 +38,7 @@ func InitialReachableCellsWithExtraBlock(g *state.Game, extraBlocked *world.Cell
 		if extraBlocked != nil && cur == extraBlocked {
 			continue
 		}
-		if cur != start {
+		if cur != entry {
 			ok, _ := CanEnterCellAtInit(g, cur)
 			if !ok {
 				continue
@@ -111,7 +112,13 @@ func keycardLocations(g *state.Game) []keycardLocation {
 
 func keycardsAccessible(g *state.Game, reachable *mapset.Set[*world.Cell]) bool {
 	for _, loc := range keycardLocations(g) {
-		if !cellAccessibleFromReachable(reachable, loc.cell) {
+		if loc.inFurniture {
+			if !cellAccessibleFromReachable(reachable, loc.cell) {
+				return false
+			}
+			continue
+		}
+		if loc.cell == nil || reachable == nil || !reachable.Has(loc.cell) {
 			return false
 		}
 	}
@@ -142,10 +149,19 @@ func generatorsAccessible(g *state.Game, reachable *mapset.Set[*world.Cell]) boo
 // so one stranded keycard does not reject all blocking placement (I3 safety net relocates them).
 func keycardsStillAccessible(g *state.Game, base, with *mapset.Set[*world.Cell]) bool {
 	for _, loc := range keycardLocations(g) {
-		if !cellAccessibleFromReachable(base, loc.cell) {
+		if loc.inFurniture {
+			if !cellAccessibleFromReachable(base, loc.cell) {
+				continue
+			}
+			if !cellAccessibleFromReachable(with, loc.cell) {
+				return false
+			}
 			continue
 		}
-		if !cellAccessibleFromReachable(with, loc.cell) {
+		if loc.cell == nil || base == nil || !base.Has(loc.cell) {
+			continue
+		}
+		if with == nil || !with.Has(loc.cell) {
 			return false
 		}
 	}
@@ -177,11 +193,11 @@ func pickStartRoomFloorCell(g *state.Game) *world.Cell {
 	if g == nil || g.Grid == nil {
 		return nil
 	}
-	start := g.Grid.StartCell()
-	if start == nil {
+	entry := PlayerEntryCell(g)
+	if entry == nil {
 		return nil
 	}
-	startRoom := start.Name
+	startRoom := entry.Name
 	var fallback *world.Cell
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell == nil || !cell.Room || cell.Name != startRoom || cell.ExitCell {
@@ -189,31 +205,50 @@ func pickStartRoomFloorCell(g *state.Game) *world.Cell {
 		}
 		data := gameworld.GetGameData(cell)
 		if data.Generator != nil || data.Door != nil || data.Furniture != nil ||
-			data.Terminal != nil || data.Puzzle != nil || data.MaintenanceTerm != nil {
+			data.Terminal != nil || data.Puzzle != nil || data.MaintenanceTerm != nil ||
+			data.Hazard != nil || data.HazardControl != nil || data.RepairDevice != nil ||
+			data.RepairBlocker != nil || cell.ItemsOnFloor.Size() > 0 {
 			return
 		}
 		if fallback == nil {
 			fallback = cell
 		}
-		if cell == start {
+		if cell == entry {
 			fallback = cell
 		}
 	})
 	return fallback
 }
 
-// EnsureKeycardReachability moves init-unreachable keycards into the start room (I3 safety net).
+// EnsureKeycardReachability moves init-unreachable keycards into the initial reachable area
+// (I3 safety net), preferring non-start-room cells so keycards are discovered through play.
 func EnsureKeycardReachability(g *state.Game) {
 	if g == nil || g.Grid == nil {
 		return
 	}
 	reachable := InitialReachableCells(g)
-	landing := pickStartRoomFloorCell(g)
-	if landing == nil {
-		return
+	avoid := keycardRelocationAvoidSet(g)
+	entryRoom := ""
+	entry := PlayerEntryCell(g)
+	if entry != nil {
+		entryRoom = entry.Name
 	}
 	for _, loc := range keycardLocations(g) {
-		if cellAccessibleFromReachable(reachable, loc.cell) {
+		accessible := loc.cell != nil && reachable.Has(loc.cell)
+		inEntryRoom := entryRoom != "" && loc.cell != nil && loc.cell.Name == entryRoom
+		inShaftOffEntry := loc.cell != nil && IsLiftShaftBoundsCell(g, loc.cell) && loc.cell != entry
+		if accessible && !(inEntryRoom && loc.cell != entry) && !inShaftOffEntry {
+			continue
+		}
+		allowFallback := !accessible || inShaftOffEntry
+		landing := pickKeycardRelocationCell(g, reachable, &avoid, allowFallback)
+		if landing == nil || (IsLiftShaftBoundsCell(g, landing) && landing != entry) {
+			landing = pickAnyReachableKeycardCell(g, reachable, entry)
+		}
+		if landing == nil || (IsLiftShaftBoundsCell(g, landing) && landing != entry) {
+			landing = nearestNonShaftLootCell(g, loc.cell)
+		}
+		if landing == nil {
 			continue
 		}
 		if loc.inFurniture {
@@ -224,6 +259,7 @@ func EnsureKeycardReachability(g *state.Game) {
 			item := data.Furniture.ContainedItem
 			data.Furniture.ContainedItem = nil
 			landing.ItemsOnFloor.Put(item)
+			avoid.Put(landing)
 			continue
 		}
 		var toMove *world.Item
@@ -235,8 +271,314 @@ func EnsureKeycardReachability(g *state.Game) {
 		if toMove != nil {
 			loc.cell.ItemsOnFloor.Remove(toMove)
 			landing.ItemsOnFloor.Put(toMove)
+			avoid.Put(landing)
 		}
 	}
+}
+
+// EnsureFloorLootReachability moves floor loot out of the lift shaft (except the exit
+// cell) and into init-reachable cells. Late placement passes (batteries, hazard kits,
+// policy overrides) run after earlier reachability checks and must not leave loot in
+// the shaft pocket.
+func EnsureFloorLootReachability(g *state.Game) {
+	if g == nil || g.Grid == nil {
+		return
+	}
+	reachable := InitialReachableCells(g)
+	entry := PlayerEntryCell(g)
+	avoid := keycardRelocationAvoidSet(g)
+
+	type lootMove struct {
+		from *world.Cell
+		item *world.Item
+	}
+	var pending []lootMove
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || cell.ItemsOnFloor.Size() == 0 {
+			return
+		}
+		inShaftOffEntry := IsLiftShaftBoundsCell(g, cell) && cell != entry
+		unreachable := reachable == nil || !reachable.Has(cell)
+		if !inShaftOffEntry && !unreachable {
+			return
+		}
+		cell.ItemsOnFloor.Each(func(item *world.Item) {
+			if item != nil {
+				pending = append(pending, lootMove{from: cell, item: item})
+			}
+		})
+	})
+
+	for _, move := range pending {
+		if move.from == nil || move.item == nil {
+			continue
+		}
+		stillThere := false
+		move.from.ItemsOnFloor.Each(func(item *world.Item) {
+			if item == move.item {
+				stillThere = true
+			}
+		})
+		if !stillThere {
+			continue
+		}
+		landing := pickFloorLootRelocationCell(g, reachable, &avoid, entry)
+		if landing == nil {
+			landing = nearestNonShaftLootCell(g, move.from)
+		}
+		if landing == nil || IsLiftShaftBoundsCell(g, landing) {
+			continue
+		}
+		move.from.ItemsOnFloor.Remove(move.item)
+		landing.ItemsOnFloor.Put(move.item)
+		avoid.Put(landing)
+	}
+}
+
+func pickFloorLootRelocationCell(g *state.Game, reachable *mapset.Set[*world.Cell], avoid *mapset.Set[*world.Cell], entry *world.Cell) *world.Cell {
+	if landing := pickKeycardRelocationCell(g, reachable, avoid, true); landing != nil {
+		return landing
+	}
+	rooms := lootRelocationRoomNames(g)
+	var candidates []*world.Cell
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || cell == entry || cell.ExitCell || IsLiftShaftBoundsCell(g, cell) {
+			return
+		}
+		if cell.Name == "Corridor" || generator.IsPlacementExcludedRoom(cell.Name) ||
+			!rooms[cell.Name] {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.Generator != nil || data.Door != nil || data.Furniture != nil ||
+			data.Terminal != nil || data.Puzzle != nil || data.MaintenanceTerm != nil ||
+			data.Hazard != nil || data.HazardControl != nil || data.RepairDevice != nil ||
+			data.RepairBlocker != nil {
+			return
+		}
+		candidates = append(candidates, cell)
+	})
+	if len(candidates) > 0 {
+		SortCellsByPosition(candidates)
+		return candidates[0]
+	}
+	return nearestNonShaftLootCell(g, entry)
+}
+
+func nearestNonShaftLootCell(g *state.Game, from *world.Cell) *world.Cell {
+	if g == nil || g.Grid == nil {
+		return nil
+	}
+	var best *world.Cell
+	bestDist := int(^uint(0) >> 1)
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room || cell.ExitCell || IsLiftShaftBoundsCell(g, cell) {
+			return
+		}
+		if cell.Name == "Corridor" || generator.IsPlacementExcludedRoom(cell.Name) {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.Generator != nil || data.Door != nil || data.Furniture != nil ||
+			data.Terminal != nil || data.Puzzle != nil || data.MaintenanceTerm != nil ||
+			data.Hazard != nil || data.HazardControl != nil || data.RepairDevice != nil ||
+			data.RepairBlocker != nil {
+			return
+		}
+		dist := manhattanDistance(from, cell)
+		if dist < bestDist {
+			bestDist = dist
+			best = cell
+		}
+	})
+	if best != nil {
+		return best
+	}
+	reach := InitialReachableCells(g)
+	for _, cell := range []*world.Cell{
+		pickStartRoomFloorCell(g),
+		pickStartRoomNonSpawnFloorCell(g, reach, nil),
+	} {
+		if cell != nil && !IsLiftShaftBoundsCell(g, cell) {
+			return cell
+		}
+	}
+	return nil
+}
+
+func lootRelocationRoomNames(g *state.Game) map[string]bool {
+	names := make(map[string]bool)
+	if g == nil || g.Grid == nil {
+		return names
+	}
+	reach := InitialReachableCells(g)
+	reach.Each(func(cell *world.Cell) {
+		if cell != nil && cell.Name != "" && cell.Name != "Corridor" {
+			names[cell.Name] = true
+		}
+	})
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room || cell.Name == "" || cell.Name == "Corridor" ||
+			generator.IsPlacementExcludedRoom(cell.Name) || names[cell.Name] {
+			return
+		}
+		if ExitGatingRepairRoomAccessible(g, cell.Name) {
+			names[cell.Name] = true
+		}
+	})
+	delete(names, generator.ShaftRoomName)
+	if g != nil && g.Grid != nil {
+		g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+			if cell != nil && IsLiftShaftBoundsCell(g, cell) && cell.Name != "" {
+				delete(names, cell.Name)
+			}
+		})
+	}
+	return names
+}
+
+func keycardRelocationAvoidSet(g *state.Game) mapset.Set[*world.Cell] {
+	avoid := mapset.New[*world.Cell]()
+	if g == nil || g.Grid == nil {
+		return avoid
+	}
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.Generator != nil || data.Door != nil || data.Furniture != nil ||
+			data.Terminal != nil || data.Puzzle != nil || data.MaintenanceTerm != nil ||
+			data.Hazard != nil || data.HazardControl != nil || data.RepairDevice != nil ||
+			data.RepairBlocker != nil || cell.ItemsOnFloor.Size() > 0 || cell.ExitCell {
+			avoid.Put(cell)
+		}
+	})
+	return avoid
+}
+
+func pickKeycardRelocationCell(g *state.Game, reachable *mapset.Set[*world.Cell], avoid *mapset.Set[*world.Cell], allowStartRoomFallback bool) *world.Cell {
+	if g == nil || g.Grid == nil || reachable == nil {
+		return nil
+	}
+	entry := PlayerEntryCell(g)
+	entryRoom := ""
+	if entry != nil {
+		entryRoom = entry.Name
+	}
+	var candidates []*world.Cell
+	reachable.Each(func(cell *world.Cell) {
+		if cell == nil || !cell.Room || avoid.Has(cell) || cell == entry {
+			return
+		}
+		if entryRoom != "" && cell.Name == entryRoom {
+			return
+		}
+		if IsLiftShaftBoundsCell(g, cell) {
+			return
+		}
+		if !reachable.Has(cell) {
+			return
+		}
+		candidates = append(candidates, cell)
+	})
+	if len(candidates) > 0 {
+		SortCellsByPosition(candidates)
+		return candidates[0]
+	}
+	if cell := pickAdjacentToReachableKeycardCell(g, reachable, avoid, entry); cell != nil {
+		return cell
+	}
+	if !allowStartRoomFallback {
+		return nil
+	}
+	if cell := pickStartRoomNonSpawnFloorCell(g, reachable, avoid); cell != nil {
+		return cell
+	}
+	return pickStartRoomFloorCell(g)
+}
+
+func pickAnyReachableKeycardCell(g *state.Game, reachable *mapset.Set[*world.Cell], entry *world.Cell) *world.Cell {
+	if g == nil || reachable == nil {
+		return nil
+	}
+	var candidates []*world.Cell
+	reachable.Each(func(cell *world.Cell) {
+		if cell == nil || !cell.Room || cell == entry || cell.ExitCell {
+			return
+		}
+		if cell.Name == generator.ShaftRoomName || IsLiftShaftBoundsCell(g, cell) {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.Generator != nil || data.Door != nil || data.Furniture != nil ||
+			data.Terminal != nil || data.Puzzle != nil || data.MaintenanceTerm != nil ||
+			data.Hazard != nil || data.HazardControl != nil || data.RepairDevice != nil ||
+			data.RepairBlocker != nil {
+			return
+		}
+		candidates = append(candidates, cell)
+	})
+	if len(candidates) == 0 {
+		return nil
+	}
+	SortCellsByPosition(candidates)
+	return candidates[0]
+}
+
+func pickAdjacentToReachableKeycardCell(g *state.Game, reachable *mapset.Set[*world.Cell], avoid *mapset.Set[*world.Cell], entry *world.Cell) *world.Cell {
+	if g == nil || reachable == nil || reachable.Size() == 0 {
+		return nil
+	}
+	reach := InitialReachableCells(g)
+	var candidates []*world.Cell
+	reach.Each(func(cell *world.Cell) {
+		if cell == nil || !cell.Room || avoid.Has(cell) || cell == entry || IsLiftShaftBoundsCell(g, cell) {
+			return
+		}
+		candidates = append(candidates, cell)
+	})
+	if len(candidates) == 0 {
+		reach.Each(func(base *world.Cell) {
+			if base == nil {
+				return
+			}
+			for _, n := range base.GetNeighbors() {
+				if n == nil || !n.Room || avoid.Has(n) || n == entry || !reach.Has(n) ||
+					IsLiftShaftBoundsCell(g, n) {
+					continue
+				}
+				candidates = append(candidates, n)
+			}
+		})
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	SortCellsByPosition(candidates)
+	return candidates[0]
+}
+
+func pickStartRoomNonSpawnFloorCell(g *state.Game, reachable *mapset.Set[*world.Cell], avoid *mapset.Set[*world.Cell]) *world.Cell {
+	entry := PlayerEntryCell(g)
+	if entry == nil {
+		return nil
+	}
+	var candidates []*world.Cell
+	reachable.Each(func(cell *world.Cell) {
+		if cell == nil || !cell.Room || cell == entry || cell.Name != entry.Name {
+			return
+		}
+		if avoid != nil && avoid.Has(cell) {
+			return
+		}
+		candidates = append(candidates, cell)
+	})
+	if len(candidates) == 0 {
+		return nil
+	}
+	SortCellsByPosition(candidates)
+	return candidates[0]
 }
 
 // generatorLocationOK reports whether an existing generator at cell preserves exit/nav paths
@@ -288,33 +630,60 @@ func EnsureGeneratorSafePlacement(g *state.Game) {
 			avoid.Put(cell)
 		}
 	})
-	start := g.Grid.StartCell()
-	for _, entry := range bad {
-		gameworld.GetGameData(entry.cell).Generator = nil
-		avoid.Remove(entry.cell)
-		roomName := entry.cell.Name
-		newCell := findValidGeneratorCell(g, roomName, start, &avoid)
+	routingOrigin := PlayerEntryCell(g)
+	for _, genEntry := range bad {
+		gameworld.GetGameData(genEntry.cell).Generator = nil
+		avoid.Remove(genEntry.cell)
+		avoid.Put(genEntry.cell) // never relocate back onto the same chokepoint cell
+		roomName := genEntry.cell.Name
+		var newCell *world.Cell
+		candidates := []string{roomName}
+		for _, adj := range GetAdjacentRoomNames(g.Grid, roomName) {
+			candidates = append(candidates, adj)
+		}
+		for _, candidateRoom := range candidates {
+			cell := findValidGeneratorCell(g, candidateRoom, routingOrigin, &avoid)
+			if cell == nil {
+				continue
+			}
+			gameworld.GetGameData(cell).Generator = genEntry.gen
+			if generatorLocationOK(g, cell) {
+				newCell = cell
+				break
+			}
+			gameworld.GetGameData(cell).Generator = nil
+		}
 		if newCell == nil {
-			for _, adj := range GetAdjacentRoomNames(g.Grid, roomName) {
-				newCell = findValidGeneratorCell(g, adj, start, &avoid)
-				if newCell != nil {
+			for _, candidateRoom := range collectUniqueRoomNames(g.Grid) {
+				cell := findGeneratorCellInRoom(g, candidateRoom, routingOrigin, &avoid, false)
+				if cell == nil {
+					cell = findGeneratorCellInRoom(g, candidateRoom, routingOrigin, &avoid, true)
+				}
+				if cell == nil {
+					continue
+				}
+				gameworld.GetGameData(cell).Generator = genEntry.gen
+				if generatorLocationOK(g, cell) {
+					newCell = cell
 					break
 				}
+				gameworld.GetGameData(cell).Generator = nil
 			}
 		}
 		if newCell != nil {
-			gameworld.GetGameData(newCell).Generator = entry.gen
+			gameworld.GetGameData(newCell).Generator = genEntry.gen
 			avoid.Put(newCell)
 			continue
 		}
 		// Last resort: restore at original cell so the level keeps required generator count.
-		gameworld.GetGameData(entry.cell).Generator = entry.gen
-		avoid.Put(entry.cell)
+		gameworld.GetGameData(genEntry.cell).Generator = genEntry.gen
+		avoid.Put(genEntry.cell)
 	}
 }
 
 // EnsureInitProgressReachability applies keycard and generator placement safety nets.
 func EnsureInitProgressReachability(g *state.Game) {
+	EnsureLiftShaftEntryClearance(g)
 	EnsureGeneratorSafePlacement(g)
 	EnsureKeycardReachability(g)
 }

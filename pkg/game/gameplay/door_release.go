@@ -2,6 +2,7 @@ package gameplay
 
 import (
 	"fmt"
+	"time"
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/renderer"
@@ -60,6 +61,10 @@ func completeManualDoorRelease(g *state.Game, cell *world.Cell) {
 		g.ManualEgressReleased = make(map[string]bool)
 	}
 	g.ManualEgressReleased[door.RoomName] = true
+	if g.ManualEgressReleasedAtMs == nil {
+		g.ManualEgressReleasedAtMs = make(map[string]int64)
+	}
+	g.ManualEgressReleasedAtMs[door.RoomName] = time.Now().UnixMilli()
 	renderer.AddCallout(cell.Row, cell.Col,
 		"EGRESS{Manual release}\nSUBTLE{Door unsecured — routing still offline}",
 		renderer.CalloutColorDoor, 0)

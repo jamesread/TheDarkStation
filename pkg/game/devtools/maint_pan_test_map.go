@@ -113,6 +113,7 @@ func SwitchToMaintPanTestMap(g *state.Game) {
 	g.CurrentCell = start
 	g.CurrentDeckID = deck.TotalDecks
 	g.Level = MaintPanTestLevel
+	g.PerfMapScenario = ""
 	g.HasMap = true
 	g.MaintenanceMenuRoom = ""
 	g.Batteries = 0

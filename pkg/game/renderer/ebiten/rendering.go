@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"image/color"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/leonelquinteros/gotext"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
@@ -61,8 +63,9 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 			return
 		}
 
-		// Draw floating tiles background for main menu (on top of background fill, before menu overlay)
-		if genericMenuActive && title == "The Dark Station" {
+		// Drifting tile field for title screen and its sub-menus (bindings, video).
+		if titleScreenFloatingTilesMenu(title) {
+			e.ensureFloatingTiles(screenWidth, screenHeight)
 			e.drawFloatingTilesBackground(screen)
 		}
 
@@ -440,10 +443,13 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 		e.invalidateMapDrawCache()
 	}
 
-	var mapScrX, mapScrY float64
-	if blitX, blitY, hit := e.mapDrawCacheHit(snap.seq, camRow, camCol, startRow, startCol, bufW, bufH); hit {
-		mapScrX, mapScrY = blitX, blitY
-	} else {
+	mapScrX, mapScrY := mapCameraScreenOrigin(screenWidth, screenHeight, camRow, camCol, startRow, startCol, e.tileSize)
+	if g.MaintenanceMenuRoom != "" && !panningMaint {
+		mapScrX = math.Round(mapScrX)
+		mapScrY = math.Round(mapScrY)
+	}
+
+	if !e.mapDrawCacheHit(snap.seq, startRow, startCol, bufW, bufH) {
 		// Draw tiles to offscreen buffer at integer coordinates - eliminates per-tile
 		// sub-pixel jitter. The single blit with fractional offset is smooth.
 		e.mapBuffer.Fill(colorBackground)
@@ -453,12 +459,7 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 				e.drawTileToBuffer(e.mapBuffer, startRow, startCol, vRow, vCol, g, snap, pg)
 			}
 		}
-		mapScrX, mapScrY = mapCameraScreenOrigin(screenWidth, screenHeight, camRow, camCol, startRow, startCol, e.tileSize)
-		if g.MaintenanceMenuRoom != "" && !panningMaint {
-			mapScrX = math.Round(mapScrX)
-			mapScrY = math.Round(mapScrY)
-		}
-		e.storeMapDrawCache(snap.seq, camRow, camCol, startRow, startCol, mapScrX, mapScrY, bufW, bufH)
+		e.storeMapDrawCache(snap.seq, startRow, startCol, bufW, bufH)
 	}
 
 	if maintPanDebugOn() && g.MaintenanceMenuRoom != "" {
@@ -485,6 +486,9 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 	e.drawEnvironmentalPlaques(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawCallouts(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawLongUseProgress(screen, snap, mapXF, mapYF, startRow, startCol)
+	e.drawRepairDrainProgress(screen, snap, mapXF, mapYF, startRow, startCol)
+	e.drawSlimePopEffects(screen, snap, mapXF, mapYF, startRow, startCol)
+	e.drawGeneratorShutdownCountdown(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawPlayerWithDebounce(screen, g, snap, mapXF, mapYF, visualRow, visualCol, startRow, startCol)
 	e.drawExitAnimation(screen, snap, mapXF, mapYF, startRow, startCol)
 }
@@ -510,12 +514,14 @@ func (e *EbitenRenderer) drawTileToBuffer(buf *ebiten.Image, startRow, startCol,
 		// Draw floor under the player (player drawn separately as overlay)
 		underfootOptions := e.getCellRenderOptions(g, cell, snap, true)
 		customBg := e.getTileCustomBg(g, cell, snap, &underfootOptions, pg)
-		e.drawTileWithBg(buf, " ", x, y, colorBackground, underfootOptions.HasBackground, customBg)
+		bg, _ := e.ambientTileColors(g, cell, snap, &underfootOptions, customBg)
+		e.drawTileWithBg(buf, " ", x, y, colorBackground, underfootOptions.HasBackground, bg)
 		return
 	}
 
 	customBg := e.getTileCustomBg(g, cell, snap, &cellRenderOptions, pg)
-	e.drawTileWithBg(buf, cellRenderOptions.Icon, x, y, cellRenderOptions.Color, cellRenderOptions.HasBackground, customBg)
+	bg, fg := e.ambientTileColors(g, cell, snap, &cellRenderOptions, customBg)
+	e.drawTileWithBg(buf, cellRenderOptions.Icon, x, y, fg, cellRenderOptions.HasBackground, bg)
 }
 
 // getTileCustomBg returns the background color for a cell (focus, hazard, floor, exit, etc.).
@@ -531,19 +537,22 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 			}
 		}
 	}
+	// Live-detail cells expose entity state (power, locks, charge) through colored
+	// plates; remembered/layout-tier cells keep their neutral knowledge-tier plates.
+	liveDetail := cell != nil && (!cell.Room || cellKnowledgeTier(g, cell) == knowledgeLive)
 	needsClearing := false
-	if cell != nil && (g.HasMap || cell.Discovered) {
+	if liveDetail {
 		if gameworld.HasBlockingHazard(cell) || gameworld.HasLockedDoor(cell) {
 			needsClearing = true
 		}
 	}
 	if cell != nil {
-		if (g.HasMap || cell.Discovered) && gameworld.HasBlockingHazard(cell) {
+		if liveDetail && gameworld.HasBlockingHazard(cell) {
 			customBg = colorHazardBackground
 			if alpha := hazardClearVisualAlpha(snap, cell); alpha < 1 {
 				customBg = e.applyAlpha(colorHazardBackground, alpha)
 			}
-		} else if (g.HasMap || cell.Discovered) && gameworld.HasDoor(cell) {
+		} else if liveDetail && gameworld.HasDoor(cell) {
 			roomName := gameworld.GetGameData(cell).Door.RoomName
 			if !snapCellHasLivePower(snap, cell) {
 				if snapRoomManualEgressReleased(snap, roomName) {
@@ -552,16 +561,16 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 					customBg = colorHazardBackground
 				}
 			}
-		} else if (g.HasMap || cell.Discovered) && gameworld.HasMaintenanceTerminal(cell) {
+		} else if liveDetail && gameworld.HasMaintenanceTerminal(cell) {
 			data := gameworld.GetGameData(cell)
 			if data.MaintenanceTerm != nil && !data.MaintenanceTerm.Powered {
 				customBg = colorHazardBackground
 			}
-		} else if (g.HasMap || cell.Discovered) && gameworld.HasTerminal(cell) {
+		} else if liveDetail && gameworld.HasTerminal(cell) {
 			if cell.Room && !snapRoomCCTVPowered(snap, cell.Name) {
 				customBg = colorHazardBackground
 			}
-		} else if (g.HasMap || cell.Discovered) && gameworld.HasHazardControl(cell) {
+		} else if liveDetail && gameworld.HasHazardControl(cell) {
 			if cell.Room && !snapRoomCCTVPowered(snap, cell.Name) {
 				customBg = colorHazardBackground
 			}
@@ -587,25 +596,184 @@ func (e *EbitenRenderer) getTileCustomBg(g *state.Game, cell *world.Cell, snap *
 		if customBg == nil && opts != nil && opts.BackgroundColor != nil {
 			customBg = opts.BackgroundColor
 		}
-		if customBg == nil && needsClearing {
+		if customBg == nil && liveDetail && isGeneratorRenderIcon(opts) {
+			customBg = colorGeneratorFocusBg
+		} else if customBg == nil && needsClearing {
 			if opts != nil {
 				customBg = focusPlateForForeground(opts.Color)
 			} else {
 				customBg = colorBlockedBackground
 			}
-		} else if customBg == nil && gameworld.HasPoweredGenerator(cell) {
+		} else if customBg == nil && liveDetail && gameworld.HasPoweredGenerator(cell) {
 			customBg = colorWallBgPowered
-		} else if isFocused || isInteractable {
+		} else if customBg == nil && (isFocused || isInteractable) {
 			if opts != nil {
 				customBg = focusPlateForForeground(opts.Color)
 			} else {
 				customBg = colorFocusBackground
 			}
-		} else if cell != nil && cell.ExitCell && (g.HasMap || cell.Discovered) && setup.ExitLiftReady(g) {
+		} else if cell != nil && cell.ExitCell && liveDetail && setup.ExitLiftReady(g) {
 			customBg = e.getPulsingExitBackgroundColor()
 		}
 	}
 	return customBg
+}
+
+func isGeneratorRenderIcon(opts *CellRenderOptions) bool {
+	return opts != nil && (opts.Icon == IconGeneratorPowered || opts.Icon == IconGeneratorUnpowered)
+}
+
+// VisibleMapChars reports the distinct map-cell glyphs in the current viewport.
+// It mirrors the tile renderer's camera and CellRenderOptions paths, but excludes
+// overlay text such as room labels and callouts.
+func (e *EbitenRenderer) VisibleMapChars(g *state.Game) []renderer.VisibleMapChar {
+	if e == nil || g == nil || g.Grid == nil || g.CurrentCell == nil {
+		return nil
+	}
+
+	e.snapshotMutex.RLock()
+	snap := e.snapshot
+	e.snapshotMutex.RUnlock()
+	if !snap.valid {
+		e.RenderFrame(g)
+		e.snapshotMutex.RLock()
+		snap = e.snapshot
+		e.snapshotMutex.RUnlock()
+	}
+	if !snap.valid {
+		snap = renderSnapshot{
+			valid:        true,
+			level:        g.Level,
+			playerRow:    g.CurrentCell.Row,
+			playerCol:    g.CurrentCell.Col,
+			playerFacing: g.PlayerFacing,
+			hasMap:       g.HasMap,
+		}
+	}
+
+	startRow, startCol := e.visibleMapCharStart(g, &snap)
+	seen := make(map[string]bool)
+	for vRow := 0; vRow < e.viewportRows; vRow++ {
+		for vCol := 0; vCol < e.viewportCols; vCol++ {
+			cell := g.Grid.GetCell(startRow+vRow, startCol+vCol)
+			opts := e.getCellRenderOptions(g, cell, &snap, false)
+			if opts.Icon == "" {
+				continue
+			}
+			seen[opts.Icon] = true
+		}
+	}
+
+	chars := make([]renderer.VisibleMapChar, 0, len(seen))
+	for ch := range seen {
+		chars = append(chars, renderer.VisibleMapChar{Char: ch, Hex: glyphHex(ch), Description: glyphDescription(ch)})
+	}
+	sort.Slice(chars, func(i, j int) bool {
+		return chars[i].Hex < chars[j].Hex
+	})
+	return chars
+}
+
+func (e *EbitenRenderer) visibleMapCharStart(g *state.Game, snap *renderSnapshot) (int, int) {
+	nowMs := e.menuAnimClockMilli
+	if nowMs == 0 {
+		nowMs = time.Now().UnixMilli()
+	}
+	if snap != nil && snap.hazardTour != nil {
+		if row, col, ok := snap.hazardTour.CameraAt(nowMs); ok {
+			return mapCameraStartAt(row, col, e.viewportRows, e.viewportCols)
+		}
+	}
+	if snap != nil && snap.hazardClear != nil {
+		if row, col, ok := snap.hazardClear.CameraAt(nowMs); ok {
+			return mapCameraStartAt(row, col, e.viewportRows, e.viewportCols)
+		}
+	}
+	if g != nil && g.MaintenanceMenuRoom != "" {
+		return e.mapCameraStart(g)
+	}
+	if snap != nil {
+		row, col := e.playerMove.visualPosition(snap.level, snap.playerRow, snap.playerCol, snap.seq, nowMs)
+		return mapCameraStartAt(row, col, e.viewportRows, e.viewportCols)
+	}
+	return 0, 0
+}
+
+func glyphHex(s string) string {
+	parts := make([]string, 0, len(s))
+	for _, r := range s {
+		parts = append(parts, fmt.Sprintf("U+%04X", r))
+	}
+	return strings.Join(parts, " ")
+}
+
+func glyphDescription(ch string) string {
+	switch ch {
+	case IconVoid:
+		return "empty / unseen void"
+	case IconWall:
+		return "wall"
+	case IconVisited:
+		return "visited floor / living-area floor"
+	case IconUnvisited:
+		return "unvisited floor / living-area floor"
+	case IconExitLocked:
+		return "locked lift"
+	case IconExitUnlocked:
+		return "ready lift"
+	case IconKey:
+		return "keycard pickup"
+	case IconMap:
+		return "station map pickup"
+	case IconItem:
+		return "generic pickup"
+	case IconBattery:
+		return "battery pickup"
+	case IconGeneratorUnpowered:
+		return "unpowered generator / science-med floor"
+	case IconGeneratorPowered:
+		return "powered generator / science-med floor"
+	case IconDoorLocked:
+		return "locked door"
+	case IconDoorUnlocked:
+		return "unlocked door"
+	case IconTerminalUnused:
+		return "unused terminal / technical floor"
+	case IconTerminalUsed:
+		return "used terminal / technical floor"
+	case IconMaintenance:
+		return "maintenance terminal"
+	case IconRelayClosed:
+		return "closed power relay"
+	case IconRelayOpen:
+		return "open power relay / airlock floor"
+	case IconRepairValve:
+		return "pressure valve repair"
+	case IconRepairSignal:
+		return "signal calibrator repair"
+	case IconRepairCoupler:
+		return "power coupler repair"
+	case IconRepairPump:
+		return "waste pump repair"
+	case IconRepairConduit:
+		return "burned conduit splice repair"
+	case IconToxicSlime:
+		return "toxic slime blocker"
+	case "*":
+		return "visited storage floor"
+	case ":":
+		return "unvisited storage floor"
+	case "◎":
+		return "visited command floor"
+	case "◉":
+		return "unvisited command floor"
+	case "░":
+		return "corridor floor"
+	case "▦":
+		return "lift shaft floor"
+	default:
+		return "map cell glyph"
+	}
 }
 
 // focusPlateForForeground returns a dark, semi-opaque tile background aligned with the cell icon color.
@@ -1229,6 +1397,7 @@ func (e *EbitenRenderer) drawRoomLabels(screen *ebiten.Image, snap *renderSnapsh
 	}
 
 	fontSize := e.getUIFontSize()
+	face := e.getSansFontFace()
 
 	for _, rl := range snap.roomLabels {
 		// Check if the label position is visible in the viewport
@@ -1254,15 +1423,13 @@ func (e *EbitenRenderer) drawRoomLabels(screen *ebiten.Image, snap *renderSnapsh
 		cellX := mapX + float64(vCol*e.tileSize)
 		cellY := mapY + float64(vRow*e.tileSize)
 
-		var labelMarkup string
 		borderColor := colorHazard
+		textColor := colorHazard
 		if rl.Powered {
-			labelMarkup = fmt.Sprintf("POWERED{%s}", rl.RoomName)
 			borderColor = colorGeneratorOn
-		} else {
-			labelMarkup = fmt.Sprintf("UNPOWERED{%s}", rl.RoomName)
+			textColor = colorGeneratorOn
 		}
-		textWidth := e.getMarkupWidth(labelMarkup)
+		textWidth := e.roomLabelWidth(rl.RoomName, face)
 
 		// Draw background box for readability
 		paddingX := 6
@@ -1277,20 +1444,30 @@ func (e *EbitenRenderer) drawRoomLabels(screen *ebiten.Image, snap *renderSnapsh
 
 		bgColor := color.RGBA{15, 20, 40, 235}
 
-		const labelCornerRadius = 4
-		const labelBorderWidth = 1
-		drawRoundedRectWithShadow(screen, float32(boxX), float32(boxY), float32(boxW), float32(boxH), labelCornerRadius, labelBorderWidth, bgColor, borderColor, 1.0)
+		// Room labels can be numerous on large maps; keep this path cheap.
+		vector.DrawFilledRect(screen, float32(boxX), float32(boxY), float32(boxW), float32(boxH), bgColor, false)
+		vector.StrokeRect(screen, float32(boxX), float32(boxY), float32(boxW), float32(boxH), 1, borderColor, false)
 
 		// Position text: drawColoredText uses baseline positioning (adds fontSize to y)
 		// Similar to callouts: subtract fontSize so baseline ends up inside the box
 		textX := int(boxX) + paddingX
 		textY := int(boxY) + paddingY - int(fontSize)
 
-		segments := e.parseMarkup(labelMarkup)
-		// Draw bold-ish by rendering twice with slight offset
-		e.drawColoredTextSegments(screen, segments, textX, textY)
-		e.drawColoredTextSegments(screen, segments, textX+1, textY)
+		e.drawColoredTextWithFace(screen, rl.RoomName, textX, textY, textColor, face)
 	}
+}
+
+func (e *EbitenRenderer) roomLabelWidth(label string, face *text.GoTextFace) float64 {
+	if e.roomLabelTextWidth == nil || e.roomLabelTextWidthSize != face.Size {
+		e.roomLabelTextWidth = make(map[string]float64)
+		e.roomLabelTextWidthSize = face.Size
+	}
+	if w, ok := e.roomLabelTextWidth[label]; ok {
+		return w
+	}
+	w, _ := text.Measure(label, face, 0)
+	e.roomLabelTextWidth[label] = w
+	return w
 }
 
 // drawEnvironmentalPlaques renders small diegetic corridor signage inside tiles (Story 5.1).
@@ -1400,12 +1577,69 @@ func (e *EbitenRenderer) getDirectionText(g *state.Game, cell *world.Cell, direc
 	return direction
 }
 
+func deckHeaderText(snap *renderSnapshot) string {
+	if snap == nil {
+		return ""
+	}
+	if snap.perfMapScenario != "" {
+		return "perfmap " + snap.perfMapScenario
+	}
+	if snap.deckTitle != "" {
+		return fmt.Sprintf(gotext.Get("DECK_HEADER"), snap.level, snap.deckTitle)
+	}
+	return fmt.Sprintf(gotext.Get("DECK_NUMBER"), snap.level)
+}
+
+func statusBarHasInventory(snap *renderSnapshot) bool {
+	if snap == nil {
+		return false
+	}
+	return len(snap.runKeycards) > 0 || len(snap.ownedItems) > 0 || snap.batteries > 0 || snap.hasMap
+}
+
+func statusBarInventoryMarkup(snap *renderSnapshot) string {
+	if snap == nil {
+		return ""
+	}
+	invLabel := gotext.Get("INVENTORY")
+	invParts := []string{invLabel}
+	needsComma := false
+	for _, itemName := range snap.runKeycards {
+		if needsComma {
+			invParts = append(invParts, ",")
+		}
+		invParts = append(invParts, fmt.Sprintf("KEYCARD{%s}", itemName))
+		needsComma = true
+	}
+	if snap.hasMap {
+		if needsComma {
+			invParts = append(invParts, ",")
+		}
+		invParts = append(invParts, "ITEM{Map}")
+		needsComma = true
+	}
+	for _, itemName := range snap.ownedItems {
+		if needsComma {
+			invParts = append(invParts, ",")
+		}
+		invParts = append(invParts, fmt.Sprintf("ITEM{%s}", itemName))
+		needsComma = true
+	}
+	if snap.batteries > 0 {
+		if needsComma {
+			invParts = append(invParts, ",")
+		}
+		invParts = append(invParts, fmt.Sprintf("ACTION{Batteries x%d}", snap.batteries))
+	}
+	return strings.Join(invParts, " ")
+}
+
 // drawStatusBarFromSnapshot draws deck/objectives plus inventory and generator lines using snapshot data.
 // Caller supplies anchor x,y so panel/outlining aligns with layout (window top-left in gameplay).
 func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *renderSnapshot, x, y, width, height int) {
 	// Check if there's anything to show
 	hasObjectives := len(snap.objectives) > 0
-	hasInventory := len(snap.ownedItems) > 0 || snap.batteries > 0
+	hasInventory := statusBarHasInventory(snap)
 	hasGenerators := len(snap.generators) > 0
 
 	// Always show at least the deck number
@@ -1449,9 +1683,8 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 
 	// Calculate the maximum width needed for all text lines
 	maxTextWidth := 0.0
-	// Deck number text - uses title face (larger), measure with that
-	deckTextFormat := gotext.Get("DECK_NUMBER")
-	deckText := fmt.Sprintf(deckTextFormat, snap.level)
+	// Deck header - uses title face (larger), measure with that
+	deckText := deckHeaderText(snap)
 	deckWidth := e.getTextWidthWithFace(deckText, titleFace)
 	if deckWidth > maxTextWidth {
 		maxTextWidth = deckWidth
@@ -1474,23 +1707,7 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 		}
 	}
 	if hasInventory {
-		// Build inventory text with markup for width calculation (same format as rendering)
-		invLabel := gotext.Get("INVENTORY")
-		invParts := []string{invLabel}
-		for i, itemName := range snap.ownedItems {
-			if i > 0 {
-				invParts = append(invParts, ",")
-			}
-			invParts = append(invParts, fmt.Sprintf("ITEM{%s}", itemName))
-		}
-		if snap.batteries > 0 {
-			if len(snap.ownedItems) > 0 {
-				invParts = append(invParts, ",")
-			}
-			invParts = append(invParts, fmt.Sprintf("ACTION{Batteries x%d}", snap.batteries))
-		}
-		invText := strings.Join(invParts, " ")
-		// Calculate width using parsed segments (actual text width, not markup)
+		invText := statusBarInventoryMarkup(snap)
 		segments := e.parseMarkup(invText)
 		textWidth := 0.0
 		for _, seg := range segments {
@@ -1556,10 +1773,9 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 
 	currentY := firstLineY
 
-	// Deck number (always first line, uses title font)
+	// Deck header (always first line, uses title font)
 	if hasDeckNumber {
-		deckTextFormat := gotext.Get("DECK_NUMBER")
-		deckText := fmt.Sprintf(deckTextFormat, snap.level)
+		deckText := deckHeaderText(snap)
 		e.drawColoredTextWithFace(screen, deckText, x, currentY, colorAction, e.getSansBoldTitleFontFace())
 		currentY += firstLineHeight
 		// Add a small gap between deck number and objectives
@@ -1586,24 +1802,7 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 
 	// Inventory line (only if not empty)
 	if hasInventory {
-		// Build inventory text with item colors using markup, commas in default color
-		invLabel := gotext.Get("INVENTORY")
-		invParts := []string{invLabel}
-		for i, itemName := range snap.ownedItems {
-			if i > 0 {
-				invParts = append(invParts, ",") // Comma in default text color
-			}
-			invParts = append(invParts, fmt.Sprintf("ITEM{%s}", itemName))
-		}
-		if snap.batteries > 0 {
-			if len(snap.ownedItems) > 0 {
-				invParts = append(invParts, ",") // Comma in default text color
-			}
-			invParts = append(invParts, fmt.Sprintf("ACTION{Batteries x%d}", snap.batteries))
-		}
-		invText := strings.Join(invParts, " ")
-
-		// Parse markup to apply item colors (commas will be in default color)
+		invText := statusBarInventoryMarkup(snap)
 		segments := e.parseMarkup(invText)
 		e.drawColoredTextSegments(screen, segments, x, currentY)
 		currentY += lineHeight
@@ -1623,6 +1822,69 @@ func (e *EbitenRenderer) drawStatusBarFromSnapshot(screen *ebiten.Image, snap *r
 		}
 		genText += strings.Join(genParts, ", ")
 		e.drawColoredTextSegments(screen, e.parseMarkup(genText), x, currentY)
+	}
+}
+
+// drawRepairDrainProgress renders waste-pump drain progress over active repair devices.
+func (e *EbitenRenderer) drawRepairDrainProgress(screen *ebiten.Image, snap *renderSnapshot, mapScrX, mapScrY float64, startRow, startCol int) {
+	for _, drain := range snap.repairDrains {
+		vRow := drain.row - startRow
+		vCol := drain.col - startCol
+		if vRow < 0 || vCol < 0 || vRow >= e.viewportRows || vCol >= e.viewportCols {
+			continue
+		}
+
+		x := int(mapScrX) + vCol*e.tileSize
+		y := int(mapScrY) + vRow*e.tileSize
+		margin := 3
+		barW := e.tileSize - margin*2
+		barH := e.tileSize / 6
+		if barH < 4 {
+			barH = 4
+		}
+		barY := y + e.tileSize - barH - margin
+
+		bg := color.RGBA{24, 48, 40, 210}
+		fill := color.RGBA{120, 255, 64, 255}
+		border := color.RGBA{200, 255, 120, 255}
+
+		vector.FillRect(screen, float32(x+margin), float32(barY), float32(barW), float32(barH), bg, false)
+		fillW := int(float32(barW) * float32(drain.progress))
+		if fillW > 0 {
+			vector.FillRect(screen, float32(x+margin), float32(barY), float32(fillW), float32(barH), fill, false)
+		}
+		vector.StrokeRect(screen, float32(x+margin), float32(barY), float32(barW), float32(barH), 1, border, false)
+	}
+}
+
+// drawSlimePopEffects renders pop-off animations for toxic slime cells finishing drain.
+func (e *EbitenRenderer) drawSlimePopEffects(screen *ebiten.Image, snap *renderSnapshot, mapScrX, mapScrY float64, startRow, startCol int) {
+	face := e.getSansFontFace()
+	for _, pop := range snap.slimePops {
+		vRow := pop.row - startRow
+		vCol := pop.col - startCol
+		if vRow < 0 || vCol < 0 || vRow >= e.viewportRows || vCol >= e.viewportCols {
+			continue
+		}
+
+		progress := pop.progress
+		if progress < 0 {
+			progress = 0
+		}
+		if progress > 1 {
+			progress = 1
+		}
+		alpha := uint8(255 * (1 - progress))
+		popColor := color.RGBA{R: colorToxicSlimePop.R, G: colorToxicSlimePop.G, B: colorToxicSlimePop.B, A: alpha}
+		icon := IconToxicSlime
+		textW, textH := text.Measure(icon, face, 0)
+		x := int(mapScrX) + vCol*e.tileSize + (e.tileSize-int(textW))/2
+		y := int(mapScrY) + vRow*e.tileSize + (e.tileSize-int(textH))/2
+
+		scale := 1 + 0.45*(1-progress)
+		offsetX := int(float64(textW) * (scale - 1) / 2)
+		offsetY := int(float64(textH) * (scale - 1) / 2)
+		e.drawColoredText(screen, icon, x-offsetX, y-offsetY, popColor)
 	}
 }
 
@@ -1656,4 +1918,50 @@ func (e *EbitenRenderer) drawLongUseProgress(screen *ebiten.Image, snap *renderS
 		vector.FillRect(screen, float32(x+margin), float32(barY), float32(fillW), float32(barH), fill, false)
 	}
 	vector.StrokeRect(screen, float32(x+margin), float32(barY), float32(barW), float32(barH), 1, border, false)
+}
+
+// drawGeneratorShutdownCountdown renders the delayed room-shutdown timer over the maintenance terminal cell.
+func (e *EbitenRenderer) drawGeneratorShutdownCountdown(screen *ebiten.Image, snap *renderSnapshot, mapScrX, mapScrY float64, startRow, startCol int) {
+	if !snap.generatorShutdownActive {
+		return
+	}
+	vRow := snap.generatorShutdownRow - startRow
+	vCol := snap.generatorShutdownCol - startCol
+	if vRow < 0 || vCol < 0 || vRow >= e.viewportRows || vCol >= e.viewportCols {
+		return
+	}
+
+	remainingMs := snap.generatorShutdownAtMs - time.Now().UnixMilli()
+	if remainingMs <= 0 {
+		return
+	}
+	secs := (remainingMs + 999) / 1000
+	if secs < 1 {
+		secs = 1
+	}
+	label := fmt.Sprintf("%d", secs)
+	face := e.getSansBoldTitleFontFace()
+	textW, textH := text.Measure(label, face, 0)
+
+	cellX := int(mapScrX) + vCol*e.tileSize
+	cellY := int(mapScrY) + vRow*e.tileSize
+	padding := 4
+	boxW := int(textW) + padding*2
+	boxH := int(textH) + padding*2
+	if boxW < e.tileSize/2 {
+		boxW = e.tileSize / 2
+	}
+	boxX := cellX + (e.tileSize-boxW)/2
+	boxY := cellY - boxH - 4
+	if boxY < int(mapScrY) {
+		boxY = cellY + 2
+	}
+
+	bg := color.RGBA{35, 8, 12, 235}
+	border := colorHazard
+	drawRoundedRectWithShadow(screen, float32(boxX), float32(boxY), float32(boxW), float32(boxH), 4, 1, bg, border, 1)
+
+	textX := boxX + (boxW-int(textW))/2
+	textY := boxY + (boxH-int(textH))/2 - int(face.Size)
+	e.drawColoredTextWithFace(screen, label, textX, textY, colorText, face)
 }

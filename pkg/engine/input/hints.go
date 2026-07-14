@@ -52,9 +52,6 @@ func HintMenuBackToMain() string {
 
 // HintMenuQuit returns quit/exit shortcut text (main menu).
 func HintMenuQuit() string {
-	if GetPrimaryDevice() == PrimaryGamepad {
-		return "B to quit"
-	}
 	return "Esc to quit"
 }
 
@@ -63,15 +60,15 @@ func HintMenuClose() string {
 	if GetPrimaryDevice() == PrimaryGamepad {
 		return "Start or B to close"
 	}
-	return "F10/Start or q to close"
+	return "F10, Esc, or Q to close"
 }
 
 // HintMenuCloseShort returns a shorter close hint (Escape variant).
 func HintMenuCloseShort() string {
 	if GetPrimaryDevice() == PrimaryGamepad {
-		return "B or Start to close"
+		return "Start or B to close"
 	}
-	return "Escape or Menu to close"
+	return "Escape, F10, or Q to close"
 }
 
 // HintConfirm returns confirm/OK text.
@@ -124,9 +121,9 @@ func HintPressConfirmOrTab() string {
 // HintMaintMenuInstructions returns maintenance terminal menu footer text.
 func HintMaintMenuInstructions() string {
 	if GetPrimaryDevice() == PrimaryGamepad {
-		return "D-pad up/down: select | A: activate | D-pad left/right: cycle | B: close"
+		return "D-pad up/down: select | A: activate | D-pad left/right: cycle | Start/B: close"
 	}
-	return "Up/Down: select | Enter: activate | A/D: cycle option | 1/2/3: circuit preset | Tab: mode | Esc: close"
+	return "Up/Down: select | Enter: activate | A/D: cycle option | 1/2/3: circuit preset | Tab: mode | Esc/Q: close"
 }
 
 // HintMaintCycle returns inline cycle hint for maintenance labels.
@@ -140,9 +137,9 @@ func HintMaintCycle() string {
 // HintDevMenuInstructions returns developer menu instructions.
 func HintDevMenuInstructions() string {
 	if GetPrimaryDevice() == PrimaryGamepad {
-		return "D-pad up/down: select | A: activate | B: close"
+		return "D-pad up/down: select | A: activate | Start/B: close"
 	}
-	return "Up/Down: select | Enter: activate | q or Esc: close"
+	return "Up/Down: select | Enter: activate | Esc/Q: close"
 }
 
 // IsMovementHintMessage reports whether a callout uses the movement tutorial text.

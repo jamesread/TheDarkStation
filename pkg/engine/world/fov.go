@@ -6,6 +6,17 @@ import "math"
 // (e.g. an unpowered door). Nil means only non-room cells block rays.
 type SightBlocker func(cell *Cell) bool
 
+type fovRayPoint struct {
+	row int
+	col int
+}
+
+type fovRayPlan struct {
+	paths [][]fovRayPoint
+}
+
+const fovRayPlanCacheLimit = 8
+
 // CalculateFOV returns cells visible from center using ray casting.
 // A Bresenham ray is traced toward every grid cell; each room cell along a ray is
 // visible until the first non-room (wall) cell or sight blocker, which stops the ray.
@@ -15,17 +26,7 @@ func CalculateFOV(grid *Grid, center *Cell, blockSight SightBlocker) []*Cell {
 		return nil
 	}
 
-	visible := make(map[*Cell]bool)
-	centerRow, centerCol := center.Row, center.Col
-	markVisibleRoom(grid, centerRow, centerCol, visible, blockSight)
-
-	grid.ForEachCell(func(row, col int, _ *Cell) {
-		if row == centerRow && col == centerCol {
-			return
-		}
-		castRay(grid, centerRow, centerCol, row, col, visible, blockSight)
-	})
-
+	visible := collectVisibleCells(grid, center, blockSight)
 	result := make([]*Cell, 0, len(visible))
 	for cell := range visible {
 		result = append(result, cell)
@@ -35,12 +36,10 @@ func CalculateFOV(grid *Grid, center *Cell, blockSight SightBlocker) []*Cell {
 
 // VisibleCellSet returns a set of cells visible from center (same rules as CalculateFOV).
 func VisibleCellSet(grid *Grid, center *Cell, blockSight SightBlocker) map[*Cell]bool {
-	cells := CalculateFOV(grid, center, blockSight)
-	set := make(map[*Cell]bool, len(cells))
-	for _, c := range cells {
-		set[c] = true
+	if center == nil || grid == nil {
+		return map[*Cell]bool{}
 	}
-	return set
+	return collectVisibleCells(grid, center, blockSight)
 }
 
 // FOVRay is one ray-cast segment from a FOV center to its endpoint (last visible room cell).
@@ -53,7 +52,7 @@ type FOVRay struct {
 func RayCastEndpoint(grid *Grid, r0, c0, r1, c1 int, blockSight SightBlocker) (endRow, endCol int, ok bool) {
 	var lastR, lastC int
 	found := false
-	walkRay(grid, r0, c0, r1, c1, func(row, col int) bool {
+	walkRay(r0, c0, r1, c1, func(row, col int) bool {
 		cell := grid.GetCell(row, col)
 		if cell == nil || !cell.Room {
 			return false
@@ -79,32 +78,153 @@ func CollectFOVRays(grid *Grid, center *Cell, blockSight SightBlocker) []FOVRay 
 	centerRow, centerCol := center.Row, center.Col
 	seen := make(map[[2]int]struct{})
 	var rays []FOVRay
-	grid.ForEachCell(func(row, col int, _ *Cell) {
-		if row == centerRow && col == centerCol {
-			return
-		}
-		er, ec, ok := RayCastEndpoint(grid, centerRow, centerCol, row, col, blockSight)
+
+	centerBlocks := false
+	if !center.Room {
+		return nil
+	}
+	if blockSight != nil && blockSight(center) {
+		centerBlocks = true
+	}
+
+	for _, path := range fovRayPlanFor(grid, center).paths {
+		er, ec, ok := rayCastEndpointForPath(grid, centerRow, centerCol, path, centerBlocks, blockSight)
 		if !ok {
-			return
+			continue
 		}
 		key := [2]int{er, ec}
 		if _, dup := seen[key]; dup {
-			return
+			continue
 		}
 		seen[key] = struct{}{}
 		rays = append(rays, FOVRay{EndRow: er, EndCol: ec})
-	})
+	}
 	return rays
+}
+
+func collectVisibleCells(grid *Grid, center *Cell, blockSight SightBlocker) map[*Cell]bool {
+	visible := make(map[*Cell]bool)
+	if !markVisibleRoom(grid, center.Row, center.Col, visible, blockSight) {
+		return visible
+	}
+	for _, path := range fovRayPlanFor(grid, center).paths {
+		for _, point := range path {
+			cell := gridCellAt(grid, point.row, point.col)
+			if cell == nil || !cell.Room {
+				break
+			}
+			visible[cell] = true
+			if blockSight != nil && blockSight(cell) {
+				break
+			}
+		}
+	}
+	return visible
+}
+
+func rayCastEndpointForPath(grid *Grid, centerRow, centerCol int, path []fovRayPoint, centerBlocks bool, blockSight SightBlocker) (endRow, endCol int, ok bool) {
+	lastR, lastC := centerRow, centerCol
+	if centerBlocks {
+		return lastR, lastC, true
+	}
+	for _, point := range path {
+		cell := gridCellAt(grid, point.row, point.col)
+		if cell == nil || !cell.Room {
+			break
+		}
+		lastR, lastC = point.row, point.col
+		if blockSight != nil && blockSight(cell) {
+			break
+		}
+	}
+	return lastR, lastC, true
+}
+
+func fovRayPlanFor(grid *Grid, center *Cell) *fovRayPlan {
+	key := [2]int{center.Row, center.Col}
+	if grid.fovRayPlanCache != nil {
+		if plan := grid.fovRayPlanCache[key]; plan != nil {
+			return plan
+		}
+	} else {
+		grid.fovRayPlanCache = make(map[[2]int]*fovRayPlan)
+	}
+
+	plan := &fovRayPlan{paths: make([][]fovRayPoint, 0, grid.rows*grid.cols-1)}
+	for row := 0; row < grid.rows; row++ {
+		for col := 0; col < grid.cols; col++ {
+			if row == center.Row && col == center.Col {
+				continue
+			}
+			path := buildRayPath(center.Row, center.Col, row, col)
+			if len(path) > 0 {
+				plan.paths = append(plan.paths, path)
+			}
+		}
+	}
+	storeFOVRayPlan(grid, key, plan)
+	return plan
+}
+
+func storeFOVRayPlan(grid *Grid, key [2]int, plan *fovRayPlan) {
+	grid.fovRayPlanCache[key] = plan
+	grid.fovRayPlanOrder = append(grid.fovRayPlanOrder, key)
+	if len(grid.fovRayPlanOrder) <= fovRayPlanCacheLimit {
+		return
+	}
+	evict := grid.fovRayPlanOrder[0]
+	copy(grid.fovRayPlanOrder, grid.fovRayPlanOrder[1:])
+	grid.fovRayPlanOrder = grid.fovRayPlanOrder[:len(grid.fovRayPlanOrder)-1]
+	delete(grid.fovRayPlanCache, evict)
+}
+
+func buildRayPath(r0, c0, r1, c1 int) []fovRayPoint {
+	path := make([]fovRayPoint, 0, max(absInt(r1-r0), absInt(c1-c0)))
+	first := true
+	walkRay(r0, c0, r1, c1, func(row, col int) bool {
+		if first {
+			first = false
+			return true
+		}
+		path = append(path, fovRayPoint{row: row, col: col})
+		return true
+	})
+	return path
+}
+
+func gridCellAt(grid *Grid, row, col int) *Cell {
+	if grid == nil || row < 0 || row >= grid.rows || col < 0 || col >= grid.cols {
+		return nil
+	}
+	rowMap := grid.roomMap[row]
+	if rowMap == nil {
+		return nil
+	}
+	return rowMap[col]
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 // castRay traces a Bresenham line and marks room cells visible until a wall or blocker stops the ray.
 func castRay(grid *Grid, r0, c0, r1, c1 int, visible map[*Cell]bool, blockSight SightBlocker) {
-	walkRay(grid, r0, c0, r1, c1, func(row, col int) bool {
+	walkRay(r0, c0, r1, c1, func(row, col int) bool {
 		return markVisibleRoom(grid, row, col, visible, blockSight)
 	})
 }
 
-func walkRay(grid *Grid, r0, c0, r1, c1 int, visit func(row, col int) bool) {
+func walkRay(r0, c0, r1, c1 int, visit func(row, col int) bool) {
 	dr := r1 - r0
 	dc := c1 - c0
 	if dr == 0 && dc == 0 {
@@ -173,7 +293,7 @@ func walkRay(grid *Grid, r0, c0, r1, c1 int, visit func(row, col int) bool) {
 
 // markVisibleRoom adds a room cell to visible; returns false if sight cannot continue past the cell.
 func markVisibleRoom(grid *Grid, row, col int, visible map[*Cell]bool, blockSight SightBlocker) bool {
-	cell := grid.GetCell(row, col)
+	cell := gridCellAt(grid, row, col)
 	if cell == nil || !cell.Room {
 		return false
 	}
@@ -197,8 +317,10 @@ func DistanceCells(a, b *Cell) float64 {
 // RevealFOV marks all cells within line-of-sight of the center cell as discovered.
 // Visited is set only when the player steps on a cell (see gameplay movement).
 func RevealFOV(grid *Grid, center *Cell, blockSight SightBlocker) {
-	visibleCells := CalculateFOV(grid, center, blockSight)
-	for _, cell := range visibleCells {
+	if center == nil || grid == nil {
+		return
+	}
+	for cell := range collectVisibleCells(grid, center, blockSight) {
 		cell.Discovered = true
 	}
 }

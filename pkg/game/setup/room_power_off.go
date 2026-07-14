@@ -10,9 +10,12 @@ import (
 // before door/CCTV circuits actually de-energize, so the player can leave the room.
 const RoomPowerOffDelay = 5 * time.Second
 
+// GeneratorShutdownDelay is the countdown after selecting delayed shutdown at a maintenance terminal.
+const GeneratorShutdownDelay = 5 * time.Second
+
 // ScheduleRoomPowerOff arms a delayed shutdown for roomName's door and CCTV circuits.
 func ScheduleRoomPowerOff(g *state.Game, roomName string, nowMs int64) {
-	if g == nil || roomName == "" {
+	if g == nil || roomName == "" || IsAlwaysArmedOverlayRoom(roomName) {
 		return
 	}
 	if g.RoomPowerOffPending == nil {
@@ -71,8 +74,22 @@ func AdvanceRoomPowerOff(g *state.Game, nowMs int64) {
 	}
 }
 
+// ApplyRoomPowerOffNow immediately de-energizes roomName's door and CCTV circuits.
+func ApplyRoomPowerOffNow(g *state.Game, roomName string) {
+	if g == nil || roomName == "" {
+		return
+	}
+	CancelRoomPowerOff(g, roomName)
+	CancelGeneratorShutdownForRoom(g, roomName)
+	applyRoomPowerOff(g, roomName)
+}
+
 func applyRoomPowerOff(g *state.Game, roomName string) {
 	if g == nil || roomName == "" {
+		return
+	}
+	if IsAlwaysArmedOverlayRoom(roomName) {
+		EnsureAlwaysArmedRoomPower(g, roomName)
 		return
 	}
 	if g.RoomDoorsPowered == nil {
@@ -85,4 +102,67 @@ func applyRoomPowerOff(g *state.Game, roomName string) {
 	g.RoomCCTVPowered[roomName] = false
 	ClearRoomPropagatedPower(g, roomName)
 	NotifyPowerGridChanged(g)
+}
+
+// ScheduleGeneratorShutdown arms a delayed shutdown for roomName's door and CCTV circuits.
+func ScheduleGeneratorShutdown(g *state.Game, roomName string, terminalRow, terminalCol int, nowMs int64) {
+	if g == nil || roomName == "" {
+		return
+	}
+	g.GeneratorShutdownAt = nowMs + GeneratorShutdownDelay.Milliseconds()
+	g.GeneratorShutdownRow = terminalRow
+	g.GeneratorShutdownCol = terminalCol
+	g.GeneratorShutdownRoomName = roomName
+}
+
+// CancelGeneratorShutdown clears any pending delayed room shutdown.
+func CancelGeneratorShutdown(g *state.Game) {
+	if g == nil {
+		return
+	}
+	g.GeneratorShutdownAt = 0
+	g.GeneratorShutdownRow = -1
+	g.GeneratorShutdownCol = -1
+	g.GeneratorShutdownRoomName = ""
+}
+
+// CancelGeneratorShutdownForRoom clears a pending shutdown when it targets roomName.
+func CancelGeneratorShutdownForRoom(g *state.Game, roomName string) {
+	if g == nil || roomName == "" || g.GeneratorShutdownRoomName != roomName {
+		return
+	}
+	CancelGeneratorShutdown(g)
+}
+
+// GeneratorShutdownPending reports whether a delayed room shutdown countdown is active.
+func GeneratorShutdownPending(g *state.Game, nowMs int64) (pending bool, remainingMs int64, row int, col int) {
+	if g == nil || g.GeneratorShutdownAt == 0 {
+		return false, 0, -1, -1
+	}
+	remaining := g.GeneratorShutdownAt - nowMs
+	if remaining < 0 {
+		remaining = 0
+	}
+	return true, remaining, g.GeneratorShutdownRow, g.GeneratorShutdownCol
+}
+
+// GeneratorShutdownRoom reports the room targeted by an active delayed shutdown countdown.
+func GeneratorShutdownRoom(g *state.Game) string {
+	if g == nil {
+		return ""
+	}
+	return g.GeneratorShutdownRoomName
+}
+
+// AdvanceGeneratorShutdown applies a due delayed room shutdown and refreshes routing.
+func AdvanceGeneratorShutdown(g *state.Game, nowMs int64) bool {
+	if g == nil || g.GeneratorShutdownAt == 0 || nowMs < g.GeneratorShutdownAt {
+		return false
+	}
+	roomName := g.GeneratorShutdownRoomName
+	CancelGeneratorShutdown(g)
+	if roomName != "" {
+		applyRoomPowerOff(g, roomName)
+	}
+	return true
 }

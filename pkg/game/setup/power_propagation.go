@@ -26,6 +26,7 @@ func EnergizeArmedRoomsForTest(g *state.Game) {
 	if g == nil {
 		return
 	}
+	g.InvalidateLivePowerCache()
 	EnsureRoomPowerOnlineMap(g)
 	for name, armed := range g.RoomDoorsPowered {
 		g.RoomPowerOnline[name] = armed
@@ -36,6 +37,9 @@ func EnergizeArmedRoomsForTest(g *state.Game) {
 func RoomIsOnline(g *state.Game, roomName string) bool {
 	if g == nil || roomName == "" {
 		return false
+	}
+	if IsAlwaysArmedOverlayRoom(roomName) {
+		return true
 	}
 	return g.RoomPowerOnline != nil && g.RoomPowerOnline[roomName]
 }

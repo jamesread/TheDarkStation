@@ -43,8 +43,10 @@ func New() *EbitenRenderer {
 		inputChan:           make(chan engineinput.Intent, 10),
 		running:             false,
 		stickState:          make(map[ebiten.GamepadID]struct{ x, y float64 }),
+		gamepadNavDir:       make(map[ebiten.GamepadID]string),
 		bindingCaptureStick: make(map[ebiten.GamepadID]struct{ x, y float64 }),
 		keyRepeatState:      make(map[string]keyRepeatInfo),
+		monoGlyphMetrics:    make(map[string]glyphMetrics),
 	}
 }
 
@@ -63,6 +65,11 @@ func (e *EbitenRenderer) SetHazardTourAdvancer(fn HazardTourAdvanceFunc) {
 	e.hazardTourAdvancer = fn
 }
 
+// SetRepairTimerAdvancer registers the gameplay hook after timed repair completion.
+func (e *EbitenRenderer) SetRepairTimerAdvancer(fn RepairTimerAdvanceFunc) {
+	e.repairTimerAdvancer = fn
+}
+
 // SetHintRefresher registers a hook to refresh on-map control callouts when the primary input device changes.
 func (e *EbitenRenderer) SetHintRefresher(fn HintRefresher) {
 	e.hintRefresher = fn
@@ -73,6 +80,7 @@ func (e *EbitenRenderer) Init() {
 	ebiten.SetWindowSize(e.windowWidth, e.windowHeight)
 	ebiten.SetWindowTitle("The Dark Station")
 	ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
+	ebiten.SetCursorMode(ebiten.CursorModeHidden)
 
 	// Enable VSync for smooth rendering (prevents tearing and reduces jitter)
 	ebiten.SetVsyncEnabled(true)
@@ -165,6 +173,23 @@ func (e *EbitenRenderer) GetViewportSize() (rows, cols int) {
 // GetTileSize returns the map tile size in pixels (zoom level).
 func (e *EbitenRenderer) GetTileSize() int {
 	return e.tileSize
+}
+
+// SetFullscreen switches the Ebiten window between windowed and borderless fullscreen.
+func (e *EbitenRenderer) SetFullscreen(on bool) {
+	ebiten.SetFullscreen(on)
+}
+
+// IsFullscreen reports whether the Ebiten window is currently fullscreen.
+func (e *EbitenRenderer) IsFullscreen() bool {
+	return ebiten.IsFullscreen()
+}
+
+// ToggleFullscreen flips fullscreen mode and returns the new state.
+func (e *EbitenRenderer) ToggleFullscreen() bool {
+	on := !ebiten.IsFullscreen()
+	ebiten.SetFullscreen(on)
+	return on
 }
 
 // Run starts the Ebiten game loop

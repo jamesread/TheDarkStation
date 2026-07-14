@@ -1,6 +1,7 @@
 package state
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/zyedidia/generic/mapset"
@@ -8,6 +9,8 @@ import (
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/gamemode"
+	"darkstation/pkg/game/unlocks"
 	gameworld "darkstation/pkg/game/world"
 )
 
@@ -22,17 +25,20 @@ const (
 
 // DeckState holds generated state for one deck (GDD §4.2). Used for generation on first entry and revisit.
 type DeckState struct {
-	Grid                 *world.Grid
-	LevelSeed            int64
-	RoomDoorsPowered     map[string]bool
-	RoomCCTVPowered      map[string]bool
-	RoomLightsPowered    map[string]bool
-	RoomPowerOnline      map[string]bool
-	PowerPropPending     []PowerPropEntry
-	RoomPowerOffPending  map[string]int64
-	Generators           []*entities.Generator
-	ManualEgressReleased map[string]bool // room name -> manual door release active (no grid power)
-	OwnedItems           world.ItemSet   // keycards and other deck-local pickup inventory
+	Grid                     *world.Grid
+	LevelSeed                int64
+	RoomDoorsPowered         map[string]bool
+	RoomCCTVPowered          map[string]bool
+	RoomLightsPowered        map[string]bool
+	RoomPowerOnline          map[string]bool
+	PowerPropPending         []PowerPropEntry
+	RoomPowerOffPending      map[string]int64
+	Generators               []*entities.Generator
+	RepairObjectives         []*entities.RepairObjective
+	ManualEgressReleased     map[string]bool // room name -> manual door release active (no grid power)
+	ManualEgressReleasedAtMs map[string]int64
+	Policies                 []*entities.ConservationPolicy
+	OwnedItems               world.ItemSet // keycards and other deck-local pickup inventory
 }
 
 // Game represents the game state for Abandoned Station
@@ -55,8 +61,23 @@ type Game struct {
 
 	Level int // Current deck level (1-based display): Level = CurrentDeckID + 1
 
+	// PerfMapScenario is set on developer performance test maps (console perfmap); empty during normal play.
+	PerfMapScenario string
+
 	CurrentDeckID int                // 0-based deck index (source of truth for which deck we're in)
 	DeckStates    map[int]*DeckState // Per-deck generated state; key = deck ID (0-based)
+
+	// GameMode selects deck count, unlock rules, and item placement for this run.
+	GameMode gamemode.Mode
+
+	// Run-wide progression (persists across deck travel).
+	RunSeed            int64
+	DeckThemes         map[int]deck.Theme
+	UnlockPlan         *unlocks.Plan
+	UnlockSatisfied    map[string]bool
+	LiftRoutingPowered map[int]bool
+	RunInventory       world.ItemSet
+	ReactorOnline      bool
 
 	Batteries                int                   // Number of batteries in inventory
 	Generators               []*entities.Generator // All generators on this level
@@ -70,18 +91,20 @@ type Game struct {
 	InteractionsCount        int                   // Number of objects the player has interacted with (for hint system)
 	MovementCount            int                   // Number of times the player has moved (for movement hint)
 	LevelSeed                int64                 // Random seed used for current level generation (for reset)
+	LevelGenAttempts         int                   // Generation attempts used (1 = first layout passed the solvability gate)
 	PowerSupply              int                   // Total available power from generators
 	PowerConsumption         int                   // Total power being consumed by active devices
 	PowerOverloadWarned      bool                  // Whether we've warned about power overload this cycle
-	QuitToTitle              bool                  // Set to true to quit to main menu
-	GameComplete             bool                  // True when player reached final deck and lift has no destination (completion)
-	RunStartedAt             int64                 // Unix ms when the current run began
-	CompletionPhase          CompletionPhase       // Summary stats or credits roll
-	RunStatsSnapshot         RunStats              // Stats frozen at completion
-	CreditsLineIndex         int                   // Current credits line during CompletionPhaseCredits
-	CreditsLineStartMs       int64                 // When the current credits line slide-in began
-	CreditsExitStartMs       int64                 // Non-zero while the current line is sliding out (manual/auto advance)
-	CreditsTransitionStartMs int64                 // Non-zero during summary→credits crossfade
+	RepairObjectives         []*entities.RepairObjective
+	QuitToTitle              bool            // Set to true to quit to main menu
+	GameComplete             bool            // True when player reached final deck and lift has no destination (completion)
+	RunStartedAt             int64           // Unix ms when the current run began
+	CompletionPhase          CompletionPhase // Summary stats or credits roll
+	RunStatsSnapshot         RunStats        // Stats frozen at completion
+	CreditsLineIndex         int             // Current credits line during CompletionPhaseCredits
+	CreditsLineStartMs       int64           // When the current credits line slide-in began
+	CreditsExitStartMs       int64           // Non-zero while the current line is sliding out (manual/auto advance)
+	CreditsTransitionStartMs int64           // Non-zero during summary→credits crossfade
 
 	// Room power: doors and CCTV/hazard controls are unpowered by default.
 	// Start room's doors are powered so the player can leave.
@@ -91,11 +114,23 @@ type Game struct {
 	RoomPowerOnline      map[string]bool // room name -> propagated power has reached the room
 	ManualEgressReleased map[string]bool // room name -> hold-to-release bypass active (routing still offline)
 
+	// ManualEgressReleasedAtMs records when each manual release was performed (egress-seal policies).
+	ManualEgressReleasedAtMs map[string]int64
+
+	// Policies are this deck's deterministic conservation rules (station automation).
+	Policies []*entities.ConservationPolicy
+
 	// PowerPropPending schedules room activations when propagation is staggered (unused at 0 delay).
 	PowerPropPending []PowerPropEntry
 
 	// RoomPowerOffPending maps room name -> Unix ms when door/CCTV circuits shut down after maint OFF.
 	RoomPowerOffPending map[string]int64
+
+	// GeneratorShutdownAt is a delayed room circuit shutdown requested from a maintenance terminal.
+	GeneratorShutdownAt       int64
+	GeneratorShutdownRow      int
+	GeneratorShutdownCol      int
+	GeneratorShutdownRoomName string
 
 	// ObservationCueVisited prevents duplicate corridor-stamp callouts per cell (Story 5.2).
 	ObservationCueVisited map[string]struct{}
@@ -134,12 +169,16 @@ type Game struct {
 	// HazardTour runs a camera tour of blocking hazards when the exit lift is powered but blocked.
 	HazardTour *HazardTourSession
 
+	// SlimePops holds short drain pop animations for toxic-slime cells.
+	SlimePops []SlimePop
+
 	// livePowerCellsCache caches CellsReachableFromPoweredGenerators for the current routing state.
 	livePowerCellsCache *mapset.Set[*world.Cell]
 	livePowerCacheValid bool
 
-	// AlwaysLitApplied skips redundant full-grid lighting passes while rooms stay always lit.
-	AlwaysLitApplied bool
+	// armedBalanceComponentsCache caches armed-grid components for overload balance checks.
+	armedBalanceComponentsCache []*mapset.Set[*world.Cell]
+	armedBalanceCacheValid      bool
 }
 
 // LongUseSession tracks a hold-to-use interaction in progress.
@@ -151,6 +190,7 @@ type LongUseSession struct {
 	StartedAtMs   int64
 	AccumulatedMs int64 // Milliseconds USE was held (progress only advances while held)
 	LastAdvanceMs int64 // Last Update tick while held (0 until first held frame)
+	Abandoning    bool  // Coupler crank: player left; drain to zero then clear
 }
 
 // MessageEntry represents a message with a timestamp
@@ -168,6 +208,7 @@ type PowerPropEntry struct {
 // NewGame creates a new game instance
 func NewGame() *Game {
 	return &Game{
+		GameMode:              gamemode.Default(),
 		OwnedItems:            mapset.New[*world.Item](),
 		PlayerFacing:          FaceNorth,
 		HasMap:                false,
@@ -175,6 +216,9 @@ func NewGame() *Game {
 		Level:                 1,
 		CurrentDeckID:         0,
 		DeckStates:            make(map[int]*DeckState),
+		RunInventory:          mapset.New[*world.Item](),
+		UnlockSatisfied:       make(map[string]bool),
+		LiftRoutingPowered:    unlocks.InitialLiftRouting(),
 		Batteries:             0,
 		Generators:            make([]*entities.Generator, 0),
 		FoundCodes:            make(map[string]bool),
@@ -185,11 +229,14 @@ func NewGame() *Game {
 		PowerSupply:           0,
 		PowerConsumption:      0,
 		PowerOverloadWarned:   false,
+		RepairObjectives:      make([]*entities.RepairObjective, 0),
 		RoomDoorsPowered:      make(map[string]bool),
 		RoomCCTVPowered:       make(map[string]bool),
 		RoomLightsPowered:     make(map[string]bool),
 		RoomPowerOnline:       make(map[string]bool),
 		ManualEgressReleased:  make(map[string]bool),
+		GeneratorShutdownRow:  -1,
+		GeneratorShutdownCol:  -1,
 		ObservationCueVisited: make(map[string]struct{}),
 		LinkageTokensSeen:     make(map[string]struct{}),
 		LinkageCueVisited:     make(map[string]struct{}),
@@ -316,6 +363,164 @@ func (g *Game) AllHazardsCleared() bool {
 	return !hasBlockingHazard
 }
 
+// RebuildRepairObjectivesFromGrid repopulates the deck objective index from placed cells.
+func (g *Game) RebuildRepairObjectivesFromGrid() {
+	if g == nil || g.Grid == nil {
+		g.RepairObjectives = nil
+		return
+	}
+	seen := make(map[string]*entities.RepairObjective)
+	var repairs []*entities.RepairObjective
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		for _, repair := range []*entities.RepairObjective{data.RepairDevice, data.RepairBlocker} {
+			if repair == nil || repair.ID == "" {
+				continue
+			}
+			if _, ok := seen[repair.ID]; ok {
+				continue
+			}
+			seen[repair.ID] = repair
+			repairs = append(repairs, repair)
+		}
+	})
+	g.RepairObjectives = repairs
+}
+
+// RepairByID returns the objective with id.
+func (g *Game) RepairByID(id string) *entities.RepairObjective {
+	if g == nil || id == "" {
+		return nil
+	}
+	for _, repair := range g.RepairObjectives {
+		if repair != nil && repair.ID == id {
+			return repair
+		}
+	}
+	return nil
+}
+
+// RepairPrereqsComplete reports whether all prerequisite objectives are complete.
+func (g *Game) RepairPrereqsComplete(repair *entities.RepairObjective) bool {
+	if g == nil || repair == nil {
+		return false
+	}
+	for _, id := range repair.PrereqIDs {
+		dep := g.RepairByID(id)
+		if dep == nil || !dep.IsComplete() {
+			return false
+		}
+	}
+	return true
+}
+
+// IncompleteRepairCount returns objectives that still block the deck.
+func (g *Game) IncompleteRepairCount() int {
+	if g == nil {
+		return 0
+	}
+	count := 0
+	for _, repair := range g.RepairObjectives {
+		if repair != nil && !repair.SkipExitGate && !repair.IsComplete() {
+			count++
+		}
+	}
+	return count
+}
+
+// ActiveRepairDrainCount returns timed repairs that are currently resolving.
+func (g *Game) ActiveRepairDrainCount() int {
+	if g == nil {
+		return 0
+	}
+	count := 0
+	for _, repair := range g.RepairObjectives {
+		if repair != nil && repair.IsDraining() {
+			count++
+		}
+	}
+	return count
+}
+
+// AllRepairsComplete reports whether deck repair objectives are complete.
+func (g *Game) AllRepairsComplete() bool {
+	return g == nil || g.IncompleteRepairCount() == 0
+}
+
+// AdvanceRepairTimers completes timed repair effects whose delay has elapsed.
+func (g *Game) AdvanceRepairTimers(nowMs int64) bool {
+	if g == nil {
+		return false
+	}
+	g.PruneSlimePops(nowMs)
+	changed := false
+	for _, repair := range g.RepairObjectives {
+		if repair == nil || !repair.IsDraining() || repair.CompleteAtMs <= 0 {
+			continue
+		}
+		cells := repair.BlockerCellList()
+		if len(cells) == 0 {
+			if nowMs >= repair.CompleteAtMs {
+				repair.Complete()
+				changed = true
+			}
+			continue
+		}
+		target := repair.TargetDrainCleared(nowMs)
+		for target > repair.DrainCleared && repair.DrainCleared < len(cells) {
+			bc := cells[repair.DrainCleared]
+			g.AddSlimePop(bc.Row, bc.Col, nowMs)
+			repair.DrainCleared++
+			changed = true
+		}
+		if repair.DrainCleared >= len(cells) || nowMs >= repair.CompleteAtMs {
+			repair.Complete()
+			clearRepairBlockersFromGrid(g, repair)
+			g.OnRoutingRepairComplete(repair.ID)
+			changed = true
+		}
+	}
+	return changed
+}
+
+func clearRepairBlockersFromGrid(g *Game, repair *entities.RepairObjective) {
+	if g == nil || g.Grid == nil || repair == nil {
+		return
+	}
+	for _, bc := range repair.BlockerCellList() {
+		cell := g.Grid.GetCell(bc.Row, bc.Col)
+		if cell == nil {
+			continue
+		}
+		data := gameworld.GetGameData(cell)
+		if data.RepairBlocker == repair {
+			data.RepairBlocker = nil
+		}
+	}
+}
+
+// RepairProgressSignature is a compact cache key for repair objective UI state.
+func (g *Game) RepairProgressSignature() string {
+	if g == nil {
+		return ""
+	}
+	sig := ""
+	for _, repair := range g.RepairObjectives {
+		if repair == nil {
+			continue
+		}
+		sig += repair.ID + ":" + string(repair.Status) + ":"
+		if repair.IsDraining() {
+			sig += fmt.Sprintf("d%d/", repair.DrainCleared)
+		}
+		sig += ";"
+	}
+	return sig
+}
+
 // UnpoweredGeneratorCount returns the number of unpowered generators
 func (g *Game) UnpoweredGeneratorCount() int {
 	count := 0
@@ -385,10 +590,10 @@ func (g *Game) HasItem(item *world.Item) bool {
 // Does not increment past the final deck (deck.TotalDecks).
 // Used when advancing without per-deck store (e.g. legacy path). Prefer gameplay.AdvanceLevel for graph-based advance.
 func (g *Game) AdvanceLevel() {
-	if g.Level < deck.TotalDecks {
+	if g.Level < g.TotalDecks() {
 		g.Level++
 	}
-	if g.CurrentDeckID < deck.FinalDeckIndex {
+	if g.CurrentDeckID < g.FinalDeckIndex() {
 		g.CurrentDeckID++
 	}
 	g.OwnedItems = mapset.New[*world.Item]()
@@ -396,6 +601,7 @@ func (g *Game) AdvanceLevel() {
 	g.Hints = nil
 	g.Batteries = 0
 	g.Generators = make([]*entities.Generator, 0)
+	g.RepairObjectives = make([]*entities.RepairObjective, 0)
 	g.FoundCodes = make(map[string]bool)
 	g.ResetLinkageTokensSeen()
 	g.PowerSupply = 0
@@ -405,8 +611,14 @@ func (g *Game) AdvanceLevel() {
 	g.RoomCCTVPowered = make(map[string]bool)
 	g.RoomLightsPowered = make(map[string]bool)
 	g.RoomPowerOnline = make(map[string]bool)
+	g.ManualEgressReleasedAtMs = nil
+	g.Policies = nil
 	g.PowerPropPending = nil
 	g.RoomPowerOffPending = nil
+	g.GeneratorShutdownAt = 0
+	g.GeneratorShutdownRow = -1
+	g.GeneratorShutdownCol = -1
+	g.GeneratorShutdownRoomName = ""
 }
 
 // copyPowerMaps returns copies of the given power maps (for per-deck state).
@@ -468,9 +680,11 @@ func (g *Game) SaveCurrentDeckState() {
 		return
 	}
 	g.syncGeneratorsFromGrid()
+	g.PromoteOwnedRunKeycards()
 	doorsCopy, cctvCopy, lightsCopy := copyPowerMaps(g.RoomDoorsPowered, g.RoomCCTVPowered, g.RoomLightsPowered)
 	onlineCopy := copyBoolMap(g.RoomPowerOnline)
 	manualEgressCopy := copyBoolMap(g.ManualEgressReleased)
+	manualEgressAtCopy := copyInt64Map(g.ManualEgressReleasedAtMs)
 	pendingCopy := append([]PowerPropEntry(nil), g.PowerPropPending...)
 	offPendingCopy := copyInt64Map(g.RoomPowerOffPending)
 	genCopy := make([]*entities.Generator, len(g.Generators))
@@ -484,17 +698,20 @@ func (g *Game) SaveCurrentDeckState() {
 		}
 	}
 	g.DeckStates[g.CurrentDeckID] = &DeckState{
-		Grid:                 g.Grid,
-		LevelSeed:            g.LevelSeed,
-		RoomDoorsPowered:     doorsCopy,
-		RoomCCTVPowered:      cctvCopy,
-		RoomLightsPowered:    lightsCopy,
-		RoomPowerOnline:      onlineCopy,
-		PowerPropPending:     pendingCopy,
-		RoomPowerOffPending:  offPendingCopy,
-		ManualEgressReleased: manualEgressCopy,
-		Generators:           genCopy,
-		OwnedItems:           copyOwnedItems(g.OwnedItems),
+		Grid:                     g.Grid,
+		LevelSeed:                g.LevelSeed,
+		RoomDoorsPowered:         doorsCopy,
+		RoomCCTVPowered:          cctvCopy,
+		RoomLightsPowered:        lightsCopy,
+		RoomPowerOnline:          onlineCopy,
+		PowerPropPending:         pendingCopy,
+		RoomPowerOffPending:      offPendingCopy,
+		ManualEgressReleased:     manualEgressCopy,
+		ManualEgressReleasedAtMs: manualEgressAtCopy,
+		Policies:                 append([]*entities.ConservationPolicy(nil), g.Policies...),
+		Generators:               genCopy,
+		RepairObjectives:         append([]*entities.RepairObjective(nil), g.RepairObjectives...),
+		OwnedItems:               copyOwnedItems(g.OwnedItems),
 	}
 }
 
@@ -520,6 +737,8 @@ func (g *Game) LoadDeckState(deckID int) {
 	} else {
 		g.ManualEgressReleased = make(map[string]bool)
 	}
+	g.ManualEgressReleasedAtMs = copyInt64Map(ds.ManualEgressReleasedAtMs)
+	g.Policies = append([]*entities.ConservationPolicy(nil), ds.Policies...)
 	g.PowerPropPending = append([]PowerPropEntry(nil), ds.PowerPropPending...)
 	if ds.RoomPowerOffPending != nil {
 		g.RoomPowerOffPending = copyInt64Map(ds.RoomPowerOffPending)
@@ -527,16 +746,25 @@ func (g *Game) LoadDeckState(deckID int) {
 		g.RoomPowerOffPending = nil
 	}
 	g.OwnedItems = copyOwnedItems(ds.OwnedItems)
+	g.PromoteOwnedRunKeycards()
 	g.RebuildGeneratorsFromGrid()
-	g.HasMap = false
+	if ds.RepairObjectives != nil {
+		g.RepairObjectives = append([]*entities.RepairObjective(nil), ds.RepairObjectives...)
+	} else {
+		g.RebuildRepairObjectivesFromGrid()
+	}
+	// HasMap is run-wide; preserve across deck loads.
 	g.Hints = nil
-	g.FoundCodes = make(map[string]bool)
 	g.ResetLinkageTokensSeen()
 	g.PowerSupply = 0
 	g.PowerConsumption = 0
 	g.PowerOverloadWarned = false
 	g.ResetObservationCueAnnounced()
-	g.CurrentCell = g.Grid.StartCell()
+	if entry := g.Grid.ExitCell(); entry != nil {
+		g.CurrentCell = entry
+	} else {
+		g.CurrentCell = g.Grid.StartCell()
+	}
 }
 
 // GetAvailablePower returns the available power (supply - consumption)

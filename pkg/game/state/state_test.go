@@ -130,6 +130,60 @@ func TestUnpoweredGeneratorCount(t *testing.T) {
 	}
 }
 
+func TestRepairObjectives_DependencyAndTimers(t *testing.T) {
+	g := NewGame()
+	valve := entities.NewRepairObjective("valve", entities.RepairPressureValve, "A", 0, 0)
+	pump := entities.NewRepairObjective("pump", entities.RepairWastePump, "B", 0, 1)
+	pump.PrereqIDs = []string{valve.ID}
+	pump.BlockerName = "Toxic Slime"
+	g.RepairObjectives = []*entities.RepairObjective{valve, pump}
+
+	if g.RepairPrereqsComplete(pump) {
+		t.Fatal("pump prerequisite should not be complete before valve repair")
+	}
+	valve.Complete()
+	if !g.RepairPrereqsComplete(pump) {
+		t.Fatal("pump prerequisite should be complete after valve repair")
+	}
+
+	pump.BeginTimedCompletion(1000)
+	if !pump.IsDraining() {
+		t.Fatal("waste pump should enter draining state")
+	}
+	if g.AllRepairsComplete() {
+		t.Fatal("draining repair should still count as incomplete")
+	}
+	if g.AdvanceRepairTimers(1000 + entities.WastePumpDrainDurationMs - 1) {
+		t.Fatal("timer should not complete early")
+	}
+	if !g.AdvanceRepairTimers(1000 + entities.WastePumpDrainDurationMs) {
+		t.Fatal("timer should report completion at deadline")
+	}
+	if !pump.IsComplete() || !g.AllRepairsComplete() {
+		t.Fatal("pump should complete after drain timer elapses")
+	}
+}
+
+func TestRebuildRepairObjectivesFromGrid(t *testing.T) {
+	g := NewGame()
+	grid := world.NewGrid(1, 2)
+	grid.MarkAsRoomWithName(0, 0, "A", "")
+	grid.MarkAsRoomWithName(0, 1, "B", "")
+	grid.BuildAllCellConnections()
+	g.Grid = grid
+	repair := entities.NewRepairObjective("r1", entities.RepairPressureValve, "A", 0, 0)
+	gameworld.GetGameData(grid.GetCell(0, 0)).RepairDevice = repair
+	gameworld.GetGameData(grid.GetCell(0, 1)).RepairBlocker = repair
+
+	g.RebuildRepairObjectivesFromGrid()
+	if len(g.RepairObjectives) != 1 {
+		t.Fatalf("len(RepairObjectives) = %d, want 1", len(g.RepairObjectives))
+	}
+	if g.RepairObjectives[0] != repair {
+		t.Fatal("rebuild should preserve the placed repair pointer")
+	}
+}
+
 func TestUpdatePowerSupply_Deck0(t *testing.T) {
 	g := NewGame()
 	g.CurrentDeckID = 0

@@ -45,7 +45,7 @@ func countRoomCells(grid *world.Grid) int {
 
 func TestBSPGenerate_HasNamedRooms(t *testing.T) {
 	levelrand.Seed(1)
-	grid := DefaultGenerator.Generate(1)
+	grid := DefaultGenerator.Generate(1, testThemeForLevel(1))
 	if grid == nil {
 		t.Fatal("Generate(1) returned nil")
 	}
@@ -63,47 +63,53 @@ func TestBSPGenerate_HasNamedRooms(t *testing.T) {
 
 func TestBSPGenerate_HasCorridors(t *testing.T) {
 	levelrand.Seed(2)
-	grid := DefaultGenerator.Generate(1)
+	grid := DefaultGenerator.Generate(1, testThemeForLevel(1))
 	if grid == nil {
 		t.Fatal("Generate(1) returned nil")
 	}
 	corridorCount := 0
+	shaftCount := 0
 	grid.ForEachCell(func(row, col int, cell *world.Cell) {
 		if cell != nil && cell.Room && cell.Name == "Corridor" {
 			corridorCount++
 		}
+		if cell != nil && cell.Room && cell.Name == ShaftRoomName {
+			shaftCount++
+		}
 	})
-	if corridorCount < 1 {
-		t.Errorf("expected at least one Corridor cell, got %d", corridorCount)
+	if corridorCount < 1 && shaftCount < 1 {
+		t.Errorf("expected corridor or lift shaft cells, got corridor=%d shaft=%d", corridorCount, shaftCount)
 	}
 }
 
 func TestBSPGenerate_AllRoomsReachable(t *testing.T) {
 	levelrand.Seed(3)
-	grid := DefaultGenerator.Generate(1)
+	grid := DefaultGenerator.Generate(1, testThemeForLevel(1))
 	if grid == nil {
 		t.Fatal("Generate(1) returned nil")
 	}
-	start := grid.StartCell()
-	if start == nil {
-		t.Fatal("StartCell is nil")
+	entry := grid.ExitCell()
+	if entry == nil {
+		entry = grid.StartCell()
+	}
+	if entry == nil {
+		t.Fatal("player entry cell is nil")
 	}
 	total := countRoomCells(grid)
-	reachable := countReachableRoomCells(grid, start)
+	reachable := countReachableRoomCells(grid, entry)
 	if reachable != total {
 		t.Errorf("reachable room cells %d != total room cells %d (isolated rooms)", reachable, total)
 	}
 }
 
-func TestBSPGenerate_DeckFunctionalLayer(t *testing.T) {
-	// Deck identity drives room naming: FunctionalType(level) → RoomNamesForType(ft).
-	ft := deck.FunctionalType(1)
-	bases, adjectives := deck.RoomNamesForType(ft)
+func TestBSPGenerate_DeckThemeNaming(t *testing.T) {
+	theme := testThemeForLevel(1)
+	bases, adjectives := deck.RoomNamesForTheme(theme)
 	if len(bases) == 0 || len(adjectives) == 0 {
-		t.Fatal("RoomNamesForType returned empty; deck functional layer not configured")
+		t.Fatal("RoomNamesForTheme returned empty; deck theme not configured")
 	}
 	levelrand.Seed(4)
-	grid := DefaultGenerator.Generate(1)
+	grid := DefaultGenerator.Generate(1, theme)
 	if grid == nil {
 		t.Fatal("Generate(1) returned nil")
 	}
@@ -128,7 +134,7 @@ func TestBSPGenerate_DeckFunctionalLayer(t *testing.T) {
 		}
 	})
 	if !hasThematicName {
-		t.Error("expected at least one room name from RoomNamesForType (adjective or base); deck thematic naming not present")
+		t.Error("expected at least one room name from RoomNamesForTheme (adjective or base); deck thematic naming not present")
 	}
 }
 
@@ -138,7 +144,7 @@ const midDeckLevelForTest = 3
 func TestBSPGenerate_UniqueRoomNames(t *testing.T) {
 	for seed := int64(1); seed <= 200; seed++ {
 		levelrand.Seed(seed)
-		grid := DefaultGenerator.Generate(7)
+		grid := DefaultGenerator.Generate(7, testThemeForLevel(7))
 		if grid == nil {
 			t.Fatalf("Generate(7) seed %d returned nil", seed)
 		}
@@ -150,7 +156,10 @@ func TestBSPGenerate_UniqueRoomNames(t *testing.T) {
 			byName[cell.Name] = append(byName[cell.Name], cell)
 		})
 		for name, cells := range byName {
-			if !roomCellsConnected(cells) {
+			if strings.HasSuffix(name, " Far") {
+				t.Fatalf("seed %d: unexpected shaft-split room name %q", seed, name)
+			}
+			if !roomCellsConnected(cells) && !roomCellsConnectedViaShaft(cells) {
 				t.Fatalf("seed %d: room name %q appears on disconnected regions", seed, name)
 			}
 		}
@@ -182,10 +191,35 @@ func roomCellsConnected(cells []*world.Cell) bool {
 	return len(visited) == len(cells)
 }
 
+// roomCellsConnectedViaShaft allows a room name on two pockets separated only by the lift shaft.
+func roomCellsConnectedViaShaft(cells []*world.Cell) bool {
+	components := roomNameComponents(cells)
+	if len(components) <= 1 {
+		return true
+	}
+	for _, component := range components {
+		if !componentAdjacentToShaft(component) {
+			return false
+		}
+	}
+	return true
+}
+
+func componentAdjacentToShaft(component []*world.Cell) bool {
+	for _, c := range component {
+		for _, n := range []*world.Cell{c.North, c.East, c.South, c.West} {
+			if n != nil && n.Room && n.Name == ShaftRoomName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func TestBSPGenerate_StartAndExitSet(t *testing.T) {
 	// Generator sets start and exit cells; start is in a room; exit is marked ExitCell.
 	levelrand.Seed(7)
-	grid := DefaultGenerator.Generate(1)
+	grid := DefaultGenerator.Generate(1, testThemeForLevel(1))
 	if grid == nil {
 		t.Fatal("Generate(1) returned nil")
 	}
@@ -217,9 +251,9 @@ func TestBSPGenerate_FinalDeckMinimalLayout(t *testing.T) {
 		t.Fatal("TotalDecks should be final deck level")
 	}
 	levelrand.Seed(5)
-	gridFinal := DefaultGenerator.Generate(deck.TotalDecks)
+	gridFinal := DefaultGenerator.Generate(deck.TotalDecks, testThemeForLevel(deck.TotalDecks))
 	levelrand.Seed(6)
-	gridMid := DefaultGenerator.Generate(midDeckLevelForTest)
+	gridMid := DefaultGenerator.Generate(midDeckLevelForTest, testThemeForLevel(midDeckLevelForTest))
 	if gridFinal == nil || gridMid == nil {
 		t.Fatal("Generate returned nil")
 	}
@@ -237,7 +271,7 @@ func TestBSPGenerate_FinalDeckMinimalLayout(t *testing.T) {
 
 func TestBSPGenerate_FinalDeckHasMultipleRooms(t *testing.T) {
 	levelrand.Seed(42)
-	grid := DefaultGenerator.Generate(deck.TotalDecks)
+	grid := DefaultGenerator.Generate(deck.TotalDecks, testThemeForLevel(deck.TotalDecks))
 	if grid == nil {
 		t.Fatal("Generate returned nil")
 	}

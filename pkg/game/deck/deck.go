@@ -61,24 +61,62 @@ type Descriptor struct {
 	Depth       int   // Depth for ordering/decay (0 = start, FinalDeckIndex = deepest)
 }
 
-// Graph is the deck graph: linear path 0 → 1 → … → FinalDeckIndex (Phase 3.1).
+// Graph is the deck graph for the default SinglePlayerPuzzle deck count.
 // Index is deck ID (0-based). Final deck has empty Connections.
 var Graph []Descriptor
 
 func init() {
-	Graph = make([]Descriptor, TotalDecks)
-	for i := 0; i < TotalDecks; i++ {
+	Graph = BuildGraph(TotalDecks)
+}
+
+// BuildGraph returns a linear deck graph 0 → 1 → … → totalDecks-1.
+func BuildGraph(totalDecks int) []Descriptor {
+	if totalDecks < 1 {
+		totalDecks = 1
+	}
+	finalIdx := totalDecks - 1
+	graph := make([]Descriptor, totalDecks)
+	for i := 0; i < totalDecks; i++ {
 		conn := []int{}
-		if i < FinalDeckIndex {
+		if i < finalIdx {
 			conn = append(conn, i+1)
 		}
-		Graph[i] = Descriptor{
+		graph[i] = Descriptor{
 			ID:          i,
 			Type:        FunctionalType(i + 1),
 			Connections: conn,
 			Depth:       i,
 		}
 	}
+	return graph
+}
+
+// FinalDeckIndexFor returns the 0-based index of the last deck for totalDecks.
+func FinalDeckIndexFor(totalDecks int) int {
+	if totalDecks < 1 {
+		return 0
+	}
+	return totalDecks - 1
+}
+
+// IsFinalDeckFor reports whether level (1-based) is the final deck for totalDecks.
+func IsFinalDeckFor(level, totalDecks int) bool {
+	return level >= totalDecks
+}
+
+// NextDeckIDFor returns the next deck ID for a run with totalDecks, or false at the final deck.
+func NextDeckIDFor(totalDecks, deckID int) (nextID int, ok bool) {
+	if totalDecks < 1 {
+		totalDecks = TotalDecks
+	}
+	finalIdx := FinalDeckIndexFor(totalDecks)
+	if deckID < 0 || deckID >= totalDecks {
+		return 0, false
+	}
+	if deckID >= finalIdx {
+		return 0, false
+	}
+	return deckID + 1, true
 }
 
 // NextDeckID returns the next deck ID (0-based) from the graph and true,

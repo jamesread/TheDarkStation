@@ -5,7 +5,6 @@ import (
 	"fmt"
 
 	engineinput "darkstation/pkg/engine/input"
-	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
@@ -36,13 +35,8 @@ func ShowInteractableHints(g *state.Game) {
 		return
 	}
 
-	// Match CheckAdjacentInteractables: prefer generators across all directions, then other types in N,S,E,W.
-	neighbors := []*world.Cell{
-		g.CurrentCell.North,
-		g.CurrentCell.South,
-		g.CurrentCell.East,
-		g.CurrentCell.West,
-	}
+	// Match CheckAdjacentInteractables: prefer generators across all directions, then other types clockwise from facing.
+	neighbors := state.AdjacentCellsClockwiseFromFacing(g.CurrentCell, g.PlayerFacing)
 
 	for _, cell := range neighbors {
 		if cell == nil {

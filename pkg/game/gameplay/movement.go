@@ -55,7 +55,7 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 	}
 
 	// Check for furniture (blocks movement)
-	if gameworld.HasFurniture(r) {
+	if gameworld.FurnitureBlocksMovement(r) {
 		return false, &missingItems
 	}
 
@@ -74,8 +74,21 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 		return false, &missingItems
 	}
 
+	// Check for repair devices (blocks movement; conduit splices stay walkable)
+	if gameworld.RepairDeviceBlocksMovement(r) {
+		return false, &missingItems
+	}
+
 	// Check for hazard controls / circuit breaker switches (blocks movement, like furniture)
 	if gameworld.HasHazardControl(r) {
+		return false, &missingItems
+	}
+
+	if gameworld.HasBlockingRepairBlocker(r) {
+		if logReason {
+			repair := gameworld.GetGameData(r).RepairBlocker
+			renderer.AddCallout(r.Row, r.Col, repairBlockerCallout(g, repair), renderer.CalloutColorHazard, 0)
+		}
 		return false, &missingItems
 	}
 
@@ -103,7 +116,7 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 			} else {
 				if logReason {
 					// Show hazard description as 2-line callout: first line in hazard color, second line with hint in normal color
-					hazardCallout := formatHazardCallout(hazard)
+					hazardCallout := formatHazardCallout(g, hazard)
 					renderer.AddCallout(r.Row, r.Col, hazardCallout, renderer.CalloutColorHazard, 0)
 				}
 				return false, &missingItems
@@ -112,7 +125,7 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 			// Hazard requires a control panel to be activated
 			if logReason {
 				// Show hazard description as 2-line callout: first line in hazard color, second line with hint in normal color
-				hazardCallout := formatHazardCallout(hazard)
+				hazardCallout := formatHazardCallout(g, hazard)
 				renderer.AddCallout(r.Row, r.Col, hazardCallout, renderer.CalloutColorHazard, 0)
 			}
 			return false, &missingItems
@@ -141,8 +154,15 @@ func CanEnter(g *state.Game, r *world.Cell, logReason bool) (bool, *world.ItemSe
 						numHazards++
 					}
 				})
-				logMessage(g, "The lift requires all environmental hazards to be cleared!")
-				logMessage(g, "ACTION{%d} environmental hazard(s) remain.", numHazards)
+				repairs := g.IncompleteRepairCount()
+				if numHazards > 0 {
+					logMessage(g, "The lift requires all environmental hazards to be cleared!")
+					logMessage(g, "ACTION{%d} environmental hazard(s) remain.", numHazards)
+				}
+				if repairs > 0 {
+					logMessage(g, "The lift is locked until deck repairs are complete.")
+					logMessage(g, "ACTION{%d} repair objective(s) remain.", repairs)
+				}
 			}
 		}
 		return false, &missingItems
@@ -163,15 +183,8 @@ func showUnpoweredDoorCallout(g *state.Game, r *world.Cell, rData *gameworld.Gam
 // Returns false when the door is locked and the player lacks the keycard.
 func unlockDoorWithKeycard(g *state.Game, r *world.Cell, rData *gameworld.GameCellData, logReason bool) bool {
 	keycardName := rData.Door.KeycardName()
-	var keycardItem *world.Item
 
-	g.OwnedItems.Each(func(item *world.Item) {
-		if item.Name == keycardName {
-			keycardItem = item
-		}
-	})
-
-	if keycardItem == nil {
+	if !g.HasKeycardNamed(keycardName) {
 		if logReason {
 			logMessage(g, "This door requires a %s", renderer.StyledKeycard(keycardName))
 			renderer.AddCallout(r.Row, r.Col, fmt.Sprintf("TITLE{Door Locked}\nNeeds: KEYCARD{%s}", keycardName), renderer.CalloutColorDoor, 0)
@@ -187,7 +200,6 @@ func unlockDoorWithKeycard(g *state.Game, r *world.Cell, rData *gameworld.GameCe
 			doorsUnlocked++
 		}
 	})
-	g.OwnedItems.Remove(keycardItem)
 
 	var calloutMsg string
 	if doorsUnlocked > 1 {
@@ -214,46 +226,65 @@ func MoveCell(g *state.Game, requestedCell *world.Cell) {
 			direction = "west"
 		}
 	}
+	turned := false
 	if direction != "" {
+		facingBefore := g.PlayerFacing
 		setPlayerFacingFromDirection(g, direction)
+		turned = g.PlayerFacing != facingBefore
 	}
 
 	if res, _ := CanEnter(g, requestedCell, true); res {
-		features.MarkVisited(requestedCell)
-		cellData := gameworld.GetGameData(requestedCell)
-		cellData.LightsOn = true
-		cellData.Lighted = true
-
-		// Reveal cells within field of view (ray-cast; walls block sight).
-		world.RevealFOVDefault(g.Grid, requestedCell, unpoweredDoorSightBlocker(g))
-
-		// Update lighting-based exploration
-		UpdateLightingExploration(g)
-
-		// Reset interaction order when player moves
-		if g.CurrentCell == nil || g.CurrentCell.Row != requestedCell.Row || g.CurrentCell.Col != requestedCell.Col {
-			g.LastInteractedRow = -1
-			g.LastInteractedCol = -1
-			g.InteractionPlayerRow = requestedCell.Row
-			g.InteractionPlayerCol = requestedCell.Col
-			ClearGeneratorPowerGridOverlay(g)
-			// Increment movement count for hint system (only if player actually moved from a previous position)
-			if g.CurrentCell != nil {
-				g.MovementCount++
-			}
+		if g.CurrentCell != nil &&
+			(g.CurrentCell.Row != requestedCell.Row || g.CurrentCell.Col != requestedCell.Col) {
+			g.MovementCount++
 		}
-
-		g.CurrentCell = requestedCell
-		maybeAnnounceObservationCueOnMove(g, requestedCell)
-		maybeAnnounceLinkageCueOnMove(g, requestedCell)
-		if features.VisitedSystemEnabled() {
-			noteLinkageTagFromVisitedCell(g, requestedCell)
-		}
+		landPlayerOnCell(g, requestedCell)
 	} else {
 		// Movement failed - trigger debounce animation
 		if direction != "" {
 			renderer.SetDebounceAnimation(direction)
 		}
+		if turned {
+			// The player turned in place: swing the headlamp cone.
+			RefreshHeadlampCone(g)
+		}
+	}
+}
+
+// TeleportPlayerTo places the player on a cell without movement checks (lift routing, etc.).
+func TeleportPlayerTo(g *state.Game, cell *world.Cell) {
+	if g == nil || cell == nil || !cell.Room {
+		return
+	}
+	landPlayerOnCell(g, cell)
+}
+
+func landPlayerOnCell(g *state.Game, cell *world.Cell) {
+	if g == nil || cell == nil {
+		return
+	}
+	features.MarkVisited(cell)
+	cellData := gameworld.GetGameData(cell)
+	cellData.LightsOn = true
+	cellData.Lighted = true
+	world.RevealFOVDefault(g.Grid, cell, unpoweredDoorSightBlocker(g))
+	UpdateLightingExploration(g)
+	if g.CurrentCell == nil || g.CurrentCell.Row != cell.Row || g.CurrentCell.Col != cell.Col {
+		g.LastInteractedRow = -1
+		g.LastInteractedCol = -1
+		g.InteractionPlayerRow = cell.Row
+		g.InteractionPlayerCol = cell.Col
+		ClearGeneratorPowerGridOverlay(g)
+	}
+	g.CurrentCell = cell
+	if rep := cellData.RepairDevice; rep != nil && !rep.IsComplete() {
+		// Walkable devices (conduit splices): announce the fault underfoot.
+		renderer.AddCallout(cell.Row, cell.Col, repairDeviceCallout(g, rep, cell), renderer.CalloutColorMaintenance, 0)
+	}
+	maybeAnnounceObservationCueOnMove(g, cell)
+	maybeAnnounceLinkageCueOnMove(g, cell)
+	if features.VisitedSystemEnabled() {
+		noteLinkageTagFromVisitedCell(g, cell)
 	}
 }
 
@@ -275,15 +306,17 @@ func FaceTowardAdjacentCell(g *state.Game, target *world.Cell) {
 	if g == nil || g.CurrentCell == nil {
 		return
 	}
-	if facing, ok := state.FacingToward(g.CurrentCell, target); ok {
+	if facing, ok := state.FacingToward(g.CurrentCell, target); ok && facing != g.PlayerFacing {
 		g.PlayerFacing = facing
+		RefreshHeadlampCone(g)
 	}
 }
 
 // formatHazardCallout formats a hazard description into a 2-line callout
 // First line: hazard description in hazard color (red)
-// Second line: hint (e.g., "Find the Circuit Breaker") in normal text color
-func formatHazardCallout(hazard *entities.Hazard) string {
+// Second line: hint (e.g., "Find the Circuit Breaker") in normal text color.
+// The control is only named once the player has seen it lit (knowledge gating).
+func formatHazardCallout(g *state.Game, hazard *entities.Hazard) string {
 	description := hazard.Description
 	info := entities.HazardTypes[hazard.Type]
 
@@ -293,7 +326,11 @@ func formatHazardCallout(hazard *entities.Hazard) string {
 	var mainDescription string
 
 	if info.ControlName != "" {
-		hint = fmt.Sprintf("Find the %s", info.ControlName)
+		if hazardControlSeen(g, hazard) {
+			hint = fmt.Sprintf("Find the %s", info.ControlName)
+		} else {
+			hint = "Locate its control unit."
+		}
 		// Remove hint from description if it's there
 		if strings.Contains(description, "Find the") {
 			parts := strings.Split(description, "Find the")
@@ -342,6 +379,24 @@ func formatHazardCallout(hazard *entities.Hazard) string {
 	}
 	// Fallback: just show description in hazard color if we can't extract hint
 	return fmt.Sprintf("HAZARD{%s}", mainDescription)
+}
+
+// hazardControlSeen reports whether any control for this hazard has been seen lit.
+func hazardControlSeen(g *state.Game, hazard *entities.Hazard) bool {
+	if g == nil || g.Grid == nil || hazard == nil {
+		return false
+	}
+	seen := false
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if seen || cell == nil {
+			return
+		}
+		data := gameworld.GetGameData(cell)
+		if data.HazardControl != nil && data.HazardControl.Type == hazard.Type && data.Lighted {
+			seen = true
+		}
+	})
+	return seen
 }
 
 // logMessage adds a formatted message to the game's message log

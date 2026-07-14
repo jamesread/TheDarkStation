@@ -12,6 +12,7 @@ import (
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/gamemode"
 	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/levelgen"
 	"darkstation/pkg/game/renderer"
@@ -19,31 +20,50 @@ import (
 	"darkstation/pkg/game/state"
 )
 
-const levelGenTotalSteps = 12
+const levelGenTotalSteps = 13
 
-// GenerateGrid creates a new grid using the default generator
-func GenerateGrid(level int) *world.Grid {
-	return generator.DefaultGenerator.Generate(level)
+// GenerateGrid creates a new grid using the default generator and run deck theme.
+func GenerateGrid(g *state.Game, level int) *world.Grid {
+	theme := deck.ThemeAirlock
+	if g != nil {
+		theme = g.ThemeForDeck(level - 1)
+	}
+	opts := generator.GenerateOptionsFromMode(g.Mode())
+	return generator.BSP.GenerateWithOptions(level, theme, opts)
 }
 
 // BuildGame creates a new game instance with optional starting level (Phase 3.2, 3.4).
-// Current deck is set from startLevel; deck is generated on first entry (no load).
+// Uses the default SinglePlayerPuzzle mode.
 func BuildGame(startLevel int) *state.Game {
+	return BuildGameWithMode(startLevel, gamemode.SinglePlayerPuzzle)
+}
+
+// BuildGameWithMode creates a new game in the given mode.
+func BuildGameWithMode(startLevel int, modeID gamemode.ID) *state.Game {
 	g := state.NewGame()
+	g.SetMode(modeID)
 
 	// Current deck by ID; Level = 1-based display (Phase 3.2)
 	if startLevel < 1 {
 		startLevel = 1
 	}
-	if startLevel > deck.TotalDecks {
-		startLevel = deck.TotalDecks
+	if startLevel > g.TotalDecks() {
+		startLevel = g.TotalDecks()
 	}
 	g.CurrentDeckID = startLevel - 1
 	g.Level = g.CurrentDeckID + 1
 
-	// Generate current deck on first entry (no stored state yet)
 	seed := time.Now().UnixNano()
+	g.InitRunUnlocks(seed)
+
+	// Generate current deck on first entry (no stored state yet)
 	generateLevel(g, startLevel, seed)
+	if g.LevelGen().BatteryHunt || startLevel != 1 {
+		SpawnOnDeckEntry(g, SpawnModeLiftShaft)
+	} else {
+		SpawnOnDeckEntry(g, SpawnModeShip)
+	}
+	UpdateLightingExploration(g)
 
 	InitRunTracking(g)
 	g.ClearMessages()
@@ -51,7 +71,15 @@ func BuildGame(startLevel int) *state.Game {
 	return g
 }
 
+// maxLevelGenAttempts bounds the regenerate-and-retry loop when a generated deck
+// fails the simulated-playthrough acceptance gate. Retries derive their seed from
+// the level seed, so the loop is deterministic and seed-reproducible.
+const maxLevelGenAttempts = 8
+
 // generateLevel rebuilds grid and setup from a seed (deterministic when seed is fixed).
+// Each attempt is validated with setup.SimulatePlaythrough; unsolvable layouts are
+// regenerated with a derived sub-seed. The last attempt is kept even on failure
+// (the existing Ensure* safety nets make that case best-effort).
 func generateLevel(g *state.Game, level int, seed int64) {
 	renderer.BeginLevelGen(level, levelGenTotalSteps)
 	defer renderer.ClearLevelGenProgress()
@@ -61,16 +89,34 @@ func generateLevel(g *state.Game, level int, seed int64) {
 		step++
 		renderer.ReportLevelGenProgress(step, levelGenTotalSteps, label)
 	}
+	noProgress := func(string) {}
 
 	report("Preparing deck")
-	levelrand.Seed(seed)
 	g.LevelSeed = seed
 	g.Level = level
 	g.CurrentDeckID = level - 1
 
 	report("Generating layout")
-	g.Grid = GenerateGrid(level)
-	setupLevel(g, report)
+	for attempt := 0; attempt < maxLevelGenAttempts; attempt++ {
+		attemptSeed := seed
+		attemptReport := report
+		if attempt > 0 {
+			attemptSeed = levelrand.NewDerived(seed, uint64(attempt)).Int63()
+			clearLevelProgress(g)
+			attemptReport = noProgress
+		}
+		levelrand.Seed(attemptSeed)
+		g.Grid = GenerateGrid(g, level)
+		setupLevel(g, attemptReport)
+		g.LevelGenAttempts = attempt + 1
+		solvable := true
+		if g.LevelGen().RunSimulateGate {
+			solvable = setup.SimulatePlaythrough(g).Solvable
+		}
+		if solvable {
+			break
+		}
+	}
 }
 
 // RegenerateFromSeed rebuilds the current level from seed (for reset / debug reproduction).
@@ -96,15 +142,18 @@ func LoadLevelFromSeed(g *state.Game, seed int64) {
 	UpdateLightingExploration(g)
 	setup.EnsureSolvabilityDoorPower(g)
 	setup.ApplyGridConductivePower(g)
+	setup.ForceMaintBootstrapOK(g)
+	SpawnOnDeckEntry(g, SpawnModeLiftShaft)
 	g.ClearMessages()
 }
 
 func clearLevelProgress(g *state.Game) {
 	g.OwnedItems = mapset.New[*world.Item]()
 	g.Batteries = 0
-	g.HasMap = false
+	// HasMap is run-wide; do not reset here.
 	g.FoundCodes = make(map[string]bool)
 	g.Generators = make([]*entities.Generator, 0)
+	g.RepairObjectives = make([]*entities.RepairObjective, 0)
 	g.Hints = nil
 	g.PowerSupply = 0
 	g.PowerConsumption = 0
@@ -114,8 +163,14 @@ func clearLevelProgress(g *state.Game) {
 	g.RoomLightsPowered = make(map[string]bool)
 	g.RoomPowerOnline = make(map[string]bool)
 	g.ManualEgressReleased = make(map[string]bool)
+	g.ManualEgressReleasedAtMs = nil
+	g.Policies = nil
 	g.PowerPropPending = nil
 	g.RoomPowerOffPending = nil
+	g.GeneratorShutdownAt = 0
+	g.GeneratorShutdownRow = -1
+	g.GeneratorShutdownCol = -1
+	g.GeneratorShutdownRoomName = ""
 	g.LongUse = nil
 	g.HazardClear = nil
 	g.HazardTour = nil
@@ -128,7 +183,6 @@ func clearLevelProgress(g *state.Game) {
 	g.InteractionPlayerCol = -1
 	g.PlayerFacing = state.FaceNorth
 
-	g.AlwaysLitApplied = false
 	g.InvalidateLivePowerCache()
 
 	g.ExitAnimating = false
@@ -145,11 +199,16 @@ func clearCrossDeckPowerState(g *state.Game) {
 	g.Batteries = 0
 	g.OwnedItems = mapset.New[*world.Item]()
 	g.Generators = make([]*entities.Generator, 0)
+	g.RepairObjectives = make([]*entities.RepairObjective, 0)
 	g.PowerSupply = 0
 	g.PowerConsumption = 0
 	g.PowerOverloadWarned = false
 	g.PowerPropPending = nil
 	g.RoomPowerOffPending = nil
+	g.GeneratorShutdownAt = 0
+	g.GeneratorShutdownRow = -1
+	g.GeneratorShutdownCol = -1
+	g.GeneratorShutdownRoomName = ""
 	g.LongUse = nil
 	g.HazardClear = nil
 	g.HazardTour = nil
@@ -178,55 +237,132 @@ func setupLevel(g *state.Game, report func(string)) {
 	g.ResetObservationCueAnnounced()
 	g.ResetLinkageTokensSeen()
 
+	if g.LevelGen().BatteryHunt {
+		setupBatteryHuntLevel(g, report)
+		return
+	}
+
 	report("Installing core systems")
 	config := setup.SetupLevel(g)
 	avoid := &config.Avoid
 	lockedDoorCells := &config.LockedDoorCells
-	minimalSystems := deck.IsFinalDeck(g.Level) // Final deck: minimal rooms/systems (GDD §10.2)
+	if g.Level == 1 && g.LevelGen().BootstrapDeck1Ship {
+		setup.BootstrapDeck1ShipSystems(g, avoid)
+	}
+	minimalSystems := g.IsFinalDeckLevel(g.Level) // Final deck: minimal rooms/systems (GDD §10.2)
 
 	report("Placing environmental hazards")
-	if g.Level >= 2 && !minimalSystems {
+	if g.LevelGen().PlaceHazards && g.Level >= 2 && !minimalSystems {
 		levelgen.PlaceHazards(g, avoid, lockedDoorCells)
 		levelgen.EnsureHazardControlsSolvable(g)
 		levelgen.EnsureHazardSolutionsDisjoint(g)
 	}
 
 	report("Furnishing rooms")
-	if !minimalSystems {
+	if g.LevelGen().PlaceFurniture && !minimalSystems {
 		levelgen.PlaceFurniture(g, avoid)
 	}
 
 	report("Deploying puzzle terminals")
-	if g.Level >= 2 && !minimalSystems {
+	if g.LevelGen().PlacePuzzles && g.Level >= 2 && !minimalSystems {
 		levelgen.PlacePuzzles(g, avoid)
 	}
 
 	report("Routing maintenance")
-	levelgen.PlaceMaintenanceTerminals(g, avoid)
+	if g.LevelGen().PlaceMaintenanceTerminals {
+		levelgen.PlaceMaintenanceTerminals(g, avoid)
+	}
+
+	report("Staging repair objectives")
+	if g.LevelGen().PlaceRepairObjectives {
+		levelgen.PlaceRepairObjectives(g, avoid)
+	}
+
+	report("Placing deck unlock objectives")
+	if g.ItemPlacement().PlaceUnlockObjectives && g.Mode().UsesCrossDeckUnlocks {
+		levelgen.PlaceUnlockObjectives(g, avoid)
+	}
 
 	report("Ensuring reachability")
 	setup.EnsureInitProgressReachability(g)
 	setup.EnsureInteractableNavAccess(g)
+	setup.EnsureProgressionNavAccess(g)
+	if g.LevelGen().PlaceRepairObjectives {
+		setup.EnsureExitGatingRepairReachability(g)
+	}
 
 	report("Energizing power grid")
-	setup.EnsureSolvabilityDoorPower(g)
-	setup.InitMaintenanceTerminalPower(g)
+	if g.LevelGen().PlaceDoors {
+		setup.EnsureSolvabilityDoorPower(g)
+		setup.EnsureEntryAdjacentDoorPower(g)
+	}
+	if g.LevelGen().PlaceMaintenanceTerminals {
+		setup.InitMaintenanceTerminalPower(g)
+	}
 	setup.EnsureGeneratorRoomBootstrap(g)
-	setup.PlaceAdditionalGenerators(g, avoid)
+	if g.LevelGen().PlaceAdditionalGenerators {
+		setup.PlaceAdditionalGenerators(g, avoid)
+	}
 	setup.PlaceBatteries(g, avoid)
+	setup.EnsureFloorLootReachability(g)
 
 	report("Checking exit routes")
 	setup.EnsureExitReachability(g)
+	if g.LevelGen().PlaceRepairObjectives {
+		setup.EnsureExitGatingRepairReachability(g)
+	}
 	setup.ApplyEnvironmentalSignage(g)
 	setup.ApplyObservationLedPuzzleCues(g)
 	setup.ApplyMultiHopLinkage(g)
-	setup.ApplyPowerRelays(g)
+	if g.LevelGen().PlaceRelays {
+		setup.ApplyPowerRelays(g)
+	}
+	if g.LevelGen().PlaceConduitFaults {
+		levelgen.PlaceConduitFaults(g, avoid)
+	}
+	if g.ItemPlacement().PlaceConservationPolicies {
+		levelgen.PlaceConservationPolicies(g)
+	}
 
 	report("Balancing power grid")
 	setup.EnsureInitialPowerBalance(g)
+	setup.EnsureAlwaysArmedOverlayRoomPower(g)
+	setup.ApplyGridConductivePower(g)
 
 	report("Finalizing deck")
-	MoveCell(g, g.Grid.StartCell())
+	setup.EnsureLiftShaftEntryClearance(g)
+	if g.LevelGen().PlaceDoors {
+		setup.EnsureEntryAdjacentDoorPower(g)
+		setup.EnsureKeycardReachability(g)
+	}
+	if g.LevelGen().PlaceMaintenanceTerminals {
+		setup.ForceMaintBootstrapOK(g)
+	}
+
+	report("Adjusting unlock routing")
+	if g.ItemPlacement().PlaceUnlockObjectives {
+		levelgen.EnsureRoutingCouplerNavAccess(g)
+		levelgen.SyncKeycardPayoffRegistration(g)
+	}
+	setup.EnsureProgressionNavAccess(g)
+	if g.LevelGen().PlaceRepairObjectives {
+		setup.EnsureExitGatingRepairReachability(g)
+	}
+	setup.EnsureFloorLootReachability(g)
+}
+
+func setupBatteryHuntLevel(g *state.Game, report func(string)) {
+	report("Installing core systems")
+	config := setup.SetupBatteryHuntLevel(g)
+	avoid := &config.Avoid
+
+	report("Balancing power grid")
+	setup.EnsureInitialPowerBalance(g)
+	setup.ApplyGridConductivePower(g)
+
+	report("Finalizing deck")
+	setup.EnsureFloorLootReachability(g)
+	_ = avoid
 }
 
 func applyLoadedDeckFixups(g *state.Game) {
@@ -238,6 +374,9 @@ func applyLoadedDeckFixups(g *state.Game) {
 		levelgen.EnsureHazardSolutionsDisjoint(g)
 	}
 	setup.EnsureInitialPowerBalance(g)
+	if g.Level == 1 {
+		setup.EnsureAlwaysArmedOverlayRoomPower(g)
+	}
 }
 
 // ResetLevel resets the current deck using the same seed; updates per-deck store (Phase 3.4).
@@ -261,6 +400,8 @@ func ResetLevel(g *state.Game) {
 	UpdateLightingExploration(g)
 	setup.EnsureSolvabilityDoorPower(g)
 	setup.ApplyGridConductivePower(g)
+	setup.ForceMaintBootstrapOK(g)
+	SpawnOnDeckEntry(g, SpawnModeLiftShaft)
 
 	g.ClearMessages()
 	logMessage(g, "Level reset!")
@@ -270,38 +411,13 @@ func ResetLevel(g *state.Game) {
 // The lift has no destination; the game is complete (ending per GDD §11).
 // Implementation lives in completion.go (stats snapshot and end-screen phases).
 
-// AdvanceLevel moves to the next deck via the graph: saves current deck state,
-// loads or generates the next deck, sets CurrentDeckID/Level (Phase 3.3, 3.4).
-// Does nothing if already at or past the final deck.
+// AdvanceLevel moves to the next deck when unlocked. Prefer TravelToDeck for lift routing.
 func AdvanceLevel(g *state.Game) {
-	nextID, ok := deck.NextDeckID(g.CurrentDeckID)
+	nextID, ok := g.NextDeckID(g.CurrentDeckID)
 	if !ok {
 		return
 	}
-
-	// Save current deck so we can revisit (Phase 3.4)
-	g.SaveCurrentDeckState()
-
-	clearCrossDeckPowerState(g)
-
-	// Load stored state or generate on first entry (Phase 3.4)
-	if ds := g.DeckStates[nextID]; ds != nil && ds.Grid != nil {
-		g.LoadDeckState(nextID)
-		applyLoadedDeckFixups(g)
-		refreshDeckPower(g)
-		UpdateLightingExploration(g)
-	} else {
-		g.CurrentDeckID = nextID
-		g.Level = g.CurrentDeckID + 1
-		seed := time.Now().UnixNano()
-		generateLevel(g, g.Level, seed)
-		refreshDeckPower(g)
-		g.SaveCurrentDeckState() // Store for potential revisit
-		UpdateLightingExploration(g)
-	}
-
-	g.ClearMessages()
-	logMessage(g, "You moved to deck %d!", g.Level)
+	_ = TravelToDeck(g, nextID+1)
 }
 
 // JumpToDeck moves the player to the given deck level (1-based). Developer/testing only.
@@ -310,8 +426,8 @@ func JumpToDeck(g *state.Game, targetLevel int) error {
 	if g == nil {
 		return fmt.Errorf("no game state")
 	}
-	if targetLevel < 1 || targetLevel > deck.TotalDecks {
-		return fmt.Errorf("deck must be between 1 and %d", deck.TotalDecks)
+	if targetLevel < 1 || targetLevel > g.TotalDecks() {
+		return fmt.Errorf("deck must be between 1 and %d", g.TotalDecks())
 	}
 	if targetLevel == g.Level {
 		return nil
@@ -330,12 +446,16 @@ func JumpToDeck(g *state.Game, targetLevel int) error {
 	} else {
 		g.CurrentDeckID = targetID
 		g.Level = targetLevel
-		seed := time.Now().UnixNano()
+		seed := g.RunSeed + int64(targetID)*9973
+		if g.RunSeed == 0 {
+			seed = time.Now().UnixNano()
+		}
 		generateLevel(g, targetLevel, seed)
 		refreshDeckPower(g)
 		g.SaveCurrentDeckState()
 		UpdateLightingExploration(g)
 	}
+	spawnInLiftShaft(g)
 
 	g.ClearMessages()
 	logMessage(g, "Jumped to deck %d (dev)", g.Level)

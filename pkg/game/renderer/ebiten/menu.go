@@ -117,47 +117,68 @@ func (e *EbitenRenderer) RenderMenu(g *state.Game, items []gamemenu.MenuItem, se
 	e.genericMenuMutex.Lock()
 	defer e.genericMenuMutex.Unlock()
 
-	// Detect menu title change (menu switch) and start height animation
+	// Detect menu title change (menu switch) and start panel transition / height animation.
 	var titleChanged bool
 	var oldHeight float64
+	var fromTitle, fromHelp string
+	var fromLabels []string
 
 	if e.genericMenuActive && e.genericMenuTitle != title {
-		// Menu is active and title changed - use current menu state
 		titleChanged = true
-		oldHeight = e.calculateMenuHeight(e.genericMenuLabels, e.genericMenuTitle, e.genericMenuHelpText)
+		fromTitle = e.genericMenuTitle
+		fromLabels = e.genericMenuLabels
+		fromHelp = e.genericMenuHelpText
+		oldHeight = e.calculateMenuHeight(fromLabels, fromTitle, fromHelp, e.genericMenuItems)
 	} else if !e.genericMenuActive && len(e.prevMenuItems) > 0 && e.prevMenuTitle != title {
-		// Menu was cleared but we have previous state - use it for transition
 		titleChanged = true
-		oldHeight = e.calculateMenuHeight(e.prevMenuLabels, e.prevMenuTitle, e.prevMenuHelpText)
+		fromTitle = e.prevMenuTitle
+		fromLabels = e.prevMenuLabels
+		fromHelp = e.prevMenuHelpText
+		oldHeight = e.calculateMenuHeight(fromLabels, fromTitle, fromHelp, e.prevMenuItems)
 	}
 
-	if titleChanged {
-		// Calculate required heights for both menus
-		newHeight := e.calculateMenuHeight(e.snapshotMenuLabels(items), title, helpText)
+	toLabels := e.snapshotMenuLabels(items)
+	newHeight := e.calculateMenuHeight(toLabels, title, helpText, items)
+	now := time.Now().UnixMilli()
 
+	e.finishMenuHeightAnimationIfDone(now)
+
+	if title == "Settings" && e.genericMenuActive && e.genericMenuTitle == title &&
+		!e.menuPanelTransitionAnimating {
+		e.beginSettingsMenuHeightAnim(now, newHeight)
+	}
+
+	if titleChanged && titleScreenMenuTransition(fromTitle, title) {
+		screenWidth, screenHeight := e.floatingTileScreenSize()
+		e.beginTitleScreenMenuTransition(fromTitle, title, fromHelp, helpText, fromLabels, toLabels, items, screenWidth, screenHeight)
+	} else if titleChanged {
 		e.menuHeightAnimStartHeight = oldHeight
 		e.menuHeightAnimTargetHeight = newHeight
-		e.menuHeightAnimStartTime = time.Now().UnixMilli()
+		e.menuHeightAnimStartTime = now
 		e.menuHeightAnimating = true
 	} else if !e.genericMenuActive && len(e.prevMenuItems) == 0 {
-		// Menu just opened (no previous state) - no height animation, set target height immediately
 		e.menuHeightAnimating = false
-		e.menuHeightAnimTargetHeight = e.calculateMenuHeight(e.snapshotMenuLabels(items), title, helpText)
+		e.menuPanelTransitionAnimating = false
+		e.menuHeightAnimTargetHeight = e.calculateMenuHeight(toLabels, title, helpText, items)
 	}
 
-	// Check if animations have completed and clean them up
-	now := time.Now().UnixMilli()
-	const heightAnimDuration = 200
 	const highlightAnimDuration = 150
-	if e.menuHeightAnimating {
-		elapsed := now - e.menuHeightAnimStartTime
-		if elapsed >= heightAnimDuration {
-			e.menuHeightAnimating = false
-			// Clear preserved state after animation completes
+	if e.menuPanelTransitionAnimating {
+		if _, done := menuTransitionProgress(now, e.menuPanelTransitionStartMs); done {
+			e.menuPanelTransitionAnimating = false
 			e.prevMenuItems = nil
 			e.prevMenuTitle = ""
 			e.prevMenuHelpText = ""
+			e.prevMenuSelected = 0
 		}
+	}
+
+	if title == "Settings" {
+		if !e.menuPanelTransitionAnimating && !e.menuHeightAnimating {
+			e.settingsMenuHeightBaseline = newHeight
+		}
+	} else if titleChanged || !e.genericMenuActive {
+		e.settingsMenuHeightBaseline = 0
 	}
 	if e.menuHighlightAnimating {
 		elapsed := now - e.menuHighlightAnimStartTime
@@ -197,26 +218,10 @@ func (e *EbitenRenderer) RenderMenu(g *state.Game, items []gamemenu.MenuItem, se
 	copy(e.genericMenuItems, items)
 	e.genericMenuLabels = e.snapshotMenuLabels(items)
 
-	// Initialize floating tiles background for main menu
-	if title == "The Dark Station" {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					// Silently ignore initialization errors - menu should still work
-				}
-			}()
-			e.floatingTilesMutex.Lock()
-			defer e.floatingTilesMutex.Unlock()
-			if len(e.floatingTiles) == 0 {
-				// Try to get window size, use defaults if not available yet
-				screenWidth, screenHeight := ebiten.WindowSize()
-				if screenWidth <= 0 || screenHeight <= 0 {
-					screenWidth = 1024
-					screenHeight = 768
-				}
-				e.initFloatingTilesUnlocked(screenWidth, screenHeight)
-			}
-		}()
+	// Keep the title-screen ambient field alive across main menu sub-menus.
+	if titleScreenFloatingTilesMenu(title) {
+		screenWidth, screenHeight := e.floatingTileScreenSize()
+		e.ensureFloatingTiles(screenWidth, screenHeight)
 	}
 }
 
@@ -226,11 +231,15 @@ func (e *EbitenRenderer) ClearMenu() {
 	defer e.genericMenuMutex.Unlock()
 	// Preserve menu state before clearing (for smooth transitions)
 	if e.genericMenuActive {
+		if e.genericMenuTitle == "Settings" {
+			e.settingsMenuHeightBaseline = 0
+		}
 		e.prevMenuItems = make([]gamemenu.MenuItem, len(e.genericMenuItems))
 		copy(e.prevMenuItems, e.genericMenuItems)
 		e.prevMenuLabels = append([]string(nil), e.genericMenuLabels...)
 		e.prevMenuTitle = e.genericMenuTitle
 		e.prevMenuHelpText = e.genericMenuHelpText
+		e.prevMenuSelected = e.genericMenuSelected
 	}
 	e.genericMenuActive = false
 	e.genericMenuItems = nil
@@ -267,6 +276,19 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	heightStartHeight := e.menuHeightAnimStartHeight
 	heightTargetHeight := e.menuHeightAnimTargetHeight
 	heightStartTime := e.menuHeightAnimStartTime
+	panelTransition := e.menuPanelTransitionAnimating
+	panelTransitionForward := e.menuPanelTransitionForward
+	panelTransitionStart := e.menuPanelTransitionStartMs
+	panelTransitionFromW := e.menuPanelTransitionFromW
+	panelTransitionToW := e.menuPanelTransitionToW
+	panelTransitionFromH := e.menuPanelTransitionFromH
+	panelTransitionToH := e.menuPanelTransitionToH
+	prevItems := make([]gamemenu.MenuItem, len(e.prevMenuItems))
+	copy(prevItems, e.prevMenuItems)
+	prevLabels := append([]string(nil), e.prevMenuLabels...)
+	prevTitle := e.prevMenuTitle
+	prevHelp := e.prevMenuHelpText
+	prevSelected := e.prevMenuSelected
 	e.genericMenuMutex.RUnlock()
 
 	if len(items) == 0 {
@@ -281,19 +303,28 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 
 	maintOverlayStable := strings.Contains(title, "Maintenance Terminal") || title == "Select room"
 	devMenuRight := title == "Developer Menu"
+	currentCellCharsMenu := title == "Current Cell Chars"
 	skipMenuDropShadow := maintOverlayStable &&
 		maintCameraPanTweening(pg, e.cameraCenterRow, e.cameraCenterCol, e.cameraTargetRow, e.cameraTargetCol)
 	// Default true so callouts/main menu stay soft; maint/room picker uses crisp vector edges (less LCD shimmer).
 	useVectorAA := !maintOverlayStable
 
-	// Calculate required height based on menu content
-	requiredHeight := e.calculateMenuHeight(labels, title, helpText)
+	requiredHeight := e.calculateMenuHeight(labels, title, helpText, items)
 
-	// Animate height transition if menu changed
-	const heightAnimDuration = 200 // milliseconds
 	var panelH float64
+	var panelResizeEased float64
+	var contentFadeEased float64
 
-	if heightAnimating {
+	if panelTransition {
+		now := e.menuAnimClockMilli
+		if now == 0 {
+			now = time.Now().UnixMilli()
+		}
+		e.finishPanelTransitionIfDone(now)
+		panelResizeEased = menuTransitionPanelProgress(now, panelTransitionStart)
+		contentFadeEased = menuTransitionContentProgress(now, panelTransitionStart)
+		panelH = lerpFloat(panelTransitionFromH, panelTransitionToH, panelResizeEased)
+	} else if heightAnimating {
 		// Orange maintenance menus: skip fractional height tween — vector AA + non-integer rect height
 		// showed as border shimmer while the map behind was panning.
 		if maintOverlayStable {
@@ -303,17 +334,29 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 			if now == 0 {
 				now = time.Now().UnixMilli()
 			}
-			elapsed := now - heightStartTime
-
-			if elapsed >= heightAnimDuration {
-				// Animation complete - use target height
-				panelH = heightTargetHeight
-				// Don't mark complete here - let RenderMenu handle it on next update to avoid deadlock
+			e.finishMenuHeightAnimationIfDone(now)
+			e.genericMenuMutex.RLock()
+			heightAnimating = e.menuHeightAnimating
+			heightStartHeight = e.menuHeightAnimStartHeight
+			heightTargetHeight = e.menuHeightAnimTargetHeight
+			heightStartTime = e.menuHeightAnimStartTime
+			e.genericMenuMutex.RUnlock()
+			var easedProgress float64
+			if title == "Settings" {
+				easedProgress = settingsMenuHeightAnimProgress(now, heightStartTime)
 			} else {
-				// Interpolate between start and target heights
-				progress := float64(elapsed) / float64(heightAnimDuration)
-				easedProgress := easeInOut(progress)
+				elapsed := now - heightStartTime
+				heightDur := menuHeightAnimDurationMs(title)
+				if elapsed >= heightDur {
+					easedProgress = 1
+				} else {
+					easedProgress = easeInOut(float64(elapsed) / float64(heightDur))
+				}
+			}
+			if heightAnimating {
 				panelH = heightStartHeight + (heightTargetHeight-heightStartHeight)*easedProgress
+			} else {
+				panelH = requiredHeight
 			}
 		}
 	} else {
@@ -325,14 +368,11 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		panelH = float64(int(math.Round(panelH)))
 	}
 
-	// Panel width/position: maintenance menus are left-aligned at half the default width.
-	const defaultPanelWidthFrac = 0.7
-	const maintPanelWidthFrac = defaultPanelWidthFrac / 2
 	const menuSideMargin = 16
 
-	panelW := int(float32(screenWidth) * defaultPanelWidthFrac)
-	if maintOverlayStable {
-		panelW = int(float32(screenWidth) * maintPanelWidthFrac)
+	panelW := menuPanelWidthForTitle(title, screenWidth, maintOverlayStable, devMenuRight)
+	if panelTransition {
+		panelW = lerpInt(panelTransitionFromW, panelTransitionToW, panelResizeEased)
 	}
 	panelHInt := int(panelH)
 	if panelHInt < 1 {
@@ -346,6 +386,9 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		panelX = screenWidth - panelW - menuSideMargin
 	}
 	panelY := (screenHeight - panelHInt) / 2
+	if settingsMenuUsesFixedTop(title) {
+		panelY = settingsMenuPanelTopY
+	}
 
 	// Determine background transparency based on menu type
 	// Main menu and bindings menu from main menu: more transparent (180)
@@ -357,22 +400,17 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		// Main menu: same dark background as in-game menus
 		bgAlpha = 220
 		borderAlpha = 200
-	} else if title == "Bindings Menu" {
-		// Check if we're in main menu context (game state invalid)
+	} else if title == "Settings" {
 		e.snapshotMutex.RLock()
 		snapValid := e.snapshot.valid
 		e.snapshotMutex.RUnlock()
 		e.gameMutex.RLock()
 		gameValid := e.game != nil
 		e.gameMutex.RUnlock()
-
-		// If game state is invalid, we're in main menu context
 		if !snapValid || !gameValid {
-			// Bindings menu from main menu: more transparent
 			bgAlpha = 180
 			borderAlpha = 180
 		}
-		// Otherwise, use default (more opaque) for bindings menu from in-game
 	}
 
 	bg := color.RGBA{10, 6, 16, bgAlpha} // Dark purple panel background
@@ -446,256 +484,78 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	drawOpts.ColorScale.ScaleWithColor(border)
 	vector.StrokePath(screen, &path, strokeOpts, drawOpts)
 
-	paddingX := 24
-	paddingY := 24
-	x := panelX + paddingX
-	y := panelY + paddingY
-
-	fontSize := e.getUIFontSize()
-	lineHeight := int(fontSize) + 6
-	// Tighter spacing between title and the first line below it (help text or menu items)
-	const titleToContentSpacing = 4
-
-	// Use UI font metrics so the highlight rectangle can tightly wrap the text.
-	face := e.getSansFontFace()
-	_, textHeight := text.Measure("Ag", face, 0)
-
-	// Title color and highlight derive from menu type (maintenance/select room = orange, others = purple)
-	titleColor := colorAction
-	if strings.Contains(title, "Maintenance Terminal") || title == "Select room" {
-		titleColor = colorMaintenance
-	}
-	highlightColor := color.RGBA{100, 60, 160, 255} // Dark purple for default menus
-	if titleColor == colorMaintenance {
-		highlightColor = color.RGBA{100, 65, 0, 255} // Dark orange for maintenance menus
+	baseContent := menuPanelContentParams{
+		screenWidth:          screenWidth,
+		screenHeight:         screenHeight,
+		maintOverlayStable:   maintOverlayStable,
+		devMenuRight:         devMenuRight,
+		currentCellCharsMenu: currentCellCharsMenu,
+		useVectorAA:          useVectorAA,
+		panelX:               panelX,
+		panelY:               panelY,
+		panelW:               panelW,
+		panelH:               panelH,
 	}
 
-	// Title (bold font, 2pt larger than body text)
-	if title != "" {
-		titleFace := e.getSansBoldTitleFontFace()
-		e.drawColoredTextWithFace(screen, title, x, y-int(fontSize), titleColor, titleFace)
-		// Advance by full title line height (not just titleToContentSpacing) so help text does not overlap.
-		y += int(titleFace.Size) + titleToContentSpacing
+	if panelTransition && len(prevItems) > 0 {
+		outSlide := menuTransitionOutgoingSlide(panelTransitionForward, panelResizeEased)
+		inSlide := menuTransitionIncomingSlide(panelTransitionForward, contentFadeEased)
+		outAlpha := 1 - panelResizeEased
+		inAlpha := contentFadeEased
+		prevParams := baseContent
+		prevParams.items = prevItems
+		prevParams.labels = prevLabels
+		prevParams.title = prevTitle
+		prevParams.helpText = prevHelp
+		prevParams.selected = prevSelected
+		prevParams.contentSlideX = outSlide
+		prevParams.alpha = outAlpha
+		e.drawMenuPanelContent(screen, prevParams)
+
+		currParams := baseContent
+		currParams.items = items
+		currParams.labels = labels
+		currParams.title = title
+		currParams.helpText = helpText
+		currParams.selected = selected
+		currParams.contentSlideX = inSlide
+		currParams.alpha = inAlpha
+		currParams.highlightAnimating = animating
+		currParams.highlightAnimStartIndex = animStartIndex
+		currParams.highlightTarget = animTargetIndex
+		currParams.highlightAnimStartWidth = animStartWidth
+		currParams.highlightTargetWidth = animTargetWidth
+		currParams.highlightAnimStartTime = animStartTime
+		e.drawMenuPanelContent(screen, currParams)
+		return
 	}
 
-	// Show help text if provided (parse markup for proper colors)
-	if helpText != "" {
-		helpSegments := e.parseMarkup(helpText)
-		if len(helpSegments) > 0 {
-			e.drawColoredTextSegments(screen, helpSegments, x, y-int(fontSize))
-		} else {
-			e.drawColoredText(screen, helpText, x, y-int(fontSize), colorAction)
-		}
-		y += lineHeight
-	}
-
-	y += lineHeight
-
-	menuRowOffset := func(index int) float64 {
-		if index <= 0 {
-			return 0
-		}
-		off := 0.0
-		fs := int(e.getUIFontSize())
-		for i := 0; i < index && i < len(labels); i++ {
-			if renderer.IsPowerBarLine(labels[i]) {
-				off += float64(powerBarMenuRowHeight(fs))
-			} else {
-				off += float64(lineHeight)
-			}
-		}
-		return off
-	}
-
-	// Calculate animated highlight position and width
-	const animDuration = 150 // milliseconds
-	var highlightY float64
-	var highlightWidth float64
-	var highlightIndex int
-
-	if animating {
-		now := e.menuAnimClockMilli
-		if now == 0 {
-			now = time.Now().UnixMilli()
-		}
-		elapsed := now - animStartTime
-
-		if elapsed >= animDuration {
-			// Animation complete - use target position and width
-			highlightIndex = animTargetIndex
-			highlightY = float64(y) + menuRowOffset(animTargetIndex) + fontSize
-			highlightWidth = animTargetWidth
-			// Don't mark complete here - let RenderMenu handle it on next update to avoid deadlock
-		} else {
-			// Interpolate between start and target positions and widths
-			progress := float64(elapsed) / float64(animDuration)
-			// Use ease-in-out for smooth animation
-			easedProgress := easeInOut(progress)
-
-			startY := float64(y) + menuRowOffset(animStartIndex) + fontSize
-			targetY := float64(y) + menuRowOffset(animTargetIndex) + fontSize
-			highlightY = startY + (targetY-startY)*easedProgress
-			highlightWidth = animStartWidth + (animTargetWidth-animStartWidth)*easedProgress
-			highlightIndex = animTargetIndex // Use target index for item check
-		}
-	} else {
-		// No animation - use current selected position and width
-		highlightIndex = selected
-		highlightY = float64(y) + menuRowOffset(selected) + fontSize
-		if selected >= 0 && selected < len(labels) {
-			highlightWidth = e.getMenuLabelWidth(labels[selected])
-		} else {
-			highlightWidth = 0
-		}
-	}
-
-	// First pass: draw highlight rectangles (so they are always below text)
-	if highlightIndex >= 0 && highlightIndex < len(items) && items[highlightIndex].IsSelectable() && highlightWidth > 0 {
-		rectTop := highlightY
-		rectHeight := float64(textHeight + 4) // small padding below glyphs
-		// Add padding on left and right sides of text
-		const paddingX = 8.0
-		rx := float32(x - paddingX)
-		ry := float32(rectTop)
-		rw := float32(highlightWidth + paddingX*2)
-		rh := float32(rectHeight)
-		if maintOverlayStable && !animating {
-			rx = float32(math.Round(float64(rx)))
-			ry = float32(math.Round(float64(ry)))
-			rw = float32(math.Round(float64(rw)))
-			rh = float32(math.Round(float64(rh)))
-		}
-		vector.DrawFilledRect(screen, rx, ry, rw, rh, highlightColor, false)
-	}
-
-	// For maintenance terminal menus: align values in columns (tab-separated: label, status, optional watts)
-	var valueColumnX, wattsColumnX int
-	rightAlignPowerColumn := title == "Select room"
-	if strings.Contains(title, "Maintenance Terminal") || title == "Select room" {
-		var maxLabelW, maxValueW float64
-		for _, label := range labels {
-			before, after, ok := strings.Cut(label, "\t")
-			if !ok || before == "" {
-				continue
-			}
-			if w := e.getTextWidth(before); w > maxLabelW {
-				maxLabelW = w
-			}
-			valuePart := after
-			wattsPart := ""
-			if middle, w, hasWatts := strings.Cut(after, "\t"); hasWatts {
-				valuePart, wattsPart = middle, w
-			}
-			if valuePart != "" {
-				if w := e.getMarkupWidth(valuePart); w > maxValueW {
-					maxValueW = w
-				}
-			}
-			if rightAlignPowerColumn && wattsPart != "" {
-				if w := e.getMarkupWidth(wattsPart); w > maxValueW {
-					maxValueW = w
-				}
-			}
-		}
-		const valueColumnGap = 8 // pixels between columns
-		valueColumnX = x + int(maxLabelW) + valueColumnGap
-		if rightAlignPowerColumn {
-			// Third column right-aligned: draw at (rightEdge - width)
-			wattsColumnX = panelX + panelW - paddingX
-		} else {
-			wattsColumnX = valueColumnX + int(maxValueW) + valueColumnGap
-		}
-	}
-
-	// Second pass: draw menu items on top of the highlights
-	rowY := y
-	for i, item := range items {
-		if i >= len(labels) {
-			break
-		}
-		label := labels[i]
-		rowParamY := rowY
-
-		if renderer.IsPowerBarLine(label) {
-			rowH := e.drawPowerBarMenuRow(screen, x, rowParamY, panelW, paddingX, label, 1.0)
-			rowY += rowH
-			continue
-		}
-
-		// Maintenance terminal: draw label, value, and optional watts in columns if tab-separated
-		if valueColumnX > x {
-			if before, after, ok := strings.Cut(label, "\t"); ok {
-				if before != "" {
-					if strings.Contains(before, "{") {
-						segments := e.parseMarkup(before)
-						e.drawColoredTextSegments(screen, segments, x, rowParamY)
-					} else {
-						labelColor := colorText
-						if !item.IsSelectable() {
-							labelColor = colorSubtle
-						}
-						e.drawColoredText(screen, before, x, rowParamY, labelColor)
-					}
-				}
-				valuePart, wattsPart := after, ""
-				if middle, w, hasWatts := strings.Cut(after, "\t"); hasWatts {
-					valuePart, wattsPart = middle, w
-				}
-				if valuePart != "" {
-					segments := e.parseMarkup(valuePart)
-					if len(segments) > 0 {
-						e.drawColoredTextSegments(screen, segments, valueColumnX, rowParamY)
-					} else {
-						labelColor := colorText
-						if !item.IsSelectable() {
-							labelColor = colorSubtle
-						}
-						e.drawColoredText(screen, valuePart, valueColumnX, rowParamY, labelColor)
-					}
-				}
-				if wattsPart != "" && wattsColumnX > valueColumnX {
-					wattsX := wattsColumnX
-					if rightAlignPowerColumn {
-						wattsX = wattsColumnX - int(e.getMarkupWidth(wattsPart))
-					}
-					segments := e.parseMarkup(wattsPart)
-					if len(segments) > 0 {
-						e.drawColoredTextSegments(screen, segments, wattsX, rowParamY)
-					} else {
-						labelColor := colorText
-						if !item.IsSelectable() {
-							labelColor = colorSubtle
-						}
-						e.drawColoredText(screen, wattsPart, wattsX, rowParamY, labelColor)
-					}
-				}
-				rowY += lineHeight
-				continue
-			}
-		}
-
-		// Parse markup and draw with proper colors
-		segments := e.parseMarkup(label)
-		if len(segments) > 0 {
-			e.drawColoredTextSegments(screen, segments, x, rowParamY)
-		} else {
-			// Fallback: use different color for non-selectable items
-			labelColor := colorText
-			if !item.IsSelectable() {
-				labelColor = colorSubtle
-			}
-			e.drawColoredText(screen, label, x, rowParamY, labelColor)
-		}
-		rowY += lineHeight
-	}
+	currParams := baseContent
+	currParams.items = items
+	currParams.labels = labels
+	currParams.title = title
+	currParams.helpText = helpText
+	currParams.selected = selected
+	currParams.alpha = 1
+	currParams.highlightAnimating = animating
+	currParams.highlightAnimStartIndex = animStartIndex
+	currParams.highlightTarget = animTargetIndex
+	currParams.highlightAnimStartWidth = animStartWidth
+	currParams.highlightTargetWidth = animTargetWidth
+	currParams.highlightAnimStartTime = animStartTime
+	e.drawMenuPanelContent(screen, currParams)
 }
 
 // getMarkupWidth returns the total width in pixels of a string that may contain markup (e.g. ACTION{}, POWERED{}).
 func (e *EbitenRenderer) getMarkupWidth(s string) float64 {
+	return e.getMarkupWidthWithFace(s, e.getSansFontFace())
+}
+
+func (e *EbitenRenderer) getMarkupWidthWithFace(s string, face *text.GoTextFace) float64 {
 	segments := e.parseMarkup(s)
 	var w float64
 	for _, seg := range segments {
-		w += e.getTextWidth(seg.text)
+		w += e.getTextWidthWithFace(seg.text, face)
 	}
 	return w
 }
@@ -710,6 +570,9 @@ func (e *EbitenRenderer) snapshotMenuLabels(items []gamemenu.MenuItem) []string 
 
 // getMenuLabelWidth calculates the width of a menu label (accounting for markup).
 func (e *EbitenRenderer) getMenuLabelWidth(label string) float64 {
+	if renderer.IsInventoryRowLine(label) {
+		return e.inventoryMenuLabelWidth(label)
+	}
 	if renderer.IsPowerBarLine(label) {
 		return 220
 	}
@@ -725,8 +588,13 @@ func (e *EbitenRenderer) getMenuLabelWidth(label string) float64 {
 }
 
 // calculateMenuHeight calculates the required height for a menu based on its content
-func (e *EbitenRenderer) calculateMenuHeight(labels []string, title string, helpText string) float64 {
+func (e *EbitenRenderer) calculateMenuHeight(labels []string, title string, helpText string, items []gamemenu.MenuItem) float64 {
 	fontSize := e.getUIFontSize()
+	face := e.getSansFontFace()
+	if title == "Current Cell Chars" {
+		face = e.getMonoUIFontFace()
+		fontSize = face.Size
+	}
 	lineHeight := float64(int(fontSize) + 6)
 	paddingY := 24.0 * 2            // Top and bottom padding
 	const titleToContentSpacing = 4 // Must match drawGenericMenuOverlay
@@ -747,18 +615,31 @@ func (e *EbitenRenderer) calculateMenuHeight(labels []string, title string, help
 	// Spacing before menu items (this is an extra lineHeight added after help text)
 	height += lineHeight
 
-	// Menu items (power bar rows are taller)
-	for _, label := range labels {
+	// Menu items (power bar rows are taller). Settings tabs share one row.
+	stripLen := settingsTabStripItemCount(labels, title, items)
+	start := 0
+	if stripLen >= 2 {
+		tabTextH := settingsTabLabelsMaxHeight(labels, stripLen, face)
+		if tabTextH <= 0 {
+			_, tabTextH = text.Measure("Ag", face, 0)
+		}
+		height += float64(settingsTabStripBlockHeight(tabTextH))
+		start = stripLen
+	}
+	for i := start; i < len(labels); i++ {
+		label := labels[i]
 		if renderer.IsPowerBarLine(label) {
 			height += float64(powerBarMenuRowHeight(int(fontSize)))
-		} else {
+		} else if renderer.IsInventoryRowLine(label) {
+			height += float64(inventoryMenuRowHeight(int(fontSize)))
+	} else {
 			height += lineHeight
+			height += float64(inventorySectionHeaderExtraGap(title, labels, i, int(lineHeight)))
 		}
 	}
 
 	// Add extra space at bottom to account for text baseline and ensure last item is fully visible
 	// The last menu item's text extends below its baseline, so we need a bit more room
-	face := e.getSansFontFace()
 	_, textHeight := text.Measure("Ag", face, 0)
 	// Add space for text height below baseline (textHeight includes the full glyph box)
 	height += textHeight - fontSize + 8 // Extra buffer for comfortable spacing

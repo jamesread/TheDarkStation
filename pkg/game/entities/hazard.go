@@ -78,7 +78,7 @@ var HazardTypes = map[HazardType]HazardInfo{
 		Icon:           "☁",
 		IconFixed:      "·",
 		ControlName:    "Vent Control",
-		ControlIcon:    "⊞",
+		ControlIcon:    "◎",
 	},
 	HazardRadiation: {
 		Name:           "Radiation Leak",

@@ -7,6 +7,7 @@ type Generator struct {
 	BatteriesInserted int
 	Online            bool // Running after startup sequence (hold USE)
 	Tripped           bool // Overload shut down; batteries may remain until restart
+	Permanent         bool // Ship fusion reactor; always powered and immune to trip
 }
 
 // NewGenerator creates a new unpowered generator
@@ -19,7 +20,11 @@ func NewGenerator(name string, batteriesRequired int) *Generator {
 }
 
 // IsPowered returns true when online, not tripped, and enough batteries are installed.
+// Permanent generators are always treated as powered.
 func (g *Generator) IsPowered() bool {
+	if g != nil && g.Permanent {
+		return true
+	}
 	return g != nil && g.Online && !g.Tripped && g.BatteriesInserted >= g.BatteriesRequired
 }
 
@@ -35,6 +40,9 @@ func (g *Generator) NeedsStartupSequence() bool {
 
 // Trip shuts the generator down after an overload (player must bring it back online).
 func (g *Generator) Trip() {
+	if g != nil && g.Permanent {
+		return
+	}
 	if g != nil {
 		g.Tripped = true
 		g.Online = false
@@ -82,9 +90,21 @@ func (g *Generator) InsertBatteries(count int) int {
 // InsertBatteriesAndStart inserts batteries and brings the generator online when fully fueled.
 // Used by level spawn and tests that need an already-running generator.
 func (g *Generator) InsertBatteriesAndStart(count int) int {
+	if g != nil && g.Permanent {
+		return 0
+	}
 	inserted := g.InsertBatteries(count)
 	if g.HasEnoughBatteries() {
 		g.BringOnline()
 	}
 	return inserted
+}
+
+// NewPermanentFusionReactor creates the deck 1 ship reactor (always online, never trips).
+func NewPermanentFusionReactor(name string) *Generator {
+	return &Generator{
+		Name:      name,
+		Permanent: true,
+		Online:    true,
+	}
 }

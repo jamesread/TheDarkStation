@@ -19,6 +19,13 @@ import (
 	"darkstation/pkg/game/renderer"
 )
 
+const perfMapScenarioHelp = "checker, entities, entities_controls, entities_doors, entities_furniture, entities_generators, entities_hazards, entities_items, entities_relays, entities_repairs, entities_terminals, labels, mixed, open, walls"
+
+const (
+	consoleKeyRepeatInitialDelayMs int64 = 350
+	consoleKeyRepeatIntervalMs     int64 = 35
+)
+
 // cvarMap stores configuration variables
 var cvarMap = make(map[string]string)
 var cvarMutex sync.RWMutex
@@ -240,7 +247,7 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 	}
 
 	// Handle backspace
-	if inpututil.IsKeyJustPressed(ebiten.KeyBackspace) {
+	if e.shouldRepeatConsoleKey(ebiten.KeyBackspace) {
 		if len(e.consoleText) > 0 {
 			e.consoleText = e.consoleText[:len(e.consoleText)-1]
 		}
@@ -270,14 +277,14 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 	}
 
 	// Handle history navigation
-	if inpututil.IsKeyJustPressed(ebiten.KeyArrowUp) {
+	if e.shouldRepeatConsoleKey(ebiten.KeyArrowUp) {
 		if e.consoleHistoryIndex > 0 {
 			e.consoleHistoryIndex--
 			e.consoleText = e.consoleHistory[e.consoleHistoryIndex]
 		}
 		return
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyArrowDown) {
+	if e.shouldRepeatConsoleKey(ebiten.KeyArrowDown) {
 		if e.consoleHistoryIndex < len(e.consoleHistory)-1 {
 			e.consoleHistoryIndex++
 			e.consoleText = e.consoleHistory[e.consoleHistoryIndex]
@@ -289,7 +296,7 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 	}
 
 	// Handle page up/down for scrollback
-	if inpututil.IsKeyJustPressed(ebiten.KeyPageUp) {
+	if e.shouldRepeatConsoleKey(ebiten.KeyPageUp) {
 		// Scroll up (show older messages)
 		e.consoleScrollOffset += 10 // Scroll by 10 lines
 		if e.consoleScrollOffset > len(e.consoleOutput) {
@@ -297,7 +304,7 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 		}
 		return
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyPageDown) {
+	if e.shouldRepeatConsoleKey(ebiten.KeyPageDown) {
 		// Scroll down (show newer messages)
 		e.consoleScrollOffset -= 10 // Scroll by 10 lines
 		if e.consoleScrollOffset < 0 {
@@ -308,7 +315,7 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 
 	// Handle text input (printable characters)
 	for k := ebiten.KeyA; k <= ebiten.KeyZ; k++ {
-		if inpututil.IsKeyJustPressed(k) {
+		if e.shouldRepeatConsoleKey(k) {
 			char := string(rune('a' + (k - ebiten.KeyA)))
 			if ebiten.IsKeyPressed(ebiten.KeyShift) {
 				char = strings.ToUpper(char)
@@ -320,7 +327,7 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 
 	// Handle numbers
 	for k := ebiten.Key0; k <= ebiten.Key9; k++ {
-		if inpututil.IsKeyJustPressed(k) {
+		if e.shouldRepeatConsoleKey(k) {
 			char := string(rune('0' + (k - ebiten.Key0)))
 			e.consoleText += char
 			return
@@ -328,13 +335,13 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 	}
 
 	// Handle space
-	if inpututil.IsKeyJustPressed(ebiten.KeySpace) {
+	if e.shouldRepeatConsoleKey(ebiten.KeySpace) {
 		e.consoleText += " "
 		return
 	}
 
 	// Handle special characters
-	if inpututil.IsKeyJustPressed(ebiten.KeyMinus) {
+	if e.shouldRepeatConsoleKey(ebiten.KeyMinus) {
 		if ebiten.IsKeyPressed(ebiten.KeyShift) {
 			e.consoleText += "_"
 		} else {
@@ -342,7 +349,7 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 		}
 		return
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyEqual) {
+	if e.shouldRepeatConsoleKey(ebiten.KeyEqual) {
 		if ebiten.IsKeyPressed(ebiten.KeyShift) {
 			e.consoleText += "+"
 		} else {
@@ -350,7 +357,7 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 		}
 		return
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyBracketLeft) {
+	if e.shouldRepeatConsoleKey(ebiten.KeyBracketLeft) {
 		if ebiten.IsKeyPressed(ebiten.KeyShift) {
 			e.consoleText += "{"
 		} else {
@@ -358,7 +365,7 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 		}
 		return
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyBracketRight) {
+	if e.shouldRepeatConsoleKey(ebiten.KeyBracketRight) {
 		if ebiten.IsKeyPressed(ebiten.KeyShift) {
 			e.consoleText += "}"
 		} else {
@@ -366,7 +373,7 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 		}
 		return
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyBackslash) {
+	if e.shouldRepeatConsoleKey(ebiten.KeyBackslash) {
 		if ebiten.IsKeyPressed(ebiten.KeyShift) {
 			e.consoleText += "|"
 		} else {
@@ -374,7 +381,7 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 		}
 		return
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeySemicolon) {
+	if e.shouldRepeatConsoleKey(ebiten.KeySemicolon) {
 		if ebiten.IsKeyPressed(ebiten.KeyShift) {
 			e.consoleText += ":"
 		} else {
@@ -382,7 +389,7 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 		}
 		return
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyApostrophe) {
+	if e.shouldRepeatConsoleKey(ebiten.KeyApostrophe) {
 		if ebiten.IsKeyPressed(ebiten.KeyShift) {
 			e.consoleText += "\""
 		} else {
@@ -390,7 +397,7 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 		}
 		return
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyComma) {
+	if e.shouldRepeatConsoleKey(ebiten.KeyComma) {
 		if ebiten.IsKeyPressed(ebiten.KeyShift) {
 			e.consoleText += "<"
 		} else {
@@ -398,7 +405,7 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 		}
 		return
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeyPeriod) {
+	if e.shouldRepeatConsoleKey(ebiten.KeyPeriod) {
 		if ebiten.IsKeyPressed(ebiten.KeyShift) {
 			e.consoleText += ">"
 		} else {
@@ -406,7 +413,7 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 		}
 		return
 	}
-	if inpututil.IsKeyJustPressed(ebiten.KeySlash) {
+	if e.shouldRepeatConsoleKey(ebiten.KeySlash) {
 		if ebiten.IsKeyPressed(ebiten.KeyShift) {
 			e.consoleText += "?"
 		} else {
@@ -414,6 +421,16 @@ func (e *EbitenRenderer) HandleConsoleInput() {
 		}
 		return
 	}
+}
+
+func (e *EbitenRenderer) shouldRepeatConsoleKey(key ebiten.Key) bool {
+	code := fmt.Sprintf("console_key_%d", key)
+	return e.shouldRepeatKeyWithTiming(
+		func() bool { return ebiten.IsKeyPressed(key) },
+		code,
+		consoleKeyRepeatInitialDelayMs,
+		consoleKeyRepeatIntervalMs,
+	)
 }
 
 // executeCommand parses and executes a console command
@@ -484,6 +501,26 @@ func (e *EbitenRenderer) executeCommandUnlocked(cmd string) {
 			e.addConsoleOutputUnlocked("Input queue full; try again.")
 		}
 
+	case "perfmap", "perf_map":
+		if len(parts) >= 2 && strings.EqualFold(parts[1], "list") {
+			e.addConsoleOutputUnlocked("Performance maps:")
+			for _, scenario := range strings.Split(perfMapScenarioHelp, ", ") {
+				e.addConsoleOutputUnlocked("  " + scenario)
+			}
+			e.addConsoleOutputUnlocked("Usage: perfmap <scenario>")
+			return
+		}
+		scenario := "open"
+		if len(parts) >= 2 {
+			scenario = parts[1]
+		}
+		select {
+		case e.inputChan <- engineinput.Intent{Action: engineinput.ActionPerfTestMap, Code: scenario}:
+			e.addConsoleOutputUnlocked(fmt.Sprintf("Performance map requested: %s", scenario))
+		default:
+			e.addConsoleOutputUnlocked("Input queue full; try again.")
+		}
+
 	case "list":
 		// List all cvars in alphabetical order
 		cvarMutex.RLock()
@@ -512,6 +549,7 @@ func (e *EbitenRenderer) executeCommandUnlocked(cmd string) {
 		e.addConsoleOutputUnlocked("  get <cvar>          - Get a configuration variable")
 		e.addConsoleOutputUnlocked("  set <cvar> <value>  - Set a configuration variable")
 		e.addConsoleOutputUnlocked("  maint_pan_test      - Load static maint room-picker camera test map")
+		e.addConsoleOutputUnlocked("  perfmap <scenario>  - Load performance test map (use: perfmap list)")
 		e.addConsoleOutputUnlocked("  list                - List all cvars")
 		e.addConsoleOutputUnlocked("  color_update        - Reload colors from cvars")
 		e.addConsoleOutputUnlocked("  clear               - Clear console output")

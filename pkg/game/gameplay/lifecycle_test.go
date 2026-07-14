@@ -2,6 +2,7 @@
 package gameplay
 
 import (
+	"strings"
 	"testing"
 
 	"darkstation/pkg/engine/world"
@@ -10,8 +11,43 @@ import (
 	"darkstation/pkg/game/menu"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
+	"darkstation/pkg/game/unlocks"
 	gameworld "darkstation/pkg/game/world"
 )
+
+func unlockAllDecksForTest(g *state.Game) {
+	if g == nil {
+		return
+	}
+	if g.LiftRoutingPowered == nil {
+		g.LiftRoutingPowered = make(map[int]bool)
+	}
+	for id := 0; id < deck.TotalDecks; id++ {
+		g.LiftRoutingPowered[id] = true
+	}
+	g.SetReactorOnline(true)
+	if g.UnlockPlan == nil {
+		return
+	}
+	for _, req := range g.UnlockPlan.Requirements {
+		if req.Kind == unlocks.KindSecurityKeycard && req.KeycardName != "" {
+			g.AddRunKeycard(world.NewItem(req.KeycardName))
+		}
+		g.MarkUnlockSatisfied(req.ID)
+	}
+}
+
+// buildGameWithSeed builds a deck with deterministic run and layout seeds (for stable tests).
+func buildGameWithSeed(level int, runSeed int64) *state.Game {
+	g := state.NewGame()
+	g.InitRunUnlocks(runSeed)
+	g.CurrentDeckID = level - 1
+	g.Level = level
+	RegenerateFromSeed(g, runSeed)
+	InitRunTracking(g)
+	g.ClearMessages()
+	return g
+}
 
 func TestBuildGame_GeneratesOnlyStartingDeck(t *testing.T) {
 	// BuildGame must generate only the starting deck; no pre-generation of all decks.
@@ -246,18 +282,18 @@ func TestIsFinalDeck_MatchesTotalDecks(t *testing.T) {
 }
 
 func TestBuildGame_StartRoomDoorsPoweredViaGeneratorBootstrap(t *testing.T) {
-	g := BuildGame(1)
+	g := buildGameWithSeed(1, 424242)
 	if g == nil || g.Grid == nil {
 		t.Fatal("BuildGame(1) setup failed")
 	}
-	startCell := g.Grid.StartCell()
-	if startCell == nil {
-		t.Fatal("no start cell")
+	corner := setup.LiftShaftBottomLeftCell(g)
+	if corner == nil {
+		t.Fatal("expected lift shaft bottom-left cell")
 	}
-	startRoom := startCell.Name
+	shaftRoom := corner.Name
 	hasSpawnGen := false
 	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-		if cell == nil || cell.Name != startRoom {
+		if cell == nil || cell.Name != shaftRoom {
 			return
 		}
 		gen := gameworld.GetGameData(cell).Generator
@@ -266,15 +302,15 @@ func TestBuildGame_StartRoomDoorsPoweredViaGeneratorBootstrap(t *testing.T) {
 		}
 	})
 	if !hasSpawnGen {
-		t.Fatal("start room should contain the powered spawn generator")
+		t.Fatal("lift shaft should contain the powered spawn generator")
 	}
-	if !g.RoomDoorsPowered[startRoom] {
-		t.Errorf("start room %q doors should be armed via generator bootstrap, not InitRoomPower", startRoom)
+	if !g.RoomDoorsPowered[shaftRoom] {
+		t.Errorf("lift shaft %q doors should be armed via generator bootstrap, not InitRoomPower", shaftRoom)
 	}
 }
 
 func TestBuildGame_MaintBootstrapOK(t *testing.T) {
-	g := BuildGame(1)
+	g := buildGameWithSeed(1, 424242)
 	if g == nil || g.Grid == nil {
 		t.Fatal("BuildGame(1) setup failed")
 	}
@@ -287,7 +323,7 @@ func TestBuildGame_MaintBootstrapOK(t *testing.T) {
 }
 
 func TestBuildGame_GeneratorRoomsArmed(t *testing.T) {
-	g := BuildGame(1)
+	g := buildGameWithSeed(1, 424242)
 	if g == nil || g.Grid == nil {
 		t.Fatal("BuildGame(1) setup failed")
 	}
@@ -309,24 +345,51 @@ func TestBuildGame_GeneratorRoomsArmed(t *testing.T) {
 
 func TestBuildGame_SetupOrderIncludesSolvability(t *testing.T) {
 	// BuildGame → SetupLevel runs solvability passes after terminal placement.
-	g := BuildGame(1)
+	g := buildGameWithSeed(1, 424242)
 	if g == nil || g.Grid == nil {
 		t.Fatal("BuildGame(1) setup failed")
 	}
-	startRoom := g.Grid.StartCell().Name
-	if !g.RoomDoorsPowered[startRoom] {
-		t.Errorf("start room %q doors should be armed via generator bootstrap", startRoom)
+	corner := setup.LiftShaftBottomLeftCell(g)
+	if corner == nil {
+		t.Fatal("expected lift shaft bottom-left cell")
+	}
+	shaftRoom := corner.Name
+	if !g.RoomDoorsPowered[shaftRoom] {
+		t.Errorf("lift shaft %q doors should be armed via generator bootstrap", shaftRoom)
 	}
 	if len(g.RoomDoorsPowered) == 0 {
 		t.Error("RoomDoorsPowered should be populated after setup")
 	}
 }
 
+func TestBuildGame_Deck1_ReportedSeed_MaintBootstrap(t *testing.T) {
+	// Regression: 18B7A9785AB3072B produced dozens of annex rooms and unpowered maint grid.
+	const seed int64 = 0x18B7A9785AB3072B
+	g := buildGameWithSeed(1, seed)
+	g.LevelSeed = seed
+	ResetLevel(g)
+	if !setup.MaintBootstrapOK(g) {
+		t.Fatal("reported deck-1 seed should have powered maint terminal after bootstrap")
+	}
+	annexRooms := 0
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil || !cell.Room || cell.Name == "" {
+			return
+		}
+		if strings.Contains(cell.Name, "Annex") {
+			annexRooms++
+		}
+	})
+	if annexRooms > 0 {
+		t.Fatalf("reported seed still has %d annex-labeled cells", annexRooms)
+	}
+}
+
 func TestBuildGame_NoMaintBootstrapDeadlock(t *testing.T) {
-	seeds := []int64{1, 42, 424242, 1779651561562416055, 999_999_999}
+	seeds := []int64{1, 42, 424242, 0x18B7A9785AB3072B, 1779651561562416055, 999_999_999}
 	for level := 1; level <= 6; level++ {
 		for _, seed := range seeds {
-			g := BuildGame(level)
+			g := buildGameWithSeed(level, seed)
 			g.LevelSeed = seed
 			ResetLevel(g)
 			if !setup.MaintBootstrapOK(g) {
@@ -340,7 +403,7 @@ func TestBuildGame_NoStartEgressDeadlock(t *testing.T) {
 	seeds := []int64{1, 42, 424242, 1779651561562416055, 999_999_999}
 	for level := 1; level <= 3; level++ {
 		for _, seed := range seeds {
-			g := BuildGame(level)
+			g := buildGameWithSeed(level, seed)
 			g.LevelSeed = seed
 			ResetLevel(g)
 			if !setup.MaintBootstrapOK(g) {
@@ -348,6 +411,69 @@ func TestBuildGame_NoStartEgressDeadlock(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestLoadLevelFromSeed_RelocatedKeycardIsDiscoverable(t *testing.T) {
+	const seed int64 = 0x18B512C7318DA329
+	g := buildGameWithSeed(4, seed)
+	g.LevelSeed = seed
+	ResetLevel(g)
+	start := setup.PlayerEntryCell(g)
+	if start == nil {
+		t.Fatal("missing player entry cell")
+	}
+	reachable := setup.InitialReachableCells(g)
+	var keycardCells []*world.Cell
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell == nil {
+			return
+		}
+		cell.ItemsOnFloor.Each(func(item *world.Item) {
+			if item != nil && strings.Contains(item.Name, "Keycard") {
+				keycardCells = append(keycardCells, cell)
+			}
+		})
+		data := gameworld.GetGameData(cell)
+		if data.Furniture != nil && data.Furniture.ContainedItem != nil &&
+			strings.Contains(data.Furniture.ContainedItem.Name, "Keycard") {
+			keycardCells = append(keycardCells, cell)
+		}
+	})
+	if len(keycardCells) == 0 {
+		t.Fatal("expected at least one keycard on the deck")
+	}
+	for _, keycardCell := range keycardCells {
+		if !reachable.Has(keycardCell) {
+			t.Fatalf("keycard at row=%d col=%d is not initially reachable", keycardCell.Row, keycardCell.Col)
+		}
+		if keycardCell == start {
+			t.Fatalf("keycard should be discoverable away from the spawn tile, got row=%d col=%d",
+				keycardCell.Row, keycardCell.Col)
+		}
+		if data := gameworld.GetGameData(keycardCell); data.MaintenanceTerm != nil {
+			t.Fatalf("keycard at row=%d col=%d is covered by maintenance terminal", keycardCell.Row, keycardCell.Col)
+		}
+	}
+}
+
+func TestLoadLevelFromSeed_LargerDeckDoesNotStartWithKeycards(t *testing.T) {
+	g := state.NewGame()
+	g.Level = 6
+	LoadLevelFromSeed(g, 42)
+
+	g.OwnedItems.Each(func(item *world.Item) {
+		if item != nil && strings.Contains(item.Name, "Keycard") {
+			t.Fatalf("player should not start with keycard %q in inventory", item.Name)
+		}
+	})
+	if g.CurrentCell == nil {
+		t.Fatal("missing current cell")
+	}
+	g.CurrentCell.ItemsOnFloor.Each(func(item *world.Item) {
+		if item != nil && strings.Contains(item.Name, "Keycard") {
+			t.Fatalf("keycard %q should not start on the spawn tile", item.Name)
+		}
+	})
 }
 
 func TestBuildGame_NoInitialPowerOverload(t *testing.T) {
@@ -366,17 +492,20 @@ func TestBuildGame_NoInitialPowerOverload(t *testing.T) {
 }
 
 func TestResetLevel_ReinitializesRoomPower(t *testing.T) {
-	g := BuildGame(1)
+	g := buildGameWithSeed(1, 424242)
 	if g == nil || g.Grid == nil {
 		t.Fatal("BuildGame(1) setup failed")
 	}
 
 	ResetLevel(g)
 
-	// After reset, the start room's doors should be armed via spawn generator bootstrap
-	newStartRoom := g.Grid.StartCell().Name
-	if !g.RoomDoorsPowered[newStartRoom] {
-		t.Errorf("after reset: start room %q doors should be armed via generator bootstrap", newStartRoom)
+	// After reset, lift shaft doors should be armed via spawn generator bootstrap
+	corner := setup.LiftShaftBottomLeftCell(g)
+	if corner == nil {
+		t.Fatal("expected lift shaft bottom-left cell after reset")
+	}
+	if !g.RoomDoorsPowered[corner.Name] {
+		t.Errorf("after reset: lift shaft %q doors should be armed via generator bootstrap", corner.Name)
 	}
 	// Lights should default on for all rooms
 	for room, lightsOn := range g.RoomLightsPowered {
@@ -470,7 +599,7 @@ func TestBuildGame_MaintenanceTerminalRestoreFlow(t *testing.T) {
 	var startTerm *entities.MaintenanceTerminal
 
 	// Generated layouts are randomized; retry to ensure this test validates the restore path.
-	for attempt := 0; attempt < 8; attempt++ {
+	for attempt := 0; attempt < 24; attempt++ {
 		g = BuildGame(2) // Level 2 has multiple rooms with terminals
 		if g == nil || g.Grid == nil {
 			t.Fatal("BuildGame(2) setup failed")
@@ -480,13 +609,14 @@ func TestBuildGame_MaintenanceTerminalRestoreFlow(t *testing.T) {
 		startTermCell = nil
 		startTerm = nil
 		g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
-			if cell == nil || cell.Name != startRoom {
+			if startTermCell != nil || cell == nil || !cell.Room {
 				return
 			}
 			data := gameworld.GetGameData(cell)
-			if data.MaintenanceTerm != nil {
+			if data.MaintenanceTerm != nil && data.MaintenanceTerm.Powered {
 				startTermCell = cell
 				startTerm = data.MaintenanceTerm
+				startRoom = cell.Name
 			}
 		})
 		if startTermCell != nil && startTerm != nil {
@@ -494,10 +624,7 @@ func TestBuildGame_MaintenanceTerminalRestoreFlow(t *testing.T) {
 		}
 	}
 	if startTermCell == nil || startTerm == nil {
-		t.Fatal("could not find a start-room maintenance terminal after multiple BuildGame(2) attempts")
-	}
-	if !startTerm.Powered {
-		t.Error("start room maintenance terminal should be powered after BuildGame")
+		t.Fatal("could not find a powered maintenance terminal after multiple BuildGame(2) attempts")
 	}
 
 	// Power grid restore requires powered doors along the path — enable doors on adjacent rooms for this integration test.
@@ -560,6 +687,7 @@ func TestAdvanceThroughAllDecks_FinalDeckReachable(t *testing.T) {
 	// Advances through all decks; each is generated once; final deck is reachable.
 	// Note: runs 10 full BSP+SetupLevel generations; may be slow under -race or on constrained CI.
 	g := BuildGame(1)
+	unlockAllDecksForTest(g)
 	seenDecks := make(map[int]bool)
 	seenDecks[0] = true
 	for g.CurrentDeckID < deck.FinalDeckIndex {

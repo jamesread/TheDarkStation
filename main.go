@@ -11,8 +11,8 @@ import (
 	"github.com/leonelquinteros/gotext"
 
 	engineinput "darkstation/pkg/engine/input"
-	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/devtools"
+	"darkstation/pkg/game/gamemode"
 	"darkstation/pkg/game/gameplay"
 	gamemenu "darkstation/pkg/game/menu"
 	"darkstation/pkg/game/renderer"
@@ -42,6 +42,7 @@ func initGettext() {
 
 func main() {
 	startLevel := flag.Int("level", 1, "starting level/deck number (for developer testing)")
+	gameMode := flag.String("gamemode", string(gamemode.SinglePlayerPuzzle), "game mode ID (SinglePlayerPuzzle, SingleDeckSandbox, FindTheBatteries)")
 	flag.Parse()
 
 	// Check for LEVEL environment variable (takes precedence over flag)
@@ -49,6 +50,9 @@ func main() {
 		if parsedLevel, err := strconv.Atoi(envLevel); err == nil && parsedLevel > 0 {
 			*startLevel = parsedLevel
 		}
+	}
+	if envMode := os.Getenv("GAMEMODE"); envMode != "" {
+		*gameMode = envMode
 	}
 
 	initGettext()
@@ -60,7 +64,8 @@ func main() {
 
 	// Initialize the Ebiten renderer
 	ebitRenderer := ebitenRenderer.New()
-	ebitRenderer.SetLongUseAdvancer(gameplay.AdvanceLongUseIfActive)
+	ebitRenderer.SetLongUseAdvancer(gameplay.AdvanceInteractionProgress)
+	ebitRenderer.SetRepairTimerAdvancer(gameplay.OnRepairTimersAdvanced)
 	ebitRenderer.SetHazardClearAdvancer(gameplay.AdvanceHazardClearIfActive)
 	ebitRenderer.SetHazardTourAdvancer(gameplay.AdvanceHazardTourIfActive)
 	ebitRenderer.SetHintRefresher(func(g *state.Game) {
@@ -77,24 +82,21 @@ func main() {
 	if err := ebitRenderer.RunWithGameLoop(func() {
 		for {
 			// Run the main menu (this blocks until user makes a selection)
-			menuAction := runMainMenuInLoop()
+			menuAction, perfMapScenario, selectedMode := runMainMenuInLoop(gamemode.ID(*gameMode))
 
 			// Build the game based on menu selection
 			var g *state.Game
 			switch menuAction {
 			case gamemenu.MainMenuActionGenerate:
-				// Start normal game mode (level from -level flag or LEVEL env)
-				g = gameplay.BuildGame(*startLevel)
-			case gamemenu.MainMenuActionDebug:
-				// Open Developer map (normally opened on F9)
+				g = gameplay.BuildGameWithMode(*startLevel, selectedMode)
+			case gamemenu.MainMenuActionPerfMap:
 				g = state.NewGame()
-				devtools.SwitchToDevMap(g)
+				devtools.SwitchToPerfMap(g, perfMapScenario)
 			case gamemenu.MainMenuActionQuit:
 				// Quit (should have been handled in RunMainMenu, but just in case)
 				os.Exit(0)
 			default:
-				// Fallback: start normal game (level from -level flag or LEVEL env)
-				g = gameplay.BuildGame(*startLevel)
+				g = gameplay.BuildGameWithMode(*startLevel, selectedMode)
 			}
 
 			// Reset QuitToTitle flag
@@ -120,8 +122,9 @@ func main() {
 }
 
 // runMainMenuInLoop runs the main menu inside the Ebiten game loop
-// This allows the menu to render and receive input properly
-func runMainMenuInLoop() gamemenu.MainMenuAction {
+// This allows the menu to render and receive input properly.
+// defaultMode preselects a row on the game mode screen (-gamemode / GAMEMODE).
+func runMainMenuInLoop(defaultMode gamemode.ID) (gamemenu.MainMenuAction, string, gamemode.ID) {
 	// Create a minimal game state for the menu (needed for rendering)
 	g := state.NewGame()
 
@@ -136,15 +139,21 @@ func runMainMenuInLoop() gamemenu.MainMenuAction {
 
 		action := handler.GetSelectedAction()
 
-		// Handle bindings menu as a sub-menu
-		if action == gamemenu.MainMenuActionBindings {
-			gameplay.RunBindingsMenu(g, true) // true = from main menu, shows "Back" option
-			// After bindings menu closes, continue the main menu loop
+		if action == gamemenu.MainMenuActionSettings {
+			gameplay.RunSettingsMenu(g, true)
 			continue
 		}
 
+		if action == gamemenu.MainMenuActionGenerate {
+			modeID, ok := gamemenu.RunGameModeMenu(g, defaultMode)
+			if !ok {
+				continue
+			}
+			return action, handler.GetPerfMapScenario(), modeID
+		}
+
 		// For other actions, return to let the caller handle them
-		return action
+		return action, handler.GetPerfMapScenario(), ""
 	}
 }
 
@@ -183,22 +192,14 @@ func mainLoop(g *state.Game) {
 
 	if g.ExitAnimating {
 		elapsed := time.Now().UnixMilli() - g.ExitAnimStartTime
-		const exitAnimDuration = 2000 // 2 seconds (matches drawExitAnimation)
+		const exitAnimDuration = 2000
 		if elapsed >= exitAnimDuration {
 			g.ExitAnimating = false
-			gameplay.AdvanceLevel(g)
-		}
-	} else if g.CurrentCell.ExitCell {
-		// Final deck: lift has no destination; game complete (GDD §10.2, §11)
-		if deck.IsFinalDeck(g.Level) {
-			gameplay.TriggerGameComplete(g)
-		} else if !g.ExitAnimating {
-			g.ExitAnimating = true
-			g.ExitAnimStartTime = time.Now().UnixMilli()
 		}
 	}
 
 	gameplay.PickUpItemsOnFloor(g)
+	gameplay.PickUpAdjacentFloorItemsOnBlockingDevices(g)
 	gameplay.CheckAdjacentGenerators(g)
 	gameplay.UpdateLightingExploration(g)
 
@@ -219,7 +220,7 @@ func mainLoop(g *state.Game) {
 
 	// Get and process input (tiered input system -> Intent -> game logic)
 	gameplay.ProcessIntent(g, renderer.Current.GetInput())
-	if gameplay.IsLongUseActive(g) {
+	if gameplay.IsHoldLongUseActive(g) {
 		gameplay.WaitForLongUseComplete(g)
 	}
 	if gameplay.IsHazardClearActive(g) {

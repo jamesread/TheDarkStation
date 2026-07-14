@@ -8,10 +8,46 @@ import (
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/features"
+	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
+
+var floorIconCache = make(map[string]string)
+
+// cellKnowledge is what the player currently knows about a cell (information economy).
+type cellKnowledge int
+
+const (
+	// knowledgeUnknown: never seen, no map — not drawn.
+	knowledgeUnknown cellKnowledge = iota
+	// knowledgeLayout: floor plan only (discovered while dark, or revealed by the Map
+	// item) — architecture is drawn, contents are not.
+	knowledgeLayout
+	// knowledgeRemembered: seen illuminated before — entity identity is drawn dim,
+	// live state (power, lock, charge) is not.
+	knowledgeRemembered
+	// knowledgeLive: currently illuminated (powered room lights or headlamp) — full detail.
+	knowledgeLive
+)
+
+// cellKnowledgeTier classifies a room cell's knowledge tier for rendering.
+func cellKnowledgeTier(g *state.Game, cell *world.Cell) cellKnowledge {
+	if cell == nil || (!cell.Discovered && !g.HasMap) {
+		return knowledgeUnknown
+	}
+	if cell.Discovered {
+		data := gameworld.GetGameData(cell)
+		if data.LightsOn {
+			return knowledgeLive
+		}
+		if data.Lighted {
+			return knowledgeRemembered
+		}
+	}
+	return knowledgeLayout
+}
 
 // getCellRenderOptions returns rendering options for a cell.
 // When forUnderfoot is true, the cell is treated as if the player were not on it (used to draw floor under the player).
@@ -25,11 +61,36 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 		return CellRenderOptions{Icon: snap.playerFacing.Icon(), Color: colorPlayer, HasBackground: false}
 	}
 
-	// Get game-specific data for this cell
+	// Walls (non-room cells) have no internal state; show next to any known room,
+	// or when the maintenance menu is focusing a room (full outline including unseen walls).
+	if !cell.Room {
+		if shouldRenderWallCell(cell, snap) {
+			if opts, ok := shipWallRenderOptions(cell); ok {
+				return opts
+			}
+			return CellRenderOptions{Icon: IconWall, Color: colorWall, HasBackground: true}
+		}
+		return CellRenderOptions{Icon: IconVoid, Color: colorBackground, HasBackground: false}
+	}
+
+	switch cellKnowledgeTier(g, cell) {
+	case knowledgeLive:
+		return e.liveCellRenderOptions(g, cell, snap)
+	case knowledgeRemembered:
+		return e.rememberedCellRenderOptions(g, cell, snap)
+	case knowledgeLayout:
+		return layoutCellRenderOptions(cell)
+	default:
+		return CellRenderOptions{Icon: IconVoid, Color: colorBackground, HasBackground: false}
+	}
+}
+
+// liveCellRenderOptions renders a currently illuminated room cell at full detail.
+func (e *EbitenRenderer) liveCellRenderOptions(g *state.Game, cell *world.Cell, snap *renderSnapshot) CellRenderOptions {
 	data := gameworld.GetGameData(cell)
 
-	// Hazard (show if has map or discovered)
-	if gameworld.HasHazard(cell) && (g.HasMap || cell.Discovered) {
+	// Hazard
+	if gameworld.HasHazard(cell) {
 		if data.Hazard.IsBlocking() {
 			var iconColor color.Color = colorHazard
 			if alpha := hazardClearVisualAlpha(snap, cell); alpha < 1 {
@@ -39,16 +100,25 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 		}
 	}
 
-	// Hazard Control (show if has map or discovered)
-	if gameworld.HasHazardControl(cell) && (g.HasMap || cell.Discovered) {
+	// Hazard Control
+	if gameworld.HasHazardControl(cell) {
 		if !data.HazardControl.Activated {
 			return CellRenderOptions{Icon: entities.GetControlIcon(data.HazardControl.Type), Color: colorHazardCtrl, HasBackground: true}
 		}
 		return CellRenderOptions{Icon: entities.GetControlIcon(data.HazardControl.Type), Color: colorSubtle, HasBackground: false}
 	}
 
-	// Door (show if has map or discovered)
-	if gameworld.HasDoor(cell) && (g.HasMap || cell.Discovered) {
+	if gameworld.HasRepairBlocker(cell) {
+		repair := data.RepairBlocker
+		if repair != nil && repair.BlockerBlocksCell(cell.Row, cell.Col) {
+			return CellRenderOptions{Icon: IconToxicSlime, Color: colorToxicSlime, HasBackground: true, BackgroundColor: colorToxicSlimeBg}
+		}
+		// Drained cells play a pop overlay; keep the floor tile clean underneath.
+		return CellRenderOptions{Icon: "", Color: colorSubtle, HasBackground: false}
+	}
+
+	// Door
+	if gameworld.HasDoor(cell) {
 		roomName := data.Door.RoomName
 		if !snapCellHasLivePower(snap, cell) {
 			if snapRoomManualEgressReleased(snap, roomName) {
@@ -60,48 +130,60 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 		if data.Door.Locked {
 			return CellRenderOptions{Icon: IconDoorLocked, Color: colorDoorLocked, HasBackground: true}
 		}
-		return CellRenderOptions{Icon: IconDoorUnlocked, Color: colorDoorUnlocked, HasBackground: true}
+		// Passable doorway: plate darker than the surrounding walls so it reads as an opening.
+		return CellRenderOptions{Icon: IconDoorUnlocked, Color: colorDoorUnlocked, HasBackground: true, BackgroundColor: colorDoorBg}
 	}
 
-	// Generator (show if has map or discovered)
-	if gameworld.HasGenerator(cell) && (g.HasMap || cell.Discovered) {
+	// Generator
+	if gameworld.HasGenerator(cell) {
 		if data.Generator.IsPowered() {
-			return CellRenderOptions{Icon: IconGeneratorPowered, Color: colorGeneratorOn, HasBackground: true}
+			return CellRenderOptions{Icon: IconGeneratorPowered, Color: colorGeneratorOn, HasBackground: true, BackgroundColor: colorGeneratorFocusBg}
 		}
-		return CellRenderOptions{Icon: IconGeneratorUnpowered, Color: colorGeneratorOff, HasBackground: true}
+		return CellRenderOptions{Icon: IconGeneratorUnpowered, Color: colorGeneratorOff, HasBackground: true, BackgroundColor: colorGeneratorFocusBg}
 	}
 
-	// Maintenance Terminal (show if has map or discovered) - same visibility as other cells
-	if gameworld.HasMaintenanceTerminal(cell) && (g.HasMap || cell.Discovered) {
+	// Maintenance Terminal
+	if gameworld.HasMaintenanceTerminal(cell) {
 		return CellRenderOptions{Icon: IconMaintenance, Color: colorMaintenance, HasBackground: true, BackgroundColor: colorMaintenanceBg}
 	}
 
-	// CCTV Terminal (show if has map or discovered) - same orange as maintenance terminals
-	if gameworld.HasTerminal(cell) && (g.HasMap || cell.Discovered) {
+	if gameworld.HasRepairDevice(cell) {
+		repair := data.RepairDevice
+		icon := repairIcon(repair)
+		if repair != nil && repair.IsComplete() {
+			return CellRenderOptions{Icon: icon, Color: colorSubtle, HasBackground: false}
+		}
+		powered := !repair.NeedsLivePower() || snapCellHasLivePower(snap, cell)
+		fg, bg := repairDeviceColors(repair, powered)
+		return CellRenderOptions{Icon: icon, Color: fg, HasBackground: true, BackgroundColor: bg}
+	}
+
+	// CCTV Terminal - same orange as maintenance terminals
+	if gameworld.HasTerminal(cell) {
 		if data.Terminal.IsUsed() {
 			return CellRenderOptions{Icon: IconTerminalUsed, Color: colorTerminalUsed, HasBackground: false}
 		}
 		return CellRenderOptions{Icon: IconTerminalUnused, Color: colorMaintenance, HasBackground: true, BackgroundColor: colorMaintenanceBg}
 	}
 
-	// Puzzle Terminal (show if has map or discovered)
-	if gameworld.HasPuzzle(cell) && (g.HasMap || cell.Discovered) {
+	// Puzzle Terminal
+	if gameworld.HasPuzzle(cell) {
 		if data.Puzzle.IsSolved() {
 			return CellRenderOptions{Icon: IconTerminalUsed, Color: colorTerminalUsed, HasBackground: false}
 		}
 		return CellRenderOptions{Icon: IconTerminalUnused, Color: colorTerminal, HasBackground: true}
 	}
 
-	// Furniture (show if has map or discovered)
-	if gameworld.HasFurniture(cell) && (g.HasMap || cell.Discovered) {
+	// Furniture
+	if gameworld.HasFurniture(cell) {
 		if data.Furniture.IsChecked() {
 			return CellRenderOptions{Icon: data.Furniture.Icon, Color: colorFurnitureCheck, HasBackground: false}
 		}
 		return CellRenderOptions{Icon: data.Furniture.Icon, Color: colorFurniture, HasBackground: true}
 	}
 
-	// Exit cell (show if has map or discovered)
-	if cell.ExitCell && (g.HasMap || cell.Discovered) {
+	// Exit cell
+	if cell.ExitCell {
 		switch setup.ExitLiftState(g) {
 		case state.ExitLiftLockedUnpowered:
 			return CellRenderOptions{Icon: IconExitLocked, Color: colorExitLocked, HasBackground: true}
@@ -113,17 +195,17 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 		}
 	}
 
-	// Corridor power relay (discovered corridors only)
-	if gameworld.HasPowerRelay(cell) && (g.HasMap || cell.Discovered) {
-		relay := gameworld.GetGameData(cell).PowerRelay
+	// Corridor power relay
+	if gameworld.HasPowerRelay(cell) {
+		relay := data.PowerRelay
 		if relay != nil && relay.Closed {
 			return CellRenderOptions{Icon: IconRelayClosed, Color: colorMaintenance, HasBackground: true, BackgroundColor: colorWallBgPowered}
 		}
 		return CellRenderOptions{Icon: IconRelayOpen, Color: colorHazard, HasBackground: true, BackgroundColor: colorHazardBackground}
 	}
 
-	// Items on floor (show if has map or discovered)
-	if cell.ItemsOnFloor.Size() > 0 && (g.HasMap || cell.Discovered) {
+	// Items on floor
+	if cell.ItemsOnFloor.Size() > 0 {
 		if cellHasKeycard(cell) {
 			return CellRenderOptions{Icon: IconKey, Color: colorKeycard, HasBackground: true}
 		}
@@ -136,31 +218,42 @@ func (e *EbitenRenderer) getCellRenderOptions(g *state.Game, cell *world.Cell, s
 		return CellRenderOptions{Icon: IconItem, Color: colorItem, HasBackground: true}
 	}
 
+	// Deck 1 west overlay rooms use dedicated hull/connector styling.
+	if opts, ok := overlayRoomFloorRenderOptions(cell, features.IsVisited(cell)); ok {
+		return opts
+	}
+
 	// Visited rooms (when gameplay.visited cvar is enabled)
 	if features.IsVisited(cell) {
 		return CellRenderOptions{Icon: getFloorIcon(cell.Name, true), Color: colorFloorVisited, HasBackground: true, BackgroundColor: colorFloorVisitedBg}
 	}
 
-	// Discovered but not visited
-	if cell.Discovered {
-		if cell.Room {
-			return CellRenderOptions{Icon: getFloorIcon(cell.Name, false), Color: colorFloor, HasBackground: true, BackgroundColor: colorFloorBg}
-		}
-		return CellRenderOptions{Icon: IconWall, Color: colorWall, HasBackground: true} // Walls get background
-	}
+	return CellRenderOptions{Icon: getFloorIcon(cell.Name, false), Color: colorFloor, HasBackground: true, BackgroundColor: colorFloorBg}
+}
 
-	// Has map - show rooms faintly
-	if g.HasMap && cell.Room {
-		return CellRenderOptions{Icon: getFloorIcon(cell.Name, false), Color: colorSubtle, HasBackground: true, BackgroundColor: colorFloorBg}
+// rememberedCellRenderOptions renders a cell the player has seen lit but which is dark
+// now: entity identity (glyph) is kept, live state (colors, plates) is withheld.
+func (e *EbitenRenderer) rememberedCellRenderOptions(g *state.Game, cell *world.Cell, snap *renderSnapshot) CellRenderOptions {
+	live := e.liveCellRenderOptions(g, cell, snap)
+	return CellRenderOptions{
+		Icon:            live.Icon,
+		Color:           colorRemembered,
+		HasBackground:   true,
+		BackgroundColor: colorRememberedBg,
 	}
+}
 
-	// Non-room cells adjacent to discovered/visited rooms render as walls
-	if !cell.Room && hasAdjacentDiscoveredRoom(cell) {
-		return CellRenderOptions{Icon: IconWall, Color: colorWall, HasBackground: true} // Walls get background
+// layoutCellRenderOptions renders floor-plan knowledge only: room shape, door and
+// lift positions. Equipment, items, and hazards are not drawn.
+func layoutCellRenderOptions(cell *world.Cell) CellRenderOptions {
+	switch {
+	case gameworld.HasDoor(cell):
+		return CellRenderOptions{Icon: IconDoorUnlocked, Color: colorLayout, HasBackground: true, BackgroundColor: colorLayoutBg}
+	case cell.ExitCell:
+		return CellRenderOptions{Icon: IconExitLocked, Color: colorLayout, HasBackground: true, BackgroundColor: colorLayoutBg}
+	default:
+		return CellRenderOptions{Icon: getFloorIcon(cell.Name, false), Color: colorLayout, HasBackground: true, BackgroundColor: colorLayoutBg}
 	}
-
-	// Unknown/void
-	return CellRenderOptions{Icon: IconVoid, Color: colorBackground, HasBackground: false}
 }
 
 func hazardClearVisualAlpha(snap *renderSnapshot, cell *world.Cell) float64 {
@@ -183,19 +276,94 @@ func hazardClearVisualAlpha(snap *renderSnapshot, cell *world.Cell) float64 {
 	return hc.VisualAlpha
 }
 
+func repairIcon(repair *entities.RepairObjective) string {
+	if repair == nil {
+		return IconRepairValve
+	}
+	switch repair.Type {
+	case entities.RepairPressureValve:
+		return IconRepairValve
+	case entities.RepairSignalCalibrator:
+		return IconRepairSignal
+	case entities.RepairPowerCoupler:
+		return IconRepairCoupler
+	case entities.RepairWastePump:
+		return IconRepairPump
+	case entities.RepairConduitSplice:
+		return IconRepairConduit
+	default:
+		return IconRepairValve
+	}
+}
+
+func repairDeviceColors(repair *entities.RepairObjective, powered bool) (fg, bg color.Color) {
+	if repair != nil && repair.Type == entities.RepairConduitSplice {
+		return colorRepairConduit, colorRepairConduitBg
+	}
+	if !powered {
+		return colorGeneratorOff, colorHazardBackground
+	}
+	return colorRepair, colorRepairBg
+}
+
+// shipWallRenderOptions styles bulkhead walls bordering the deck 1 Ship room.
+func shipWallRenderOptions(cell *world.Cell) (CellRenderOptions, bool) {
+	if cell == nil || !hasAdjacentRoomNamed(cell, generator.ShipRoomName) {
+		return CellRenderOptions{}, false
+	}
+	return CellRenderOptions{
+		Icon:            IconShipHullWall,
+		Color:           colorShipWall,
+		HasBackground:   true,
+		BackgroundColor: colorShipWallBg,
+	}, true
+}
+
+// overlayRoomFloorRenderOptions returns distinct floor styling for deck 1 Ship.
+func overlayRoomFloorRenderOptions(cell *world.Cell, visited bool) (CellRenderOptions, bool) {
+	if cell == nil || cell.Name != generator.ShipRoomName {
+		return CellRenderOptions{}, false
+	}
+	if visited {
+		return CellRenderOptions{
+			Icon:            getFloorIcon(cell.Name, true),
+			Color:           colorShipFloorVisited,
+			HasBackground:   true,
+			BackgroundColor: colorShipFloorVisitedBg,
+		}, true
+	}
+	return CellRenderOptions{
+		Icon:            getFloorIcon(cell.Name, false),
+		Color:           colorShipFloor,
+		HasBackground:   true,
+		BackgroundColor: colorShipFloorBg,
+	}, true
+}
+
 // getFloorIcon returns the appropriate floor icon for a room
 func getFloorIcon(roomName string, visited bool) string {
+	cacheKey := "u:" + roomName
+	if visited {
+		cacheKey = "v:" + roomName
+	}
+	if icon, ok := floorIconCache[cacheKey]; ok {
+		return icon
+	}
 	for baseRoom, icons := range roomFloorIcons {
 		if strings.Contains(roomName, baseRoom) {
 			if visited {
+				floorIconCache[cacheKey] = icons[0]
 				return icons[0]
 			}
+			floorIconCache[cacheKey] = icons[1]
 			return icons[1]
 		}
 	}
 	if visited {
+		floorIconCache[cacheKey] = IconVisited
 		return IconVisited
 	}
+	floorIconCache[cacheKey] = IconUnvisited
 	return IconUnvisited
 }
 
@@ -230,6 +398,20 @@ func cellHasBattery(c *world.Cell) bool {
 		}
 	})
 	return hasBattery
+}
+
+// shouldRenderWallCell reports whether a non-room cell should draw as a wall tile.
+func shouldRenderWallCell(cell *world.Cell, snap *renderSnapshot) bool {
+	if cell == nil || cell.Room {
+		return false
+	}
+	if cell.Discovered || hasAdjacentDiscoveredRoom(cell) {
+		return true
+	}
+	if focusRoom := snapMaintenanceMenuRoom(snap); focusRoom != "" && hasAdjacentRoomNamed(cell, focusRoom) {
+		return true
+	}
+	return false
 }
 
 // hasAdjacentDiscoveredRoom checks if any adjacent cell is discovered

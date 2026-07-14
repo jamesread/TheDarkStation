@@ -9,6 +9,7 @@ import (
 
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
+	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
@@ -33,6 +34,13 @@ func PlaceMaintenanceTerminals(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		if len(cells) == 0 {
 			continue
 		}
+		if generator.IsEmptyOverlayRoom(roomName) {
+			continue
+		}
+		if roomName == generator.ShaftRoomName {
+			placeLiftShaftMaintenanceTerminal(g, cells, roomEntries, avoid)
+			continue
+		}
 
 		// Find cells that are against walls (have at least one non-room neighbor OR corridor neighbor)
 		// Also prefer cells on the edge of the room (fewer room neighbors)
@@ -46,7 +54,9 @@ func PlaceMaintenanceTerminals(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 			if !avoid.Has(cell) && !cell.ExitCell &&
 				data.Generator == nil && data.Door == nil && data.Terminal == nil &&
 				data.Puzzle == nil && data.Furniture == nil && data.Hazard == nil &&
-				data.HazardControl == nil && data.MaintenanceTerm == nil {
+				data.HazardControl == nil && data.MaintenanceTerm == nil &&
+				data.RepairDevice == nil && data.RepairBlocker == nil &&
+				cell.ItemsOnFloor.Size() == 0 {
 
 				// Check if cell is against a wall (has a non-room neighbor)
 				isWallCell := false
@@ -100,7 +110,9 @@ func PlaceMaintenanceTerminals(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 				if !avoid.Has(cell) && !cell.ExitCell &&
 					data.Generator == nil && data.Door == nil && data.Terminal == nil &&
 					data.Puzzle == nil && data.Furniture == nil && data.Hazard == nil &&
-					data.HazardControl == nil && data.MaintenanceTerm == nil {
+					data.HazardControl == nil && data.MaintenanceTerm == nil &&
+					data.RepairDevice == nil && data.RepairBlocker == nil &&
+					cell.ItemsOnFloor.Size() == 0 {
 					validCells = append(validCells, cell)
 				}
 			}
@@ -132,4 +144,77 @@ func PlaceMaintenanceTerminals(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		gameworld.GetGameData(selectedCell).MaintenanceTerm = maintenanceTerm
 		avoid.Put(selectedCell)
 	}
+}
+
+func placeLiftShaftMaintenanceTerminal(g *state.Game, cells []*world.Cell, _ map[string]*setup.RoomEntryPoints, avoid *mapset.Set[*world.Cell]) {
+	roomName := generator.ShaftRoomName
+	var selectedCell *world.Cell
+	if east := setup.LiftShaftCellEastOfBottomLeft(g); liftShaftMaintFits(g, east, avoid) {
+		selectedCell = east
+	}
+	if selectedCell == nil {
+		for _, cell := range setup.LiftShaftCellsFromBottomLeft(g) {
+			if cell == setup.LiftShaftBottomLeftCell(g) {
+				continue
+			}
+			if liftShaftMaintFits(g, cell, avoid) {
+				selectedCell = cell
+				break
+			}
+		}
+	}
+	if selectedCell == nil && len(cells) > 0 {
+		ordered := cells
+		setup.SortCellsByPosition(ordered)
+		for _, cell := range ordered {
+			if liftShaftMaintFits(g, cell, avoid) {
+				selectedCell = cell
+				break
+			}
+		}
+	}
+	if selectedCell == nil {
+		return
+	}
+	maintenanceTerm := entities.NewMaintenanceTerminal(fmt.Sprintf("Maintenance Terminal - %s", roomName), roomName)
+	// The shaft bootstrap generator is online from level start; its terminal is live too,
+	// so later placement passes can rely on shaft-pocket power control (e.g. exit-gating repairs).
+	if liftShaftHasPoweredGenerator(g) {
+		maintenanceTerm.Powered = true
+	}
+	gameworld.GetGameData(selectedCell).MaintenanceTerm = maintenanceTerm
+	avoid.Put(selectedCell)
+}
+
+func liftShaftHasPoweredGenerator(g *state.Game) bool {
+	for _, cell := range setup.LiftShaftCellsFromBottomLeft(g) {
+		gen := gameworld.GetGameData(cell).Generator
+		if gen != nil && gen.IsPowered() {
+			return true
+		}
+	}
+	return false
+}
+
+func liftShaftMaintFits(g *state.Game, cell *world.Cell, avoid *mapset.Set[*world.Cell]) bool {
+	if g == nil || cell == nil || !cell.Room || cell.Name != generator.ShaftRoomName {
+		return false
+	}
+	if (avoid != nil && avoid.Has(cell)) || cell.ExitCell {
+		return false
+	}
+	data := gameworld.GetGameData(cell)
+	if data.Generator != nil || data.Door != nil || data.Terminal != nil ||
+		data.Puzzle != nil || data.Furniture != nil || data.Hazard != nil ||
+		data.HazardControl != nil || data.MaintenanceTerm != nil ||
+		data.RepairDevice != nil || data.RepairBlocker != nil ||
+		cell.ItemsOnFloor.Size() > 0 {
+		return false
+	}
+	// Must not strand other blocking entities (e.g. take the shaft bootstrap generator's
+	// last adjacent stand cell): downstream placement passes (repairs, routing couplers)
+	// refuse all cells once any entity loses nav access, breaking run progression.
+	return setup.CandidateBlockingCellHasAdjacentNavSpace(g, cell, avoid) &&
+		setup.BlockingPlacementPreservesNavAccess(g, cell) &&
+		setup.CompletionRegionPreserved(g, cell)
 }

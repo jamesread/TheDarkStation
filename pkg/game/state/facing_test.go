@@ -56,3 +56,36 @@ func TestFacingToward(t *testing.T) {
 		t.Error("FacingToward diagonal should be false")
 	}
 }
+
+func TestAdjacentCellsClockwiseFromFacing(t *testing.T) {
+	grid := world.NewGrid(3, 3)
+	for r := 0; r < 3; r++ {
+		for c := 0; c < 3; c++ {
+			grid.MarkAsRoom(r, c)
+		}
+	}
+	grid.BuildAllCellConnections()
+	center := grid.GetCell(1, 1)
+
+	tests := []struct {
+		facing PlayerFacing
+		want   []*world.Cell
+	}{
+		{FaceNorth, []*world.Cell{center.North, center.East, center.South, center.West}},
+		{FaceEast, []*world.Cell{center.East, center.South, center.West, center.North}},
+		{FaceSouth, []*world.Cell{center.South, center.West, center.North, center.East}},
+		{FaceWest, []*world.Cell{center.West, center.North, center.East, center.South}},
+	}
+	for _, tt := range tests {
+		got := AdjacentCellsClockwiseFromFacing(center, tt.facing)
+		if len(got) != len(tt.want) {
+			t.Fatalf("facing %v: len=%d, want %d", tt.facing, len(got), len(tt.want))
+		}
+		for i := range tt.want {
+			if got[i] != tt.want[i] {
+				t.Errorf("facing %v index %d = (%d,%d), want (%d,%d)",
+					tt.facing, i, got[i].Row, got[i].Col, tt.want[i].Row, tt.want[i].Col)
+			}
+		}
+	}
+}

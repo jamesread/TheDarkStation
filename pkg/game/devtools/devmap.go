@@ -234,6 +234,7 @@ func SwitchToDevMap(g *state.Game) {
 	g.Grid = grid
 	g.CurrentDeckID = deck.TotalDecks
 	g.Level = 999 // Mark as dev map
+	g.PerfMapScenario = ""
 	g.UpdatePowerSupply()
 	g.PowerConsumption = g.CalculatePowerConsumption()
 	g.ClearMessages()

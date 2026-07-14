@@ -1,6 +1,7 @@
 package generator
 
 import (
+	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/levelrand"
 
 	"darkstation/pkg/engine/world"
@@ -16,7 +17,8 @@ func (g *LineWalkerGenerator) Name() string {
 }
 
 // Generate creates a new grid for the given level
-func (g *LineWalkerGenerator) Generate(level int) *world.Grid {
+func (g *LineWalkerGenerator) Generate(level int, theme deck.Theme) *world.Grid {
+	_ = theme
 	grid := &world.Grid{}
 
 	// Scale grid size with level (add 2 extra for perimeter walls)

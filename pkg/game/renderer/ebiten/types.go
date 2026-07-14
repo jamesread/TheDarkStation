@@ -25,6 +25,9 @@ type HazardTourAdvanceFunc func(g *state.Game, nowMs int64)
 // HintRefresher updates on-map control callouts after the primary input device changes.
 type HintRefresher func(g *state.Game)
 
+// RepairTimerAdvanceFunc runs gameplay side effects after timed repairs complete.
+type RepairTimerAdvanceFunc func(g *state.Game)
+
 // Callout represents a floating message displayed near a cell
 type Callout struct {
 	Row       int    // Cell row
@@ -57,6 +60,8 @@ type renderSnapshot struct {
 	valid             bool
 	seq               uint64
 	level             int
+	deckTitle         string // Theme display name (e.g. "Airlock")
+	perfMapScenario   string // Non-empty on console perfmap layouts
 	playerRow         int
 	playerCol         int
 	playerFacing      state.PlayerFacing
@@ -64,6 +69,7 @@ type renderSnapshot struct {
 	hasMap            bool
 	batteries         int
 	ownedItems        []string
+	runKeycards       []string
 	generators        []generatorState
 	gridRows          int
 	gridCols          int
@@ -79,14 +85,33 @@ type renderSnapshot struct {
 		row int
 		col int
 	} // Cells with interactable objects (for focus background)
-	longUseActive    bool
-	longUseProgress  float64
-	longUseTargetRow int
-	longUseTargetCol int
-	hazardClear      *state.HazardClearSession
-	hazardTour       *state.HazardTourSession
-	powerGrid        powerGridSnapshot
-	mapPower         mapPowerSnapshot
+	longUseActive           bool
+	longUseProgress         float64
+	longUseTargetRow        int
+	longUseTargetCol        int
+	repairDrains            []repairDrainSnapshot
+	slimePops               []slimePopSnapshot
+	generatorShutdownActive bool
+	generatorShutdownAtMs   int64
+	generatorShutdownRow    int
+	generatorShutdownCol    int
+	hazardClear             *state.HazardClearSession
+	hazardTour              *state.HazardTourSession
+	powerGrid               powerGridSnapshot
+	mapPower                mapPowerSnapshot
+	devicePulses            []devicePulseSnapshot
+}
+
+type repairDrainSnapshot struct {
+	row      int
+	col      int
+	progress float64
+}
+
+type slimePopSnapshot struct {
+	row      int
+	col      int
+	progress float64
 }
 
 // mapPowerSnapshot holds power routing state copied on the game thread for race-free Draw.
@@ -162,6 +187,10 @@ type EbitenRenderer struct {
 	cachedSansBoldTitleFace *text.GoTextFace // Sans bold 2pt larger for menu title text
 	cachedSansBoldTitleSize float64          // Size used for cachedSansBoldTitleFace
 	cachedMonoUIFace        *text.GoTextFace // Monospace font with UI size (for console)
+	monoGlyphMetrics        map[string]glyphMetrics
+	monoGlyphMetricsSize    float64
+	roomLabelTextWidth      map[string]float64
+	roomLabelTextWidthSize  float64
 
 	// Current game state (set by RenderFrame)
 	game      *state.Game
@@ -174,6 +203,10 @@ type EbitenRenderer struct {
 	// Active callouts (floating messages near cells)
 	callouts      []Callout
 	calloutsMutex sync.RWMutex
+
+	// Station-noticed pulses: cellCoordKey -> start ms (guarded by devicePulseMutex)
+	devicePulses     map[uint64]int64
+	devicePulseMutex sync.Mutex
 
 	// Track last player position to clear callouts on move
 	lastPlayerRow      int
@@ -198,6 +231,7 @@ type EbitenRenderer struct {
 	longUsePrevHeld      bool
 	hazardClearAdvancer  HazardClearAdvanceFunc
 	hazardTourAdvancer   HazardTourAdvanceFunc
+	repairTimerAdvancer  RepairTimerAdvanceFunc
 	hintRefresher        HintRefresher
 
 	// Flag indicating renderer is running
@@ -220,6 +254,16 @@ type EbitenRenderer struct {
 	prevMenuLabels   []string
 	prevMenuTitle    string
 	prevMenuHelpText string
+	prevMenuSelected int
+
+	// Title-screen menu transition (main menu <-> bindings / video)
+	menuPanelTransitionAnimating bool
+	menuPanelTransitionForward   bool
+	menuPanelTransitionStartMs   int64
+	menuPanelTransitionFromW     int
+	menuPanelTransitionToW       int
+	menuPanelTransitionFromH     float64
+	menuPanelTransitionToH       float64
 
 	// Menu highlight animation state
 	menuHighlightAnimStartIndex  int
@@ -234,6 +278,9 @@ type EbitenRenderer struct {
 	menuHeightAnimTargetHeight float64 // Height at target of animation
 	menuHeightAnimStartTime    int64   // Timestamp when height animation started (milliseconds)
 	menuHeightAnimating        bool
+
+	// Settings menu: tab height resize baseline
+	settingsMenuHeightBaseline float64
 
 	// menuAnimClockMilli is set once per Ebiten Update(). Menu overlay animations must not use
 	// time.Now() inside Draw() — Ebiten may call Draw multiple times per Update, which caused
@@ -255,6 +302,10 @@ type EbitenRenderer struct {
 	// Maps gamepad ID to previous stick state (x, y values)
 	stickState      map[ebiten.GamepadID]struct{ x, y float64 }
 	stickStateMutex sync.RWMutex
+
+	// gamepadNavDir tracks the latched navigation direction per controller.
+	gamepadNavDir   map[ebiten.GamepadID]string
+	gamepadNavMutex sync.Mutex
 
 	// Key repeat state tracking
 	// Maps key/button codes to their repeat state
@@ -301,8 +352,10 @@ type EbitenRenderer struct {
 	envPlaquesCache      []envPlaque
 
 	// Background animation for main menu (floating tiles)
-	floatingTiles      []floatingTile
-	floatingTilesMutex sync.RWMutex
+	floatingTiles          []floatingTile
+	floatingTilesScreenW   int // last screen size used for density / spawn regions
+	floatingTilesScreenH   int
+	floatingTilesMutex     sync.RWMutex
 
 	// Developer message (bottom-left overlay; e.g. map dump confirmation)
 	developerMessage      string
@@ -357,11 +410,17 @@ type EbitenRenderer struct {
 type mapDrawCache struct {
 	valid                        bool
 	snapSeq                      uint64
-	camRowMilli, camColMilli     int64
 	startRow, startCol           int
-	blitX, blitY                 float64
 	bufW, bufH                   int
 	tileSize, viewRows, viewCols int
+	// animBucket time-buckets the cache so idle ambient animation (conduit
+	// shimmer, headlamp flicker, device pulses, exit pulse) keeps playing.
+	animBucket int64
+}
+
+type glyphMetrics struct {
+	w float64
+	h float64
 }
 
 type mapPowerSnapCacheKey struct {
@@ -380,8 +439,9 @@ type roomLabelsCacheKey struct {
 }
 
 type objectivesCacheKey struct {
-	level, movementCount, interactionsCount int
-	unpoweredGenerators                     int
+	level, interactionsCount int
+	unpoweredGenerators      int
+	repairSignature          string
 }
 
 type envPlaquesCacheKey struct {

@@ -2,6 +2,7 @@
 package setup
 
 import (
+	"darkstation/pkg/game/gamemode"
 	"darkstation/pkg/game/levelrand"
 
 	"github.com/zyedidia/generic/mapset"
@@ -13,9 +14,12 @@ import (
 
 // placeBatteries places batteries in the level.
 func placeBatteries(g *state.Game, avoid *mapset.Set[*world.Cell]) {
+	prefs := g.ItemPlacement()
 	// Levels 3+: Exit requires generators, so place batteries
 	if g.Level >= 3 {
-		placeBatteriesForGenerators(g, avoid)
+		if prefs.PlaceFloorBatteries {
+			placeBatteriesForGenerators(g, avoid, prefs)
+		}
 	} else {
 		// Level 1-2: Spawn generator is already powered, so no batteries needed
 		// Batteries can be found in furniture for other uses
@@ -24,19 +28,17 @@ func placeBatteries(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 }
 
 // placeBatteriesForGenerators places batteries needed for generators
-func placeBatteriesForGenerators(g *state.Game, avoid *mapset.Set[*world.Cell]) {
+func placeBatteriesForGenerators(g *state.Game, avoid *mapset.Set[*world.Cell], prefs gamemode.ItemPlacementPrefs) {
 	demand := unpoweredGeneratorBatteryDemand(g)
 	if demand == 0 {
 		return
 	}
 
-	// Add 1-2 extra batteries per level for buffer
-	extraBatteries := 1 + levelrand.Intn(2)
-	totalBatteries := demand + extraBatteries
+	totalBatteries := demand + prefs.ExtraBatteryRoll(levelrand.Intn)
 
 	for i := 0; i < totalBatteries; i++ {
 		battery := world.NewItem("Battery")
-		placeItem(g, g.Grid.StartCell(), battery, avoid)
+		placeItem(g, PlayerEntryCell(g), battery, avoid)
 	}
 }
 

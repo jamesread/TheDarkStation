@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/state"
 )
 
@@ -13,16 +14,16 @@ func TestMapDrawCacheHit_reusesMatchingFrame(t *testing.T) {
 		viewportRows: 11,
 		viewportCols: 15,
 	}
-	e.storeMapDrawCache(3, 50, 100, 44, 92, 10.5, 20.25, 360, 264)
+	e.storeMapDrawCache(3, 44, 92, 360, 264)
 
-	if _, _, ok := e.mapDrawCacheHit(3, 50, 100, 44, 92, 360, 264); !ok {
+	if !e.mapDrawCacheHit(3, 44, 92, 360, 264) {
 		t.Fatal("expected cache hit for identical frame")
 	}
-	if _, _, ok := e.mapDrawCacheHit(4, 50, 100, 44, 92, 360, 264); ok {
+	if e.mapDrawCacheHit(4, 44, 92, 360, 264) {
 		t.Fatal("expected cache miss when snap seq changes")
 	}
-	if _, _, ok := e.mapDrawCacheHit(3, 51, 100, 44, 92, 360, 264); ok {
-		t.Fatal("expected cache miss when camera moves")
+	if e.mapDrawCacheHit(3, 45, 92, 360, 264) {
+		t.Fatal("expected cache miss when viewport tile origin changes")
 	}
 }
 
@@ -40,5 +41,20 @@ func TestRefreshMapPowerSnapshot_reusesLiveCells(t *testing.T) {
 	e.refreshMapPowerSnapshot(g, snap)
 	if snap.mapPower.livePowerCells == nil || !snap.mapPower.livePowerCells[123] {
 		t.Fatal("expected cached live power cells to be reused")
+	}
+}
+
+func TestBuildObjectivesCacheKey_includesRepairProgress(t *testing.T) {
+	e := &EbitenRenderer{}
+	g := state.NewGame()
+	repair := entities.NewRepairObjective("pump", entities.RepairWastePump, "Pump", 0, 0)
+	g.RepairObjectives = []*entities.RepairObjective{repair}
+
+	before := e.buildObjectivesCacheKey(g)
+	repair.Complete()
+	after := e.buildObjectivesCacheKey(g)
+
+	if before == after {
+		t.Fatal("repair progress should affect objective cache key")
 	}
 }

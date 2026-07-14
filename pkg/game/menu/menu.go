@@ -8,6 +8,7 @@ import (
 
 	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/game/renderer"
+	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 )
 
@@ -53,6 +54,21 @@ type DynamicMenuHandler interface {
 	GetMenuItems() []MenuItem
 }
 
+// InitialSelectionProvider optionally sets the first highlighted row when a menu opens.
+type InitialSelectionProvider interface {
+	InitialMenuSelection(items []MenuItem) int
+}
+
+// HorizontalTabNavigator optionally handles left/right on a horizontal tab strip.
+type HorizontalTabNavigator interface {
+	TryHorizontalTabNav(items []MenuItem, selected int, intent engineinput.Intent) (newSelected int, consumed bool, helpText string)
+}
+
+// TabStripNavigator optionally handles up/down around a horizontal tab strip.
+type TabStripNavigator interface {
+	TryVerticalTabNav(items []MenuItem, selected int, intent engineinput.Intent) (newSelected int, consumed bool)
+}
+
 // MaintenanceRoomProvider is an optional interface for handlers that display a maintenance view
 // for a specific room. When implemented, the room name is set on game state so the renderer can
 // highlight that room's wall cells on the map. selectedIndex and items are the current menu
@@ -67,6 +83,16 @@ type QuitShortcutHandler interface {
 	HandleQuitShortcut(g *state.Game) (closeMenu bool)
 }
 
+// CancelShortcutHandler handles the cancel/back shortcut while a menu is open.
+type CancelShortcutHandler interface {
+	HandleCancelShortcut(g *state.Game) (closeMenu bool)
+}
+
+// PerfMapShortcutHandler handles developer perf-map console requests while a menu is open.
+type PerfMapShortcutHandler interface {
+	HandlePerfMapShortcut(g *state.Game, scenario string) (closeMenu bool)
+}
+
 // MenuRenderer is an optional interface for renderers that can draw
 // a full-screen menu overlay on top of the map.
 type MenuRenderer interface {
@@ -79,17 +105,23 @@ type MenuRenderer interface {
 // RunMenu runs a generic menu with the given items and handler.
 func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 	selected := 0
-	helpText := ""
-
-	// Find first selectable item
-	for i, item := range items {
-		if item.IsSelectable() {
-			selected = i
-			break
+	if isp, ok := handler.(InitialSelectionProvider); ok {
+		selected = isp.InitialMenuSelection(items)
+	} else {
+		// Find first selectable item
+		for i, item := range items {
+			if item.IsSelectable() {
+				selected = i
+				break
+			}
 		}
 	}
 
+	helpText := ""
+
 	for {
+		advanceMenuTimers(g)
+
 		// Set maintenance room for renderer to highlight walls (when handler provides it)
 		if provider, ok := handler.(MaintenanceRoomProvider); ok {
 			g.MaintenanceMenuRoom = provider.GetMaintenanceRoom(selected, items)
@@ -115,6 +147,27 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 			}
 			handler.OnExit()
 			return
+		}
+
+		if htn, ok := handler.(HorizontalTabNavigator); ok {
+			if newSel, consumed, ht := htn.TryHorizontalTabNav(items, selected, intent); consumed {
+				selected = newSel
+				helpText = ""
+				if ht != "" {
+					helpText = ht
+				}
+				handler.OnSelect(items[selected], selected)
+				continue
+			}
+		}
+
+		if tsv, ok := handler.(TabStripNavigator); ok {
+			if newSel, consumed := tsv.TryVerticalTabNav(items, selected, intent); consumed {
+				selected = newSel
+				helpText = ""
+				handler.OnSelect(items[selected], selected)
+				continue
+			}
 		}
 
 		if consumed, ht := handleCycleIntent(items, selected, intent); consumed {
@@ -208,7 +261,16 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 			}
 			handler.OnExit()
 			return
-		case engineinput.ActionOpenMenu:
+		case engineinput.ActionOpenMenu, engineinput.ActionCancel:
+			if intent.Action == engineinput.ActionCancel {
+				closeMenu := true
+				if csh, ok := handler.(CancelShortcutHandler); ok {
+					closeMenu = csh.HandleCancelShortcut(g)
+				}
+				if !closeMenu {
+					continue
+				}
+			}
 			// Exit menu
 			g.ClearMessages()
 			if mr, ok := renderer.Current.(MenuRenderer); ok {
@@ -216,6 +278,18 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 			}
 			handler.OnExit()
 			return
+		case engineinput.ActionPerfTestMap:
+			if pmh, ok := handler.(PerfMapShortcutHandler); ok {
+				if !pmh.HandlePerfMapShortcut(g, intent.Code) {
+					continue
+				}
+				g.ClearMessages()
+				if mr, ok := renderer.Current.(MenuRenderer); ok {
+					mr.ClearMenu()
+				}
+				handler.OnExit()
+				return
+			}
 		case engineinput.ActionNone:
 			// Ignore
 		default:
@@ -229,6 +303,7 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 	selected := 0
 	helpText := ""
+	initialized := false
 
 	// Clear maintenance map overlay state when menu exits (all return paths)
 	defer func() {
@@ -238,7 +313,16 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 	}()
 
 	for {
+		advanceMenuTimers(g)
+
 		items := handler.GetMenuItems()
+
+		if !initialized {
+			if isp, ok := handler.(InitialSelectionProvider); ok {
+				selected = isp.InitialMenuSelection(items)
+			}
+			initialized = true
+		}
 
 		// Find first selectable item, or keep current if still valid
 		if selected >= len(items) || !items[selected].IsSelectable() {
@@ -277,6 +361,27 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 			}
 			handler.OnExit()
 			return
+		}
+
+		if htn, ok := handler.(HorizontalTabNavigator); ok {
+			if newSel, consumed, ht := htn.TryHorizontalTabNav(items, selected, intent); consumed {
+				selected = newSel
+				helpText = ""
+				if ht != "" {
+					helpText = ht
+				}
+				handler.OnSelect(items[selected], selected)
+				continue
+			}
+		}
+
+		if tsv, ok := handler.(TabStripNavigator); ok {
+			if newSel, consumed := tsv.TryVerticalTabNav(items, selected, intent); consumed {
+				selected = newSel
+				helpText = ""
+				handler.OnSelect(items[selected], selected)
+				continue
+			}
 		}
 
 		if consumed, ht := handleCycleIntent(items, selected, intent); consumed {
@@ -365,7 +470,16 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 			}
 			handler.OnExit()
 			return
-		case engineinput.ActionOpenMenu:
+		case engineinput.ActionOpenMenu, engineinput.ActionCancel:
+			if intent.Action == engineinput.ActionCancel {
+				closeMenu := true
+				if csh, ok := handler.(CancelShortcutHandler); ok {
+					closeMenu = csh.HandleCancelShortcut(g)
+				}
+				if !closeMenu {
+					continue
+				}
+			}
 			g.ClearMessages()
 			if mr, ok := renderer.Current.(MenuRenderer); ok {
 				mr.ClearMenu()
@@ -378,6 +492,13 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 			// Ignore other actions while in menu
 		}
 	}
+}
+
+func advanceMenuTimers(g *state.Game) {
+	if g == nil {
+		return
+	}
+	setup.AdvanceGeneratorShutdown(g, setup.PowerNowMs())
 }
 
 // renderMenuFallback renders the menu in the message log as a fallback.
