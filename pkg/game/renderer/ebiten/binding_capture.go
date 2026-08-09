@@ -61,7 +61,7 @@ func pollKeyboardBindingCapture() string {
 }
 
 func pollGamepadBindingCapture(e *EbitenRenderer) (string, bool) {
-	for _, id := range ebiten.AppendGamepadIDs(nil) {
+	for _, id := range appendUsableGamepadIDs(nil) {
 		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton1) {
 			return "", true
 		}

@@ -41,6 +41,27 @@ func TestIsMovementIntent(t *testing.T) {
 	}
 }
 
+func TestIsPointerDeviceGamepadName(t *testing.T) {
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{"Elan Touchpad", true},
+		{"Apple Inc. Magic Trackpad", true},
+		{"TPPS/2 Elan TrackPoint", true},
+		{"Logitech USB Optical Mouse", true},
+		{"Xbox Wireless Controller", false},
+		{"Wireless Controller", false}, // DualShock / DualSense style
+		{"Nintendo Switch Pro Controller", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := isPointerDeviceGamepadName(tc.name); got != tc.want {
+			t.Errorf("isPointerDeviceGamepadName(%q) = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func engineinputIntent(action engineinput.Action) engineinput.Intent {
 	return engineinput.Intent{Action: action}
 }

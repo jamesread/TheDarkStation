@@ -7,6 +7,7 @@ import (
 	"github.com/leonelquinteros/gotext"
 
 	engineinput "darkstation/pkg/engine/input"
+	"darkstation/pkg/game/audio"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
@@ -151,6 +152,7 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 
 		if htn, ok := handler.(HorizontalTabNavigator); ok {
 			if newSel, consumed, ht := htn.TryHorizontalTabNav(items, selected, intent); consumed {
+				playMenuNavSound(selected, newSel, intent.Action)
 				selected = newSel
 				helpText = ""
 				if ht != "" {
@@ -163,6 +165,7 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 
 		if tsv, ok := handler.(TabStripNavigator); ok {
 			if newSel, consumed := tsv.TryVerticalTabNav(items, selected, intent); consumed {
+				playMenuNavSound(selected, newSel, intent.Action)
 				selected = newSel
 				helpText = ""
 				handler.OnSelect(items[selected], selected)
@@ -171,6 +174,7 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 		}
 
 		if consumed, ht := handleCycleIntent(items, selected, intent); consumed {
+			audio.PlayMenuConfirm()
 			if ht != "" {
 				helpText = ht
 			}
@@ -189,6 +193,7 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 		switch intent.Action {
 		case engineinput.ActionMoveNorth:
 			// Move selection up to previous selectable item (with wrap-around)
+			prev := selected
 			found := false
 			for i := selected - 1; i >= 0; i-- {
 				if items[i].IsSelectable() {
@@ -210,8 +215,10 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 					}
 				}
 			}
+			playMenuNavSound(prev, selected, engineinput.ActionMoveNorth)
 		case engineinput.ActionMoveSouth:
 			// Move selection down to next selectable item (with wrap-around)
+			prev := selected
 			found := false
 			for i := selected + 1; i < len(items); i++ {
 				if items[i].IsSelectable() {
@@ -233,9 +240,11 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 					}
 				}
 			}
+			playMenuNavSound(prev, selected, engineinput.ActionMoveSouth)
 		case engineinput.ActionAction, engineinput.ActionInteract:
 			// Activate selected item
 			if selected >= 0 && selected < len(items) && items[selected].IsSelectable() {
+				audio.PlayMenuConfirm()
 				shouldClose, newHelpText := handler.OnActivate(items[selected], selected)
 				helpText = newHelpText
 				if shouldClose {
@@ -365,6 +374,7 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 
 		if htn, ok := handler.(HorizontalTabNavigator); ok {
 			if newSel, consumed, ht := htn.TryHorizontalTabNav(items, selected, intent); consumed {
+				playMenuNavSound(selected, newSel, intent.Action)
 				selected = newSel
 				helpText = ""
 				if ht != "" {
@@ -377,6 +387,7 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 
 		if tsv, ok := handler.(TabStripNavigator); ok {
 			if newSel, consumed := tsv.TryVerticalTabNav(items, selected, intent); consumed {
+				playMenuNavSound(selected, newSel, intent.Action)
 				selected = newSel
 				helpText = ""
 				handler.OnSelect(items[selected], selected)
@@ -385,6 +396,7 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 		}
 
 		if consumed, ht := handleCycleIntent(items, selected, intent); consumed {
+			audio.PlayMenuConfirm()
 			if ht != "" {
 				helpText = ht
 			}
@@ -402,6 +414,7 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 
 		switch intent.Action {
 		case engineinput.ActionMoveNorth:
+			prev := selected
 			found := false
 			for i := selected - 1; i >= 0; i-- {
 				if items[i].IsSelectable() {
@@ -422,7 +435,9 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 					}
 				}
 			}
+			playMenuNavSound(prev, selected, engineinput.ActionMoveNorth)
 		case engineinput.ActionMoveSouth:
+			prev := selected
 			found := false
 			for i := selected + 1; i < len(items); i++ {
 				if items[i].IsSelectable() {
@@ -443,8 +458,10 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 					}
 				}
 			}
+			playMenuNavSound(prev, selected, engineinput.ActionMoveSouth)
 		case engineinput.ActionAction, engineinput.ActionInteract:
 			if selected >= 0 && selected < len(items) && items[selected].IsSelectable() {
+				audio.PlayMenuConfirm()
 				shouldClose, newHelpText := handler.OnActivate(items[selected], selected)
 				helpText = newHelpText
 				if shouldClose {
@@ -499,6 +516,25 @@ func advanceMenuTimers(g *state.Game) {
 		return
 	}
 	setup.AdvanceGeneratorShutdown(g, setup.PowerNowMs())
+}
+
+// playMenuNavSound plays up/down SFX when the highlighted row changes.
+func playMenuNavSound(from, to int, action engineinput.Action) {
+	if from == to {
+		return
+	}
+	switch action {
+	case engineinput.ActionMoveNorth, engineinput.ActionMoveWest:
+		audio.PlayMenuUp()
+	case engineinput.ActionMoveSouth, engineinput.ActionMoveEast:
+		audio.PlayMenuDown()
+	default:
+		if to < from {
+			audio.PlayMenuUp()
+		} else {
+			audio.PlayMenuDown()
+		}
+	}
 }
 
 // renderMenuFallback renders the menu in the message log as a fallback.

@@ -346,11 +346,8 @@ func (e *EbitenRenderer) pollGameplayIntent() engineinput.Intent {
 // NOTE: Button indices here are tuned for common XInput-style controllers on Linux;
 // mappings may vary between devices/platforms.
 func (e *EbitenRenderer) checkGamepadInput() engineinput.Intent {
-	// Collect currently connected gamepads
-	var ids []ebiten.GamepadID
-	ids = ebiten.AppendGamepadIDs(ids[:0])
-
-	for _, id := range ids {
+	// Skip touchpads/mice that GLFW exposes as joysticks (see isUsableGamepad).
+	for _, id := range appendUsableGamepadIDs(nil) {
 		if isDeveloperMenuGamepadChordJustPressed(id) {
 			log.Printf("[DevMenu] gamepad chord detected id=%d", id)
 			return engineinput.Intent{Action: engineinput.ActionDevMenu}
@@ -632,7 +629,7 @@ func isInteractPressed() bool {
 		ebiten.IsKeyPressed(ebiten.KeyKPEnter) {
 		return true
 	}
-	for _, id := range ebiten.AppendGamepadIDs(nil) {
+	for _, id := range appendUsableGamepadIDs(nil) {
 		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton0) ||
 			ebiten.IsGamepadButtonPressed(id, ebiten.GamepadButton0) {
 			return true

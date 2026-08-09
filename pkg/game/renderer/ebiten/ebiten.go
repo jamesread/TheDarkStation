@@ -14,6 +14,7 @@ import (
 	"golang.org/x/image/font/gofont/goregular"
 
 	engineinput "darkstation/pkg/engine/input"
+	"darkstation/pkg/game/audio"
 	"darkstation/pkg/game/config"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/resources"
@@ -123,6 +124,8 @@ func (e *EbitenRenderer) Init() {
 	}
 	log.Printf("[Font] Sans-serif bold: Go Bold (embedded)")
 	e.sansBoldFontSource = boldSrc
+
+	audio.Init()
 
 	// Calculate initial viewport based on window and tile size
 	e.recalculateViewport()

@@ -75,7 +75,7 @@ func hasKeyboardActivityNew() bool {
 
 func (e *EbitenRenderer) hasGamepadActivityNew() bool {
 	const deadZone = 0.5
-	for _, id := range ebiten.AppendGamepadIDs(nil) {
+	for _, id := range appendUsableGamepadIDs(nil) {
 		for btn := ebiten.GamepadButton0; btn <= ebiten.GamepadButtonMax; btn++ {
 			if inpututil.IsGamepadButtonJustPressed(id, btn) {
 				return true
@@ -88,6 +88,9 @@ func (e *EbitenRenderer) hasGamepadActivityNew() bool {
 		prev, ok := e.stickState[id]
 		e.stickStateMutex.RUnlock()
 		wasActive := ok && (abs(prev.x) > deadZone || abs(prev.y) > deadZone)
+		e.stickStateMutex.Lock()
+		e.stickState[id] = struct{ x, y float64 }{stickX, stickY}
+		e.stickStateMutex.Unlock()
 		if active && !wasActive {
 			return true
 		}

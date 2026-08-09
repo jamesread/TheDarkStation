@@ -2,6 +2,7 @@ package ebiten
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/hajimehoshi/ebiten/v2"
 
@@ -13,6 +14,51 @@ const (
 	gamepadStickReleaseThreshold = 0.42
 	gamepadStickCenterThreshold  = 0.22
 )
+
+// pointerDeviceNameNeedles matches GLFW "gamepads" that are actually pointer devices.
+// On Linux, touchpads often appear as joysticks whose axes track absolute finger position;
+// treating those as a left stick makes the player move when the trackpad is touched.
+var pointerDeviceNameNeedles = []string{
+	"touchpad",
+	"trackpad",
+	"trackpoint",
+	"touchscreen",
+	"touch screen",
+	"mouse",
+	"pointer",
+}
+
+// isPointerDeviceGamepadName reports whether a GLFW gamepad name is a pointer device.
+func isPointerDeviceGamepadName(name string) bool {
+	n := strings.ToLower(name)
+	for _, needle := range pointerDeviceNameNeedles {
+		if strings.Contains(n, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// isUsableGamepad reports whether id should drive gamepad navigation / bindings.
+// Devices with a standard controller mapping are always accepted; otherwise pointer-like
+// names (touchpads, mice) are rejected so obscure unmapped pads still work.
+func isUsableGamepad(id ebiten.GamepadID) bool {
+	if ebiten.IsStandardGamepadLayoutAvailable(id) {
+		return true
+	}
+	return !isPointerDeviceGamepadName(ebiten.GamepadName(id))
+}
+
+// appendUsableGamepadIDs appends connected controllers, skipping pointer devices
+// that GLFW exposes as joysticks (notably laptop touchpads).
+func appendUsableGamepadIDs(gamepadIDs []ebiten.GamepadID) []ebiten.GamepadID {
+	for _, id := range ebiten.AppendGamepadIDs(nil) {
+		if isUsableGamepad(id) {
+			gamepadIDs = append(gamepadIDs, id)
+		}
+	}
+	return gamepadIDs
+}
 
 // stickNavDirection resolves the left stick to a single navigation direction with hysteresis
 // so analog noise around the dead zone does not retrigger movement every frame.

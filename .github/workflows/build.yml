@@ -43,7 +43,8 @@ jobs:
             libxxf86vm-dev \
             libgl1-mesa-dev \
             libxkbcommon-dev \
-            libxext-dev
+            libxext-dev \
+            libasound2-dev
 
       - name: Install MinGW for Windows cross-compilation
         run: sudo apt-get install -y gcc-mingw-w64

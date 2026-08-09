@@ -72,7 +72,7 @@ func (e *EbitenRenderer) handleConfirmDialogInput() {
 		return
 	}
 
-	for _, id := range ebiten.AppendGamepadIDs(nil) {
+	for _, id := range appendUsableGamepadIDs(nil) {
 		if inpututil.IsGamepadButtonJustPressed(id, ebiten.GamepadButton0) {
 			e.notePrimaryDevice(engineinput.DeviceGamepad)
 			send(true)
