@@ -11,6 +11,7 @@ import (
 
 	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/audio"
 	"darkstation/pkg/game/devtools"
 	"darkstation/pkg/game/entities"
 	gamemenu "darkstation/pkg/game/menu"
@@ -151,6 +152,7 @@ func ProcessIntent(g *state.Game, intent engineinput.Intent) {
 		interacted := CheckAdjacentInteractables(g)
 		log.Printf("[Interact] ProcessIntent: CheckAdjacentInteractables returned %v", interacted)
 		if !interacted {
+			audio.PlayUseDeny()
 			logMessage(g, "Nothing to interact with here.")
 		}
 		return

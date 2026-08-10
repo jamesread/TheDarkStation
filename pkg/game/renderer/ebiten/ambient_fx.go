@@ -78,12 +78,17 @@ func (e *EbitenRenderer) ambientTileColors(g *state.Game, cell *world.Cell, snap
 		return bg, fg
 	}
 	nowMs := time.Now().UnixMilli()
+	knowledge := cellKnowledgeTier(g, cell)
 
-	if startMs, ok := snapDevicePulseAt(snap, cell.Row, cell.Col); ok {
-		return devicePulseColors(bg, fg, opts, nowMs-startMs)
+	// A remote state transition may pulse a known device, but must never reveal
+	// equipment on an unknown or floor-plan-only cell.
+	if knowledge >= knowledgeRemembered {
+		if startMs, ok := snapDevicePulseAt(snap, cell.Row, cell.Col); ok {
+			return devicePulseColors(bg, fg, opts, nowMs-startMs)
+		}
 	}
 
-	if cellKnowledgeTier(g, cell) != knowledgeLive {
+	if knowledge != knowledgeLive {
 		return bg, fg
 	}
 	if snapCellHasLivePower(snap, cell) {

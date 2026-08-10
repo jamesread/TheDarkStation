@@ -9,7 +9,7 @@ import (
 
 	"github.com/leonelquinteros/gotext"
 
-	engineinput 	"darkstation/pkg/engine/input"
+	engineinput "darkstation/pkg/engine/input"
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/deck"
 	"darkstation/pkg/game/entities"
@@ -19,6 +19,35 @@ import (
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
 )
+
+func repairObjectiveLine(g *state.Game, remaining int) string {
+	if g != nil {
+		for _, repair := range g.RepairObjectives {
+			if repair == nil || repair.IsComplete() || repair.SkipExitGate || !repair.Inspected {
+				continue
+			}
+			if upstream := g.FirstIncompleteRepairPrerequisite(repair); upstream != nil {
+				report := entities.RepairDependencyReport(repair, upstream)
+				return "Maintenance: " + report.Diagnosis
+			}
+			if len(repair.PrereqIDs) > 0 {
+				upstream := g.RepairByID(repair.PrereqIDs[0])
+				report := entities.RepairDependencyReport(repair, upstream)
+				return "Maintenance: " + report.Restored
+			}
+			for _, dependent := range g.RepairDependents(repair.ID) {
+				if dependent != nil && dependent.Inspected && !dependent.IsComplete() {
+					report := entities.RepairDependencyReport(dependent, repair)
+					return "Maintenance: " + report.Prediction
+				}
+			}
+		}
+	}
+	if remaining == 1 {
+		return "Repair deck system: 1 remaining"
+	}
+	return fmt.Sprintf("Repair deck systems: %d remaining", remaining)
+}
 
 // calculateObjectives calculates the current level objectives based on game state
 func (e *EbitenRenderer) calculateObjectives(g *state.Game) []string {
@@ -57,16 +86,18 @@ func (e *EbitenRenderer) calculateObjectives(g *state.Game) []string {
 		draining := g.ActiveRepairDrainCount()
 		if draining > 0 {
 			objectives = append(objectives, fmt.Sprintf("Drain toxic slime: %d active", draining))
-		} else if repairsRemaining == 1 {
-			objectives = append(objectives, "Repair deck system: 1 remaining")
 		} else {
-			objectives = append(objectives, fmt.Sprintf("Repair deck systems: %d remaining", repairsRemaining))
+			objectives = append(objectives, repairObjectiveLine(g, repairsRemaining))
 		}
 	}
 
 	// If all objectives are complete, show exit message
 	if unpoweredGenerators == 0 && numHazards == 0 && repairsRemaining == 0 {
-		objectives = append(objectives, "FIND_LIFT") // Will be translated in drawColoredTextSegments
+		if setup.ExitLiftReady(g) {
+			objectives = append(objectives, "Lift power transfer available")
+		} else {
+			objectives = append(objectives, "FIND_LIFT") // Will be translated in drawColoredTextSegments
+		}
 	}
 
 	return objectives
@@ -304,6 +335,18 @@ func (e *EbitenRenderer) RenderFrame(g *state.Game) {
 		}
 	} else {
 		e.snapshot.hazardTour = nil
+	}
+
+	if g.LiftRide != nil {
+		// Refresh visuals from wall clock so scroll stays smooth even if the
+		// Update-thread advancer skips a frame.
+		if !g.LiftRide.SwapInProgress {
+			g.LiftRide.UpdateVisual(time.Now().UnixMilli())
+		}
+		s := *g.LiftRide
+		e.snapshot.liftRide = &s
+	} else {
+		e.snapshot.liftRide = nil
 	}
 
 	capturePowerGridSnapshot(g, &e.snapshot)

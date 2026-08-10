@@ -49,13 +49,13 @@ type simState struct {
 	doorsPowered map[string]bool // room -> door circuit armed (sim view)
 	roomOnline   map[string]bool // room -> power online (sim view)
 
-	pickedUp                map[*world.Cell]map[string]bool
-	furnitureOpened         map[*entities.Furniture]bool
-	generatorOn             map[*entities.Generator]bool
-	repairDone              map[string]bool
-	hazardCleared           map[*entities.Hazard]bool
-	unlockKeycardsSpawned   bool
-	trace                   []string
+	pickedUp              map[*world.Cell]map[string]bool
+	furnitureOpened       map[*entities.Furniture]bool
+	generatorOn           map[*entities.Generator]bool
+	repairDone            map[string]bool
+	hazardCleared         map[*entities.Hazard]bool
+	unlockKeycardsSpawned bool
+	trace                 []string
 }
 
 func newSimState(g *state.Game) *simState {

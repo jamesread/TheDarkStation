@@ -184,6 +184,26 @@ func TestRebuildRepairObjectivesFromGrid(t *testing.T) {
 	}
 }
 
+func TestSaveAndLoadDeckState_PreservesRepairInspection(t *testing.T) {
+	g := NewGame()
+	g.CurrentDeckID = 0
+	g.Grid = makeMinimalGrid()
+	cell := g.Grid.GetCell(0, 0)
+	repair := entities.NewRepairObjective("known-repair", entities.RepairPressureValve, cell.Name, cell.Row, cell.Col)
+	repair.Inspect()
+	gameworld.GetGameData(cell).RepairDevice = repair
+	g.RepairObjectives = []*entities.RepairObjective{repair}
+
+	g.SaveCurrentDeckState()
+	g.RepairObjectives = nil
+	g.CurrentDeckID = 1
+	g.LoadDeckState(0)
+	loaded := g.RepairByID(repair.ID)
+	if loaded == nil || !loaded.Inspected {
+		t.Fatal("repair inspection knowledge should survive deck travel")
+	}
+}
+
 func TestUpdatePowerSupply_Deck0(t *testing.T) {
 	g := NewGame()
 	g.CurrentDeckID = 0
@@ -467,8 +487,8 @@ func TestSaveAndLoadDeckState_PreservesOwnedItems(t *testing.T) {
 	g := NewGame()
 	g.CurrentDeckID = 0
 	g.Grid = makeMinimalGrid()
-	g.OwnedItems.Put(world.NewItem("Keycard-A"))
-	g.OwnedItems.Put(world.NewItem("Keycard-B"))
+	g.OwnedItems.Put(world.NewItem("Spare Fuse-A"))
+	g.OwnedItems.Put(world.NewItem("Spare Fuse-B"))
 
 	g.SaveCurrentDeckState()
 
@@ -488,8 +508,8 @@ func TestSaveAndLoadDeckState_PreservesOwnedItems(t *testing.T) {
 	if g.OwnedItems.Size() != 2 {
 		t.Fatalf("after load, OwnedItems size = %d, want 2", g.OwnedItems.Size())
 	}
-	if !itemSetHasName(g.OwnedItems, "Keycard-A") || !itemSetHasName(g.OwnedItems, "Keycard-B") {
-		t.Errorf("after load, OwnedItems = %v, want Keycard-A and Keycard-B", g.OwnedItems)
+	if !itemSetHasName(g.OwnedItems, "Spare Fuse-A") || !itemSetHasName(g.OwnedItems, "Spare Fuse-B") {
+		t.Errorf("after load, OwnedItems = %v, want Spare Fuse-A and Spare Fuse-B", g.OwnedItems)
 	}
 }
 
@@ -497,22 +517,22 @@ func TestSaveAndLoadDeckState_OwnedItemsDeepCopyIsolation(t *testing.T) {
 	g := NewGame()
 	g.CurrentDeckID = 0
 	g.Grid = makeMinimalGrid()
-	g.OwnedItems.Put(world.NewItem("Keycard-A"))
+	g.OwnedItems.Put(world.NewItem("Spare Fuse-A"))
 
 	g.SaveCurrentDeckState()
 
 	ds := g.DeckStates[0]
-	g.OwnedItems.Put(world.NewItem("Keycard-B"))
+	g.OwnedItems.Put(world.NewItem("Spare Fuse-B"))
 
 	g.LoadDeckState(0)
 
 	if g.OwnedItems.Size() != 1 {
 		t.Fatalf("after load, OwnedItems size = %d, want 1 (deck snapshot only)", g.OwnedItems.Size())
 	}
-	if !itemSetHasName(g.OwnedItems, "Keycard-A") {
+	if !itemSetHasName(g.OwnedItems, "Spare Fuse-A") {
 		t.Error("loaded inventory should match saved deck, not live mutations after save")
 	}
-	if ds.OwnedItems.Size() != 1 || !itemSetHasName(ds.OwnedItems, "Keycard-A") {
+	if ds.OwnedItems.Size() != 1 || !itemSetHasName(ds.OwnedItems, "Spare Fuse-A") {
 		t.Error("saved deck inventory should remain unchanged when live inventory mutates")
 	}
 }

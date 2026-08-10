@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/audio"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
@@ -18,7 +19,7 @@ func IsHazardTourActive(g *state.Game) bool {
 
 // IsGameplayCinematicActive reports whether input should be blocked for a camera cinematic.
 func IsGameplayCinematicActive(g *state.Game) bool {
-	return IsHazardClearActive(g) || IsHazardTourActive(g)
+	return IsHazardClearActive(g) || IsHazardTourActive(g) || IsLiftRideActive(g)
 }
 
 // AdvanceHazardTourIfActive ticks an in-progress exit hazard tour (Ebiten Update thread).
@@ -122,10 +123,12 @@ func CheckAdjacentExitLiftAtCell(g *state.Game, cell *world.Cell) bool {
 		return false
 	}
 	if StartExitHazardTour(g) {
+		audio.PlayUseLift()
 		return true
 	}
 	if g != nil && g.IncompleteRepairCount() > 0 {
 		renderer.AddCallout(cell.Row, cell.Col, blockedLiftRepairCallout(g), renderer.CalloutColorMaintenance, 0)
+		audio.PlayUseDeny()
 		return true
 	}
 	return false

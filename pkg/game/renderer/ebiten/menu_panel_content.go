@@ -12,6 +12,27 @@ import (
 	"darkstation/pkg/game/renderer"
 )
 
+// menuLabelsUseTabColumns reports whether any label uses "\t" as a column separator.
+// Tab characters must not be drawn as glyphs; the UI font renders them as empty boxes.
+func menuLabelsUseTabColumns(labels []string) bool {
+	for _, label := range labels {
+		if strings.Contains(label, "\t") {
+			return true
+		}
+	}
+	return false
+}
+
+// menuTabColumnGap returns the pixel gap between tab-separated menu columns.
+func menuTabColumnGap(title string) int {
+	switch title {
+	case "Settings", "Bindings Menu", "Select Game Mode", "Audio", "Video":
+		return 32
+	default:
+		return 8
+	}
+}
+
 func colorWithAlpha(c color.Color, alpha float64) color.Color {
 	if alpha >= 1 {
 		return c
@@ -171,15 +192,9 @@ func (e *EbitenRenderer) drawMenuPanelContent(screen *ebiten.Image, p menuPanelC
 
 	var valueColumnX, wattsColumnX int
 	rightAlignPowerColumn := p.title == "Select room"
-	tableMenu := strings.Contains(p.title, "Maintenance Terminal") ||
-		p.title == "Select room" ||
-		p.title == "Settings" ||
-		p.title == "Bindings Menu" ||
-		p.title == "Developer Menu" ||
-		p.currentCellCharsMenu ||
-		p.title == "Video" ||
-		p.title == "Lift Routing"
-	if tableMenu {
+	// Any label with "\t" uses column layout. Never draw the tab glyph — UI fonts
+	// render it as an empty box (see AGENTS.md menu tab columns note).
+	if menuLabelsUseTabColumns(p.labels) {
 		var maxLabelW, maxValueW float64
 		for _, label := range p.labels {
 			before, after, ok := strings.Cut(label, "\t")
@@ -205,10 +220,7 @@ func (e *EbitenRenderer) drawMenuPanelContent(screen *ebiten.Image, p menuPanelC
 				}
 			}
 		}
-		valueColumnGap := 8
-		if p.title == "Settings" || p.title == "Bindings Menu" {
-			valueColumnGap = 32
-		}
+		valueColumnGap := menuTabColumnGap(p.title)
 		valueColumnX = x + int(maxLabelW) + valueColumnGap
 		if rightAlignPowerColumn {
 			wattsColumnX = p.panelX + p.panelW - paddingX

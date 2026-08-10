@@ -11,6 +11,7 @@ import (
 	"github.com/leonelquinteros/gotext"
 
 	engineinput "darkstation/pkg/engine/input"
+	"darkstation/pkg/game/audio"
 	"darkstation/pkg/game/devtools"
 	"darkstation/pkg/game/gamemode"
 	"darkstation/pkg/game/gameplay"
@@ -68,6 +69,7 @@ func main() {
 	ebitRenderer.SetRepairTimerAdvancer(gameplay.OnRepairTimersAdvanced)
 	ebitRenderer.SetHazardClearAdvancer(gameplay.AdvanceHazardClearIfActive)
 	ebitRenderer.SetHazardTourAdvancer(gameplay.AdvanceHazardTourIfActive)
+	ebitRenderer.SetLiftRideAdvancer(gameplay.AdvanceLiftRideIfActive)
 	ebitRenderer.SetHintRefresher(func(g *state.Game) {
 		gameplay.ShowInteractableHints(g)
 		gameplay.ShowMovementHint(g)
@@ -94,6 +96,7 @@ func main() {
 				devtools.SwitchToPerfMap(g, perfMapScenario)
 			case gamemenu.MainMenuActionQuit:
 				// Quit (should have been handled in RunMainMenu, but just in case)
+				ebitenRenderer.SaveMonitorPreference()
 				os.Exit(0)
 			default:
 				g = gameplay.BuildGameWithMode(*startLevel, selectedMode)
@@ -127,6 +130,7 @@ func main() {
 func runMainMenuInLoop(defaultMode gamemode.ID) (gamemenu.MainMenuAction, string, gamemode.ID) {
 	// Create a minimal game state for the menu (needed for rendering)
 	g := state.NewGame()
+	audio.PlayMusic(audio.TrackTitleAmbient)
 
 	for {
 		handler := gamemenu.NewMainMenuHandler()
@@ -134,6 +138,7 @@ func runMainMenuInLoop(defaultMode gamemode.ID) (gamemenu.MainMenuAction, string
 		gamemenu.RunMenu(g, items, handler)
 
 		if handler.ShouldQuit() {
+			ebitenRenderer.SaveMonitorPreference()
 			os.Exit(0)
 		}
 
@@ -228,5 +233,8 @@ func mainLoop(g *state.Game) {
 	}
 	if gameplay.IsHazardTourActive(g) {
 		gameplay.WaitForHazardTourComplete(g)
+	}
+	if gameplay.IsLiftRideActive(g) {
+		gameplay.WaitForLiftRideComplete(g)
 	}
 }

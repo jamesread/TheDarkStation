@@ -273,9 +273,7 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 	animTargetWidth := e.menuHighlightAnimTargetWidth
 	animStartTime := e.menuHighlightAnimStartTime
 	heightAnimating := e.menuHeightAnimating
-	heightStartHeight := e.menuHeightAnimStartHeight
 	heightTargetHeight := e.menuHeightAnimTargetHeight
-	heightStartTime := e.menuHeightAnimStartTime
 	panelTransition := e.menuPanelTransitionAnimating
 	panelTransitionForward := e.menuPanelTransitionForward
 	panelTransitionStart := e.menuPanelTransitionStartMs
@@ -337,9 +335,9 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 			e.finishMenuHeightAnimationIfDone(now)
 			e.genericMenuMutex.RLock()
 			heightAnimating = e.menuHeightAnimating
-			heightStartHeight = e.menuHeightAnimStartHeight
+			heightStartHeight := e.menuHeightAnimStartHeight
 			heightTargetHeight = e.menuHeightAnimTargetHeight
-			heightStartTime = e.menuHeightAnimStartTime
+			heightStartTime := e.menuHeightAnimStartTime
 			e.genericMenuMutex.RUnlock()
 			var easedProgress float64
 			if title == "Settings" {
@@ -370,7 +368,7 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 
 	const menuSideMargin = 16
 
-	panelW := menuPanelWidthForTitle(title, screenWidth, maintOverlayStable, devMenuRight)
+	panelW := e.resolveMenuPanelWidth(title, screenWidth, maintOverlayStable, devMenuRight, labels, helpText)
 	if panelTransition {
 		panelW = lerpInt(panelTransitionFromW, panelTransitionToW, panelResizeEased)
 	}
@@ -400,7 +398,7 @@ func (e *EbitenRenderer) drawGenericMenuOverlay(screen *ebiten.Image) {
 		// Main menu: same dark background as in-game menus
 		bgAlpha = 220
 		borderAlpha = 200
-	} else if title == "Settings" {
+	} else if titleScreenFloatingTilesMenu(title) {
 		e.snapshotMutex.RLock()
 		snapValid := e.snapshot.valid
 		e.snapshotMutex.RUnlock()
@@ -576,15 +574,22 @@ func (e *EbitenRenderer) getMenuLabelWidth(label string) float64 {
 	if renderer.IsPowerBarLine(label) {
 		return 220
 	}
-	// Parse markup to get actual text segments
-	segments := e.parseMarkup(label)
-
-	// Sum up the width of all segments
-	var totalWidth float64
-	for _, seg := range segments {
-		totalWidth += e.getTextWidth(seg.text)
+	// Tab-separated columns are drawn at aligned X positions; do not measure the tab glyph.
+	if strings.Contains(label, "\t") {
+		const columnGap = 32
+		var totalWidth float64
+		for i, part := range strings.Split(label, "\t") {
+			if part == "" {
+				continue
+			}
+			if i > 0 && totalWidth > 0 {
+				totalWidth += columnGap
+			}
+			totalWidth += e.getMarkupWidth(part)
+		}
+		return totalWidth
 	}
-	return totalWidth
+	return e.getMarkupWidth(label)
 }
 
 // calculateMenuHeight calculates the required height for a menu based on its content
@@ -632,7 +637,7 @@ func (e *EbitenRenderer) calculateMenuHeight(labels []string, title string, help
 			height += float64(powerBarMenuRowHeight(int(fontSize)))
 		} else if renderer.IsInventoryRowLine(label) {
 			height += float64(inventoryMenuRowHeight(int(fontSize)))
-	} else {
+		} else {
 			height += lineHeight
 			height += float64(inventorySectionHeaderExtraGap(title, labels, i, int(lineHeight)))
 		}

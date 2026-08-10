@@ -63,10 +63,10 @@ var (
 	colorLayoutBg     = color.RGBA{20, 20, 32, 255}    // Tile plate for floor-plan-only cells
 
 	// Deck 1 west overlay room (Ship)
-	colorShipFloor        = color.RGBA{72, 188, 210, 255}  // Cool hull teal
-	colorShipFloorVisited = color.RGBA{118, 220, 235, 255} // Brighter teal when visited
-	colorShipFloorBg      = color.RGBA{14, 42, 52, 255}     // Dark hull plate
-	colorShipFloorVisitedBg = color.RGBA{20, 56, 66, 255}   // Visited hull plate
+	colorShipFloor          = color.RGBA{72, 188, 210, 255}  // Cool hull teal
+	colorShipFloorVisited   = color.RGBA{118, 220, 235, 255} // Brighter teal when visited
+	colorShipFloorBg        = color.RGBA{14, 42, 52, 255}    // Dark hull plate
+	colorShipFloorVisitedBg = color.RGBA{20, 56, 66, 255}    // Visited hull plate
 	colorShipWall           = color.RGBA{108, 198, 208, 255} // Hull bulkhead foreground
 	colorShipWallBg         = color.RGBA{8, 28, 38, 255}     // Dark bulkhead plate (teal family)
 	// Callout colors
@@ -135,7 +135,7 @@ var roomFloorIcons = map[string][2]string{
 	"Airlock":         {"╳", "╳"}, // Special areas
 	"Corridor":        {"░", "░"}, // Corridors
 	"Lift Shaft":      {"▦", "▦"}, // Core lift shaft hub (mesh grating)
-	"Ship": {"⬢", "⬡"}, // Deck 1 player vessel hull
+	"Ship":            {"⬢", "⬡"}, // Deck 1 player vessel hull
 }
 
 // Tile size constraints

@@ -38,7 +38,7 @@ type LevelGenPrefs struct {
 	PlayRows int
 	PlayCols int
 	// LayoutLevel drives BSP split density when PlayRows/PlayCols are zero (zero = use deck level).
-	LayoutLevel int
+	LayoutLevel               int
 	PlaceDoors                bool
 	PlaceHazards              bool
 	PlacePuzzles              bool
@@ -76,17 +76,17 @@ var registry = map[ID]Mode{
 func defaultLevelGen() LevelGenPrefs {
 	return LevelGenPrefs{
 		PlaceDoors:                true,
-		PlaceHazards:                true,
-		PlacePuzzles:                true,
-		PlaceMaintenanceTerminals:   true,
-		PlaceFurniture:              true,
-		PlaceRepairObjectives:       true,
-		PlaceCCTV:                   true,
-		PlaceConduitFaults:          true,
-		PlaceRelays:                 true,
-		PlaceAdditionalGenerators:   true,
-		BootstrapDeck1Ship:          true,
-		RunSimulateGate:             true,
+		PlaceHazards:              true,
+		PlacePuzzles:              true,
+		PlaceMaintenanceTerminals: true,
+		PlaceFurniture:            true,
+		PlaceRepairObjectives:     true,
+		PlaceCCTV:                 true,
+		PlaceConduitFaults:        true,
+		PlaceRelays:               true,
+		PlaceAdditionalGenerators: true,
+		BootstrapDeck1Ship:        true,
+		RunSimulateGate:           true,
 	}
 }
 

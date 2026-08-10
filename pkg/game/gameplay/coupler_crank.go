@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/audio"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
@@ -77,6 +78,7 @@ func pumpCouplerCrank(g *state.Game) {
 	if !IsCouplerCrankActive(g) {
 		return
 	}
+	audio.PlayUseCoupler()
 	g.LongUse.AccumulatedMs += couplerCrankPumpAmount
 	if g.LongUse.AccumulatedMs >= g.LongUse.DurationMs {
 		completeCouplerCrank(g)

@@ -2,12 +2,15 @@ package ebiten
 
 import (
 	"image/color"
+	"math"
+	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/vector"
 	"github.com/zyedidia/generic/mapset"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/audio"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
@@ -33,6 +36,59 @@ func powerGridEdgeColor() color.Color {
 func powerGridEdgeOffColor() color.Color {
 	r, g, b, _ := colorHazard.RGBA()
 	return color.RGBA{uint8(r >> 8), uint8(g >> 8), uint8(b >> 8), 150}
+}
+
+// powerGridPulseHopFraction is how much of one SFX cycle each manhattan hop delays
+// the traveling wave along conduit lines.
+const powerGridPulseHopFraction = 0.07
+
+// powerGridPulseIntensity returns 0..1 brightness for the overlay pulse (peaks at loop start).
+func powerGridPulseIntensity(nowMs int64) float64 {
+	phase := audio.PowerGridPulsePhase(nowMs) // 0..1
+	// Cosine so intensity peaks when the looping SFX cycle restarts.
+	return 0.35 + 0.65*(0.5+0.5*math.Cos(2*math.Pi*phase))
+}
+
+// powerGridEdgePulseIntensity is a traveling wave along the grid from the seed cell.
+func powerGridEdgePulseIntensity(nowMs int64, row1, col1, row2, col2, seedRow, seedCol int) float64 {
+	d1 := absInt(row1-seedRow) + absInt(col1-seedCol)
+	d2 := absInt(row2-seedRow) + absInt(col2-seedCol)
+	d := d1
+	if d2 < d1 {
+		d = d2
+	}
+	phase := audio.PowerGridPulsePhase(nowMs) - float64(d)*powerGridPulseHopFraction
+	phase -= math.Floor(phase)
+	return 0.2 + 0.8*(0.5+0.5*math.Cos(2*math.Pi*phase))
+}
+
+func powerGridSeedFromSnap(pg *powerGridSnapshot) (row, col int, ok bool) {
+	if pg == nil || !pg.active {
+		return 0, 0, false
+	}
+	if pg.maintenanceMenuRoom != "" {
+		return pg.maintTerminalRow, pg.maintTerminalCol, true
+	}
+	if pg.overlayDevActive {
+		return pg.overlaySeedRow, pg.overlaySeedCol, true
+	}
+	return 0, 0, false
+}
+
+func pulsePowerGridEdgeColor(base color.Color, intensity float64) color.Color {
+	r, g, b, a := base.RGBA()
+	brightness := 0.55 + 0.7*intensity
+	alphaScale := 0.4 + 0.6*intensity
+	return color.RGBA{
+		uint8(math.Min(255, float64(r>>8)*brightness)),
+		uint8(math.Min(255, float64(g>>8)*brightness)),
+		uint8(math.Min(255, float64(b>>8)*brightness)),
+		uint8(math.Min(255, float64(a>>8)*alphaScale)),
+	}
+}
+
+func powerGridPulseLineWidth(intensity float64) float32 {
+	return float32(1.5 + 2.5*intensity)
 }
 
 func powerGridOverlayActive(g *state.Game) bool {
@@ -293,6 +349,10 @@ func isPowerGridSeedCellFromSnap(pg *powerGridSnapshot, cell *world.Cell) (isSee
 // powerGridCellBg returns a tile tint for cells on the active power grid overlay.
 // Live cells use green conduit tints; armed-but-offline cells use red (disconnected from routing).
 func powerGridCellBg(g *state.Game, pg *powerGridSnapshot, cell *world.Cell) color.Color {
+	return powerGridCellBgAt(g, pg, cell, time.Now().UnixMilli())
+}
+
+func powerGridCellBgAt(g *state.Game, pg *powerGridSnapshot, cell *world.Cell, nowMs int64) color.Color {
 	if g == nil || cell == nil || !powerGridOverlayActiveFromSnap(pg) || !cellVisibleForPowerGridOverlay(g, cell) {
 		return nil
 	}
@@ -301,29 +361,39 @@ func powerGridCellBg(g *state.Game, pg *powerGridSnapshot, cell *world.Cell) col
 	if !onLive && !onOfflineArmed {
 		return nil
 	}
+	var base color.Color
 	if isSeed, isGen := isPowerGridSeedCellFromSnap(pg, cell); isSeed {
 		if isGen {
 			if onLive {
-				return colorPowerGridGenerator
+				base = colorPowerGridGenerator
+			} else {
+				base = colorPowerGridGeneratorOff
 			}
-			return colorPowerGridGeneratorOff
+		} else if onLive {
+			base = colorPowerGridTerminal
+		} else {
+			base = colorPowerGridTerminalOff
 		}
-		if onLive {
-			return colorPowerGridTerminal
+	} else {
+		conduit := colorPowerGridCell
+		if !onLive {
+			conduit = colorPowerGridCellOff
 		}
-		return colorPowerGridTerminalOff
+		if cell.Name == "Corridor" || gameworld.HasDoor(cell) || gameworld.HasPowerRelay(cell) {
+			base = conduit
+		} else {
+			return nil
+		}
 	}
-	conduit := colorPowerGridCell
+	seedRow, seedCol, hasSeed := powerGridSeedFromSnap(pg)
+	intensity := powerGridPulseIntensity(nowMs)
+	if hasSeed {
+		intensity = powerGridEdgePulseIntensity(nowMs, cell.Row, cell.Col, cell.Row, cell.Col, seedRow, seedCol)
+	}
 	if !onLive {
-		conduit = colorPowerGridCellOff
+		intensity *= 0.55
 	}
-	if cell.Name == "Corridor" {
-		return conduit
-	}
-	if gameworld.HasDoor(cell) || gameworld.HasPowerRelay(cell) {
-		return conduit
-	}
-	return nil
+	return pulsePowerGridEdgeColor(base, intensity)
 }
 
 func (e *EbitenRenderer) drawPowerGridOverlay(screen *ebiten.Image, g *state.Game, pg *powerGridSnapshot, mapX, mapY float64, startRow, startCol int) {
@@ -336,17 +406,46 @@ func (e *EbitenRenderer) drawPowerGridOverlay(screen *ebiten.Image, g *state.Gam
 		return
 	}
 
-	const lineWidth = 1.5
+	nowMs := e.menuAnimClockMilli
+	if nowMs == 0 {
+		nowMs = time.Now().UnixMilli()
+	}
+	seedRow, seedCol, hasSeed := powerGridSeedFromSnap(pg)
+	if !hasSeed {
+		seedRow, seedCol = 0, 0
+	}
+
 	if liveCount > 0 {
-		e.drawPowerGridEdges(screen, g, pg.liveCells, pg.liveCells, mapX, mapY, startRow, startCol, lineWidth, powerGridEdgeColor())
+		e.drawPowerGridEdges(screen, g, pg.liveCells, pg.liveCells, mapX, mapY, startRow, startCol, nowMs, seedRow, seedCol, powerGridEdgeColor(), 1)
 	}
 	if armedCount > 0 {
-		e.drawPowerGridOfflineEdges(screen, g, pg.armedCells, pg.liveCells, mapX, mapY, startRow, startCol, lineWidth, powerGridEdgeOffColor())
-		e.drawPowerGridBoundaryEdges(screen, g, pg.armedCells, pg.liveCells, mapX, mapY, startRow, startCol, lineWidth, powerGridEdgeOffColor())
+		// Offline conduits pulse more subtly so live routes stay dominant.
+		e.drawPowerGridOfflineEdges(screen, g, pg.armedCells, pg.liveCells, mapX, mapY, startRow, startCol, nowMs, seedRow, seedCol, powerGridEdgeOffColor(), 0.55)
+		e.drawPowerGridBoundaryEdges(screen, g, pg.armedCells, pg.liveCells, mapX, mapY, startRow, startCol, nowMs, seedRow, seedCol, powerGridEdgeOffColor(), 0.55)
 	}
 }
 
-func (e *EbitenRenderer) drawPowerGridEdges(screen *ebiten.Image, g *state.Game, grid, requireBoth map[uint64]bool, mapX, mapY float64, startRow, startCol int, lineWidth float32, edgeColor color.Color) {
+func (e *EbitenRenderer) strokePowerGridEdge(
+	screen *ebiten.Image,
+	cx, cy, nx, ny float32,
+	nowMs int64,
+	row1, col1, row2, col2, seedRow, seedCol int,
+	base color.Color,
+	intensityScale float64,
+) {
+	intensity := powerGridEdgePulseIntensity(nowMs, row1, col1, row2, col2, seedRow, seedCol) * intensityScale
+	if intensity < 0 {
+		intensity = 0
+	}
+	if intensity > 1 {
+		intensity = 1
+	}
+	edgeColor := pulsePowerGridEdgeColor(base, intensity)
+	lineWidth := powerGridPulseLineWidth(intensity)
+	vector.StrokeLine(screen, cx, cy, nx, ny, lineWidth, edgeColor, true)
+}
+
+func (e *EbitenRenderer) drawPowerGridEdges(screen *ebiten.Image, g *state.Game, grid, requireBoth map[uint64]bool, mapX, mapY float64, startRow, startCol int, nowMs int64, seedRow, seedCol int, base color.Color, intensityScale float64) {
 	seenEdge := make(map[uint64]bool)
 	for key := range grid {
 		row := int(uint32(key >> 32))
@@ -366,12 +465,12 @@ func (e *EbitenRenderer) drawPowerGridEdges(screen *ebiten.Image, g *state.Game,
 			}
 			seenEdge[edgeKey] = true
 			nx, ny := mapCellCenterScreen(mapX, mapY, n.Row, n.Col, startRow, startCol, e.tileSize)
-			vector.StrokeLine(screen, cx, cy, nx, ny, lineWidth, edgeColor, false)
+			e.strokePowerGridEdge(screen, cx, cy, nx, ny, nowMs, cell.Row, cell.Col, n.Row, n.Col, seedRow, seedCol, base, intensityScale)
 		}
 	}
 }
 
-func (e *EbitenRenderer) drawPowerGridOfflineEdges(screen *ebiten.Image, g *state.Game, armed, live map[uint64]bool, mapX, mapY float64, startRow, startCol int, lineWidth float32, edgeColor color.Color) {
+func (e *EbitenRenderer) drawPowerGridOfflineEdges(screen *ebiten.Image, g *state.Game, armed, live map[uint64]bool, mapX, mapY float64, startRow, startCol int, nowMs int64, seedRow, seedCol int, base color.Color, intensityScale float64) {
 	seenEdge := make(map[uint64]bool)
 	for key := range armed {
 		row := int(uint32(key >> 32))
@@ -391,12 +490,12 @@ func (e *EbitenRenderer) drawPowerGridOfflineEdges(screen *ebiten.Image, g *stat
 			}
 			seenEdge[edgeKey] = true
 			nx, ny := mapCellCenterScreen(mapX, mapY, n.Row, n.Col, startRow, startCol, e.tileSize)
-			vector.StrokeLine(screen, cx, cy, nx, ny, lineWidth, edgeColor, false)
+			e.strokePowerGridEdge(screen, cx, cy, nx, ny, nowMs, cell.Row, cell.Col, n.Row, n.Col, seedRow, seedCol, base, intensityScale)
 		}
 	}
 }
 
-func (e *EbitenRenderer) drawPowerGridBoundaryEdges(screen *ebiten.Image, g *state.Game, overlay, live map[uint64]bool, mapX, mapY float64, startRow, startCol int, lineWidth float32, edgeColor color.Color) {
+func (e *EbitenRenderer) drawPowerGridBoundaryEdges(screen *ebiten.Image, g *state.Game, overlay, live map[uint64]bool, mapX, mapY float64, startRow, startCol int, nowMs int64, seedRow, seedCol int, base color.Color, intensityScale float64) {
 	seenEdge := make(map[uint64]bool)
 	for key := range overlay {
 		row := int(uint32(key >> 32))
@@ -416,7 +515,7 @@ func (e *EbitenRenderer) drawPowerGridBoundaryEdges(screen *ebiten.Image, g *sta
 			}
 			seenEdge[edgeKey] = true
 			nx, ny := mapCellCenterScreen(mapX, mapY, n.Row, n.Col, startRow, startCol, e.tileSize)
-			vector.StrokeLine(screen, cx, cy, nx, ny, lineWidth, edgeColor, false)
+			e.strokePowerGridEdge(screen, cx, cy, nx, ny, nowMs, cell.Row, cell.Col, n.Row, n.Col, seedRow, seedCol, base, intensityScale)
 		}
 	}
 }

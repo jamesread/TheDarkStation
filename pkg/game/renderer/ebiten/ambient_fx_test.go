@@ -4,6 +4,10 @@ import (
 	"image/color"
 	"testing"
 	"time"
+
+	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/state"
+	gameworld "darkstation/pkg/game/world"
 )
 
 func TestScaleColor_BrightensAndClamps(t *testing.T) {
@@ -76,5 +80,34 @@ func TestSnapshotDevicePulses_PrunesExpired(t *testing.T) {
 	}
 	if len(e.devicePulses) != 1 {
 		t.Errorf("expired pulse should be removed from the registry, have %d entries", len(e.devicePulses))
+	}
+}
+
+func TestAmbientTileColors_PulseDoesNotRevealLayoutOnlyCell(t *testing.T) {
+	e := &EbitenRenderer{}
+	g := state.NewGame()
+	grid := world.NewGrid(1, 1)
+	grid.MarkAsRoomWithName(0, 0, "Unknown Equipment", "")
+	g.Grid = grid
+	cell := grid.GetCell(0, 0)
+	cell.Discovered = true
+	gameworld.InitGameData(cell)
+
+	base := color.RGBA{10, 20, 30, 255}
+	fg := color.RGBA{100, 100, 100, 255}
+	opts := &CellRenderOptions{Color: fg, HasBackground: true}
+	snap := &renderSnapshot{devicePulses: []devicePulseSnapshot{{
+		row: cell.Row, col: cell.Col, startMs: time.Now().UnixMilli() - 125,
+	}}}
+
+	gotBg, gotFg := e.ambientTileColors(g, cell, snap, opts, base)
+	if gotBg != color.Color(base) || gotFg != color.Color(fg) {
+		t.Fatal("a pulse must not alter a floor-plan-only cell")
+	}
+
+	gameworld.GetGameData(cell).Lighted = true
+	gotBg, _ = e.ambientTileColors(g, cell, snap, opts, base)
+	if gotBg == color.Color(base) {
+		t.Fatal("a remembered device may acknowledge a known remote transition")
 	}
 }

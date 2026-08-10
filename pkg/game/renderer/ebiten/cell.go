@@ -154,7 +154,8 @@ func (e *EbitenRenderer) liveCellRenderOptions(g *state.Game, cell *world.Cell, 
 			return CellRenderOptions{Icon: icon, Color: colorSubtle, HasBackground: false}
 		}
 		powered := !repair.NeedsLivePower() || snapCellHasLivePower(snap, cell)
-		fg, bg := repairDeviceColors(repair, powered)
+		interlocked := repair != nil && !g.RepairPrereqsComplete(repair)
+		fg, bg := repairDeviceColors(repair, powered, interlocked)
 		return CellRenderOptions{Icon: icon, Color: fg, HasBackground: true, BackgroundColor: bg}
 	}
 
@@ -296,9 +297,12 @@ func repairIcon(repair *entities.RepairObjective) string {
 	}
 }
 
-func repairDeviceColors(repair *entities.RepairObjective, powered bool) (fg, bg color.Color) {
+func repairDeviceColors(repair *entities.RepairObjective, powered, interlocked bool) (fg, bg color.Color) {
 	if repair != nil && repair.Type == entities.RepairConduitSplice {
 		return colorRepairConduit, colorRepairConduitBg
+	}
+	if interlocked {
+		return colorDoorLocked, colorHazardBackground
 	}
 	if !powered {
 		return colorGeneratorOff, colorHazardBackground

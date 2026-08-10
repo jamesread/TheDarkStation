@@ -13,12 +13,17 @@ const (
 	gamepadStickEngageThreshold  = 0.58
 	gamepadStickReleaseThreshold = 0.42
 	gamepadStickCenterThreshold  = 0.22
+
+	// Unmapped HID devices must look like a real pad: a 2D stick plus a few buttons.
+	// A single resting axis at -1 (common for volume knobs) must not drive MoveWest.
+	minUnmappedGamepadAxes    = 2
+	minUnmappedGamepadButtons = 4
 )
 
-// pointerDeviceNameNeedles matches GLFW "gamepads" that are actually pointer devices.
-// On Linux, touchpads often appear as joysticks whose axes track absolute finger position;
-// treating those as a left stick makes the player move when the trackpad is touched.
-var pointerDeviceNameNeedles = []string{
+// nonGamepadDeviceNameNeedles matches GLFW "gamepads" that are not controllers.
+// On Linux, touchpads and USB "Consumer Control" knobs often appear as joysticks;
+// a resting axis at -1 is then treated as left-stick held.
+var nonGamepadDeviceNameNeedles = []string{
 	"touchpad",
 	"trackpad",
 	"trackpoint",
@@ -26,12 +31,19 @@ var pointerDeviceNameNeedles = []string{
 	"touch screen",
 	"mouse",
 	"pointer",
+	"consumer control",
+	"system control",
+	"keyboard",
+	"headset",
+	"microphone",
+	"sound device",
+	"stream deck",
 }
 
-// isPointerDeviceGamepadName reports whether a GLFW gamepad name is a pointer device.
-func isPointerDeviceGamepadName(name string) bool {
+// isNonGamepadDeviceName reports whether a GLFW gamepad name is a non-controller HID device.
+func isNonGamepadDeviceName(name string) bool {
 	n := strings.ToLower(name)
-	for _, needle := range pointerDeviceNameNeedles {
+	for _, needle := range nonGamepadDeviceNameNeedles {
 		if strings.Contains(n, needle) {
 			return true
 		}
@@ -39,18 +51,38 @@ func isPointerDeviceGamepadName(name string) bool {
 	return false
 }
 
-// isUsableGamepad reports whether id should drive gamepad navigation / bindings.
-// Devices with a standard controller mapping are always accepted; otherwise pointer-like
-// names (touchpads, mice) are rejected so obscure unmapped pads still work.
-func isUsableGamepad(id ebiten.GamepadID) bool {
-	if ebiten.IsStandardGamepadLayoutAvailable(id) {
-		return true
-	}
-	return !isPointerDeviceGamepadName(ebiten.GamepadName(id))
+// isPointerDeviceGamepadName reports whether a GLFW gamepad name is a pointer device.
+// Kept as a thin wrapper for existing tests and call sites.
+func isPointerDeviceGamepadName(name string) bool {
+	return isNonGamepadDeviceName(name)
 }
 
-// appendUsableGamepadIDs appends connected controllers, skipping pointer devices
-// that GLFW exposes as joysticks (notably laptop touchpads).
+// isUsableGamepadCandidate reports whether a connected joystick should drive game input.
+// Standard-mapped controllers are accepted unless the name is a known non-gamepad HID.
+// Unmapped devices need a plausible stick + button count so volume knobs and similar
+// 1-axis HID controls (often resting at -1) cannot spam MoveWest on launch.
+func isUsableGamepadCandidate(name string, standardLayout bool, axisCount, buttonCount int) bool {
+	if isNonGamepadDeviceName(name) {
+		return false
+	}
+	if standardLayout {
+		return true
+	}
+	return axisCount >= minUnmappedGamepadAxes && buttonCount >= minUnmappedGamepadButtons
+}
+
+// isUsableGamepad reports whether id should drive gamepad navigation / bindings.
+func isUsableGamepad(id ebiten.GamepadID) bool {
+	return isUsableGamepadCandidate(
+		ebiten.GamepadName(id),
+		ebiten.IsStandardGamepadLayoutAvailable(id),
+		ebiten.GamepadAxisCount(id),
+		ebiten.GamepadButtonCount(id),
+	)
+}
+
+// appendUsableGamepadIDs appends connected controllers, skipping non-gamepad HID
+// devices that GLFW exposes as joysticks (touchpads, mic volume knobs, etc.).
 func appendUsableGamepadIDs(gamepadIDs []ebiten.GamepadID) []ebiten.GamepadID {
 	for _, id := range ebiten.AppendGamepadIDs(nil) {
 		if isUsableGamepad(id) {

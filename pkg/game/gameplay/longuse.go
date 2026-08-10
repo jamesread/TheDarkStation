@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/audio"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
@@ -102,6 +103,9 @@ func beginLongUse(g *state.Game, kind LongUseKind, cell *world.Cell) bool {
 	if duration <= 0 {
 		return false
 	}
+	if kind == LongUseRepair && gameworld.HasRepairDevice(cell) {
+		gameworld.GetGameData(cell).RepairDevice.Inspect()
+	}
 	FaceTowardAdjacentCell(g, cell)
 	g.LongUse = &state.LongUseSession{
 		Kind:        string(kind),
@@ -110,7 +114,19 @@ func beginLongUse(g *state.Game, kind LongUseKind, cell *world.Cell) bool {
 		DurationMs:  duration.Milliseconds(),
 		StartedAtMs: time.Now().UnixMilli(),
 	}
+	playLongUseSFX(kind)
 	return true
+}
+
+func playLongUseSFX(kind LongUseKind) {
+	switch kind {
+	case LongUseGeneratorPowerUp:
+		audio.PlayUseGenerator()
+	case LongUseDoorManualRelease:
+		audio.PlayUseDoor()
+	case LongUseRepair:
+		audio.PlayUseRepair()
+	}
 }
 
 func longUseDuration(kind LongUseKind) time.Duration {
@@ -216,6 +232,7 @@ func completeGeneratorPowerUp(g *state.Game, cell *world.Cell) {
 	if !gen.Restart() {
 		return
 	}
+	audio.PlayUseGenerator()
 	setup.NotifyPowerGridChanged(g)
 	setup.BootstrapPoweredGenerators(g, cell)
 	UpdateLightingExploration(g)

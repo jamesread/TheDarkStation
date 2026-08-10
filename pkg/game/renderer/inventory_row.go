@@ -16,10 +16,10 @@ const (
 type InventoryDepictionKey string
 
 const (
-	InventoryDepictionKeycard InventoryDepictionKey = "keycard"
+	InventoryDepictionKeycard    InventoryDepictionKey = "keycard"
 	InventoryDepictionKeyBattery InventoryDepictionKey = "battery"
-	InventoryDepictionKeyMap    InventoryDepictionKey = "map"
-	InventoryDepictionKeyItem   InventoryDepictionKey = "item"
+	InventoryDepictionKeyMap     InventoryDepictionKey = "map"
+	InventoryDepictionKeyItem    InventoryDepictionKey = "item"
 )
 
 // InventoryDepiction describes how an inventory entry appears on the grid.

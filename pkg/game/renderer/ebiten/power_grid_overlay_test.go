@@ -1,6 +1,7 @@
 package ebiten
 
 import (
+	"image/color"
 	"testing"
 
 	"darkstation/pkg/engine/world"
@@ -43,8 +44,9 @@ func TestPowerGridCellBg_generatorSeedLive(t *testing.T) {
 	if !snapshotHasCell(pg.liveCells, seed) {
 		t.Fatal("powered generator seed should be on live grid")
 	}
-	if bg := powerGridCellBg(g, pg, seed); bg != colorPowerGridGenerator {
-		t.Fatalf("live generator seed bg = %v, want %v", bg, colorPowerGridGenerator)
+	want := pulsePowerGridEdgeColor(colorPowerGridGenerator, powerGridEdgePulseIntensity(0, 0, 0, 0, 0, 0, 0))
+	if bg := powerGridCellBgAt(g, pg, seed, 0); bg != want {
+		t.Fatalf("live generator seed bg = %v, want %v", bg, want)
 	}
 }
 
@@ -74,12 +76,14 @@ func TestPowerGridCellBg_armedButOffline_isRed(t *testing.T) {
 	if !snapshotHasCell(pg.armedCells, seed) {
 		t.Fatal("armed room should still appear on armed grid")
 	}
-	if bg := powerGridCellBg(g, pg, seed); bg != colorPowerGridGeneratorOff {
-		t.Fatalf("offline armed seed bg = %v, want %v", bg, colorPowerGridGeneratorOff)
+	wantSeed := pulsePowerGridEdgeColor(colorPowerGridGeneratorOff, powerGridEdgePulseIntensity(0, 0, 0, 0, 0, 0, 0)*0.55)
+	if bg := powerGridCellBgAt(g, pg, seed, 0); bg != wantSeed {
+		t.Fatalf("offline armed seed bg = %v, want %v", bg, wantSeed)
 	}
 	corridor := grid.GetCell(0, 1)
-	if bg := powerGridCellBg(g, pg, corridor); bg != colorPowerGridCellOff {
-		t.Fatalf("offline armed corridor bg = %v, want %v", bg, colorPowerGridCellOff)
+	wantCorr := pulsePowerGridEdgeColor(colorPowerGridCellOff, powerGridEdgePulseIntensity(0, 0, 1, 0, 1, 0, 0)*0.55)
+	if bg := powerGridCellBgAt(g, pg, corridor, 0); bg != wantCorr {
+		t.Fatalf("offline armed corridor bg = %v, want %v", bg, wantCorr)
 	}
 }
 
@@ -206,5 +210,33 @@ func TestCapturePowerGridSnapshot_inactiveWhenOverlayOff(t *testing.T) {
 	capturePowerGridSnapshot(g, &snap)
 	if snap.powerGrid.active {
 		t.Fatal("snapshot should be inactive when overlay off")
+	}
+}
+
+func TestPowerGridPulseIntensity_peaksAtPhaseZero(t *testing.T) {
+	// With no audio epoch, phase uses absolute time; intensity helpers are pure enough to
+	// exercise color/width scaling independently.
+	peak := pulsePowerGridEdgeColor(color.RGBA{10, 200, 10, 150}, 1)
+	dim := pulsePowerGridEdgeColor(color.RGBA{10, 200, 10, 150}, 0)
+	_, _, _, peakA := peak.RGBA()
+	_, _, _, dimA := dim.RGBA()
+	if peakA <= dimA {
+		t.Fatalf("peak alpha %d should exceed dim alpha %d", peakA, dimA)
+	}
+	if powerGridPulseLineWidth(1) <= powerGridPulseLineWidth(0) {
+		t.Fatal("peak pulse line width should exceed dim width")
+	}
+	hi := powerGridPulseIntensity(0)
+	if hi < 0.9 {
+		t.Fatalf("intensity at phase-aligned 0 = %v, want near peak", hi)
+	}
+}
+
+func TestPowerGridEdgePulseIntensity_travelsOutward(t *testing.T) {
+	// At phase 0, an edge at the seed is brightest; an edge far from the seed is dimmer.
+	near := powerGridEdgePulseIntensity(0, 0, 0, 0, 1, 0, 0)
+	far := powerGridEdgePulseIntensity(0, 0, 9, 0, 10, 0, 0)
+	if near <= far {
+		t.Fatalf("near intensity %v should exceed far %v at phase 0", near, far)
 	}
 }

@@ -30,7 +30,7 @@ const (
 // PowerTraceResult is one functional bus-trace readout from a maintenance terminal.
 type PowerTraceResult struct {
 	Kind    PowerFaultKind
-	Row     int    // fault location (physical faults only)
+	Row     int // fault location (physical faults only)
 	Col     int
 	Label   string // diegetic segment label (conduit faults: SEG-xx)
 	Steps   int    // conduit steps from the terminal to the fault

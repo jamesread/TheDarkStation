@@ -106,7 +106,7 @@ func TestCompleteLongUse_powersGenerator(t *testing.T) {
 func TestCompleteLongUse_startsWastePumpDrain(t *testing.T) {
 	g := state.NewGame()
 	grid := world.NewGrid(1, 3)
-	grid.MarkAsRoomWithName(0, 0, "A", "")
+	grid.MarkAsRoomWithName(0, 0, "Pump", "")
 	grid.MarkAsRoomWithName(0, 1, "Pump", "")
 	grid.MarkAsRoomWithName(0, 2, "Lift", "")
 	grid.BuildAllCellConnections()
@@ -121,6 +121,13 @@ func TestCompleteLongUse_startsWastePumpDrain(t *testing.T) {
 	gameworld.GetGameData(grid.GetCell(0, 1)).RepairDevice = repair
 	gameworld.GetGameData(grid.GetCell(0, 2)).RepairBlocker = repair
 	g.RepairObjectives = []*entities.RepairObjective{repair}
+	gen := entities.NewGenerator("Pump supply", 1)
+	gen.InsertBatteriesAndStart(1)
+	gameworld.GetGameData(grid.GetCell(0, 0)).Generator = gen
+	g.AddGenerator(gen)
+	g.RoomDoorsPowered = map[string]bool{"Pump": true}
+	setup.PropagateRoomPowerOnlineFromGenerators(g)
+	setup.ApplyGridConductivePower(g)
 
 	if !TryBeginLongUseOnAdjacent(g) {
 		t.Fatal("expected adjacent waste pump repair to start long use")

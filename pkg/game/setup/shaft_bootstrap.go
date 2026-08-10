@@ -22,6 +22,36 @@ func IsLiftShaftBoundsCell(g *state.Game, cell *world.Cell) bool {
 	top, left, bottom, right := generator.ShaftBoundsForLevel(rows, cols, g.Level)
 	return cell.Row >= top && cell.Row <= bottom && cell.Col >= left && cell.Col <= right
 }
+
+// RevealLiftShaftStructure marks the shaft interior and its one-cell wall ring
+// (including corners) as discovered so the lift car frame is always drawn.
+func RevealLiftShaftStructure(g *state.Game) {
+	if g == nil || g.Grid == nil {
+		return
+	}
+	rows, cols := g.Grid.Rows(), g.Grid.Cols()
+	top, left, bottom, right := generator.ShaftBoundsForLevel(rows, cols, g.Level)
+	for row := top - 1; row <= bottom+1; row++ {
+		for col := left - 1; col <= right+1; col++ {
+			cell := g.Grid.GetCell(row, col)
+			if cell == nil {
+				continue
+			}
+			inInterior := row >= top && row <= bottom && col >= left && col <= right
+			if inInterior {
+				if cell.Room && cell.Name == generator.ShaftRoomName {
+					cell.Discovered = true
+				}
+				continue
+			}
+			// Wall ring (orthogonal edges and corners).
+			if !cell.Room {
+				cell.Discovered = true
+			}
+		}
+	}
+}
+
 // (bottom-left on screen: max row, min col), scanning east along each row then north.
 func LiftShaftCellsFromBottomLeft(g *state.Game) []*world.Cell {
 	if g == nil || g.Grid == nil {

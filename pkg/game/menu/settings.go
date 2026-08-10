@@ -12,6 +12,7 @@ type SettingsTab int
 const (
 	SettingsTabBindings SettingsTab = iota
 	SettingsTabVideo
+	SettingsTabAudio
 )
 
 // SettingsMenuHandler is the title-screen and in-game settings menu (bindings + video tabs).
@@ -51,6 +52,15 @@ func (h *SettingsMenuHandler) GetInstructions(selected MenuItem) string {
 	}
 	if _, ok := selected.(*WindowModeMenuItem); ok {
 		return engineinput.HintMenuSelect() + ", " + engineinput.HintMenuActivate() + ", left/right to cycle, " + exitHint + "."
+	}
+	if _, ok := selected.(*SFXVolumeMenuItem); ok {
+		return engineinput.HintMenuSelect() + ", " + engineinput.HintMenuActivate() + ", left/right to adjust, " + exitHint + "."
+	}
+	if _, ok := selected.(*MusicVolumeMenuItem); ok {
+		return engineinput.HintMenuSelect() + ", " + engineinput.HintMenuActivate() + ", left/right to adjust, " + exitHint + "."
+	}
+	if _, ok := selected.(*MuteMenuItem); ok {
+		return engineinput.HintMenuSelect() + ", " + engineinput.HintMenuActivate() + ", left/right to toggle, " + exitHint + "."
 	}
 	if _, ok := selected.(*BackMenuItem); ok {
 		return fmt.Sprintf("%s, %s.", engineinput.HintMenuBackToMain(), exitHint)
@@ -182,12 +192,15 @@ func (h *SettingsMenuHandler) GetMenuItems() []MenuItem {
 	items := []MenuItem{
 		&SettingsTabItem{owner: h, tab: SettingsTabBindings},
 		&SettingsTabItem{owner: h, tab: SettingsTabVideo},
+		&SettingsTabItem{owner: h, tab: SettingsTabAudio},
 	}
 	switch h.tab {
 	case SettingsTabBindings:
 		items = append(items, h.bindings.CoreMenuItems()...)
 	case SettingsTabVideo:
 		items = append(items, &WindowModeMenuItem{})
+	case SettingsTabAudio:
+		items = append(items, &SFXVolumeMenuItem{}, &MusicVolumeMenuItem{}, &MuteMenuItem{})
 	}
 	if h.fromMainMenu {
 		items = append(items, &BackMenuItem{})
@@ -197,7 +210,7 @@ func (h *SettingsMenuHandler) GetMenuItems() []MenuItem {
 	return items
 }
 
-// SettingsTabStripLength returns how many leading items are settings tabs (0 or 2).
+// SettingsTabStripLength returns how many leading items are settings tabs (0 if fewer than 2).
 func SettingsTabStripLength(items []MenuItem) int {
 	n := 0
 	for _, item := range items {
@@ -223,8 +236,12 @@ func (s *SettingsTabItem) GetLabel() string {
 	switch s.tab {
 	case SettingsTabBindings:
 		return "Bindings"
-	default:
+	case SettingsTabVideo:
 		return "Video"
+	case SettingsTabAudio:
+		return "Audio"
+	default:
+		return "Settings"
 	}
 }
 
@@ -234,8 +251,12 @@ func (s *SettingsTabItem) GetHelpText() string {
 	switch s.tab {
 	case SettingsTabBindings:
 		return "Keyboard and controller bindings"
-	default:
+	case SettingsTabVideo:
 		return "Display and window options"
+	case SettingsTabAudio:
+		return "SFX volume, music volume, and mute"
+	default:
+		return "Settings"
 	}
 }
 

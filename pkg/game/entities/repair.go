@@ -29,8 +29,18 @@ const (
 	WastePumpDrainDurationMs int64 = 6000
 	// SlimePopDurationMs is how long a drained slime cell plays its pop-off animation.
 	SlimePopDurationMs     int64 = 420
-	SignalCalibrationSteps = 3
+	SignalCalibrationSteps       = 3
 )
+
+// RepairDependencyTelemetry is the dry machine readout that explains why one
+// repair is interlocked by another. It gives the player evidence and an
+// expected result without turning the dependency into a quest instruction.
+type RepairDependencyTelemetry struct {
+	Symptom    string
+	Diagnosis  string
+	Prediction string
+	Restored   string
+}
 
 // BlockerCell is one toxic-slime tile gating access near the exit lift.
 type BlockerCell struct {
@@ -64,10 +74,40 @@ type RepairObjective struct {
 	BlockerCells []BlockerCell
 
 	Status          RepairStatus
+	Inspected       bool
+	Acknowledged    bool
 	DrainCleared    int // slime cells cleared during timed drain (indices into BlockerCells)
 	StartedAtMs     int64
 	CompleteAtMs    int64
 	CalibrationStep int
+}
+
+// Inspect records that the player has read this device's local telemetry.
+func (r *RepairObjective) Inspect() {
+	if r != nil {
+		r.Inspected = true
+	}
+}
+
+// RepairDependencyReport returns the causal readout for a dependent repair and
+// its upstream prerequisite. Type-specific reports make the relationship feel
+// like station machinery rather than an arbitrary objective lock.
+func RepairDependencyReport(dependent, upstream *RepairObjective) RepairDependencyTelemetry {
+	if dependent != nil && upstream != nil &&
+		dependent.Type == RepairPowerCoupler && upstream.Type == RepairPressureValve {
+		return RepairDependencyTelemetry{
+			Symptom:    "COUPLER DRIVE INHIBITED",
+			Diagnosis:  "PRESSURE CONTROL INPUT OUT OF TOLERANCE",
+			Prediction: "Bleed auxiliary pressure to release the coupler interlock.",
+			Restored:   "COUPLER INTERLOCK RELEASED",
+		}
+	}
+	return RepairDependencyTelemetry{
+		Symptom:    "DEVICE INTERLOCK ACTIVE",
+		Diagnosis:  "UPSTREAM SYSTEM UNAVAILABLE",
+		Prediction: "Restore upstream operation to release the interlock.",
+		Restored:   "DEVICE INTERLOCK RELEASED",
+	}
 }
 
 // NewRepairObjective creates a repair objective with defaults for its type.

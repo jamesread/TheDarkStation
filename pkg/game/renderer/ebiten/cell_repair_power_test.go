@@ -73,3 +73,35 @@ func TestGetCellRenderOptions_unpoweredSignalAndCouplerOffline(t *testing.T) {
 		}
 	}
 }
+
+func TestGetCellRenderOptions_couplerChangesFromInterlockedToReady(t *testing.T) {
+	e := &EbitenRenderer{}
+	g := state.NewGame()
+	grid := world.NewGrid(1, 2)
+	grid.MarkAsRoomWithName(0, 0, "Pressure", "")
+	grid.MarkAsRoomWithName(0, 1, "Transfer", "")
+	grid.BuildAllCellConnections()
+	g.Grid = grid
+
+	valve := entities.NewRepairObjective("valve", entities.RepairPressureValve, "Pressure", 0, 0)
+	coupler := entities.NewRepairObjective("coupler", entities.RepairPowerCoupler, "Transfer", 0, 1)
+	coupler.PrereqIDs = []string{valve.ID}
+	cell := grid.GetCell(0, 1)
+	cell.Discovered = true
+	gameworld.GetGameData(cell).LightsOn = true
+	gameworld.GetGameData(cell).RepairDevice = coupler
+	g.RepairObjectives = []*entities.RepairObjective{valve, coupler}
+
+	snap := &renderSnapshot{playerRow: -1, playerCol: -1}
+	snap.mapPower.livePowerCells = map[uint64]bool{cellCoordKey(cell.Row, cell.Col): true}
+	blocked := e.getCellRenderOptions(g, cell, snap, false)
+	if blocked.Color != colorDoorLocked {
+		t.Fatalf("interlocked coupler color = %v, want inhibited %v", blocked.Color, colorDoorLocked)
+	}
+
+	valve.Complete()
+	ready := e.getCellRenderOptions(g, cell, snap, false)
+	if ready.Color != colorRepair {
+		t.Fatalf("ready coupler color = %v, want repair-ready %v", ready.Color, colorRepair)
+	}
+}

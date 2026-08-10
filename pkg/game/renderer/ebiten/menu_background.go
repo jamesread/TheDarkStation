@@ -369,7 +369,7 @@ func (e *EbitenRenderer) updateFloatingTiles(screenWidth, screenHeight int) {
 // titleScreenFloatingTilesMenu reports menus that keep the title-screen ambient field.
 func titleScreenFloatingTilesMenu(title string) bool {
 	switch title {
-	case "The Dark Station", "Settings":
+	case "The Dark Station", "Settings", "Select Game Mode":
 		return true
 	default:
 		return false

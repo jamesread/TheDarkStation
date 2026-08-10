@@ -106,6 +106,11 @@ func RoutingCouplerAdjustValue(value, delta, step int) int {
 	return clampRoutingCouplerValue(value + delta*step)
 }
 
+// RoutingCouplerAxisScore returns 0..1 alignment quality for one axis.
+func RoutingCouplerAxisScore(target, value, maxDist int) float64 {
+	return routingCouplerAxisScore(target, value, maxDist)
+}
+
 func routingCouplerAxisScore(target, value, maxDist int) float64 {
 	dist := math.Abs(float64(value - target))
 	if dist >= float64(maxDist) {

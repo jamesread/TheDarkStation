@@ -12,6 +12,12 @@ func TestTitleScreenMenuTransition(t *testing.T) {
 	if !titleScreenMenuTransition("Settings", "The Dark Station") {
 		t.Error("settings -> main should transition")
 	}
+	if !titleScreenMenuTransition("The Dark Station", "Select Game Mode") {
+		t.Error("main -> game mode should transition")
+	}
+	if !titleScreenMenuTransition("Select Game Mode", "The Dark Station") {
+		t.Error("game mode -> main should transition")
+	}
 	if titleScreenMenuTransition("The Dark Station", "The Dark Station") {
 		t.Error("same title should not transition")
 	}
@@ -57,6 +63,23 @@ func TestMenuPanelWidthForTitle_mainMenuNarrower(t *testing.T) {
 	settingsW := menuPanelWidthForTitle("Settings", 1000, false, false)
 	if mainW >= settingsW {
 		t.Errorf("main menu width %d should be less than settings %d", mainW, settingsW)
+	}
+}
+
+func TestResolveMenuPanelWidth_gameModeCompact(t *testing.T) {
+	e := &EbitenRenderer{}
+	labels := []string{
+		"Single Player Puzzle\tSUBTLE{10 decks}",
+		"Single Deck Sandbox\tSUBTLE{1 deck}",
+	}
+	help := "Full station run: restore power, clear hazards, and travel between all decks"
+	gameModeW := e.resolveMenuPanelWidth("Select Game Mode", 1000, false, false, labels, help)
+	settingsW := menuPanelWidthForTitle("Settings", 1000, false, false)
+	if gameModeW >= settingsW {
+		t.Errorf("game mode width %d should be less than settings %d", gameModeW, settingsW)
+	}
+	if gameModeW < mainMenuPanelMinWidth {
+		t.Errorf("game mode width %d should be at least %d", gameModeW, mainMenuPanelMinWidth)
 	}
 }
 

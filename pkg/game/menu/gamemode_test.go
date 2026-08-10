@@ -1,6 +1,7 @@
 package menu
 
 import (
+	"strings"
 	"testing"
 
 	"darkstation/pkg/game/gamemode"
@@ -8,8 +9,12 @@ import (
 
 func TestGameModeMenuItem_LabelAndHelp(t *testing.T) {
 	item := &GameModeMenuItem{Mode: gamemode.Get(gamemode.SinglePlayerPuzzle)}
-	if item.GetLabel() == "" {
+	label := item.GetLabel()
+	if label == "" {
 		t.Fatal("GetLabel returned empty string")
+	}
+	if !strings.Contains(label, "\t") {
+		t.Fatalf("label %q should use a tab for column alignment", label)
 	}
 	if item.GetHelpText() == "" {
 		t.Fatal("GetHelpText returned empty string")

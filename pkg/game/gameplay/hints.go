@@ -85,5 +85,9 @@ func ShowInteractableHints(g *state.Game) {
 			renderer.AddCallout(cell.Row, cell.Col, engineinput.HintInteractPrefix(), renderer.CalloutColorInfo, 3000)
 			return
 		}
+		if gameworld.HasIncompleteRepairDevice(cell) {
+			renderer.AddCallout(cell.Row, cell.Col, engineinput.HintInteractPrefix(), renderer.CalloutColorInfo, 3000)
+			return
+		}
 	}
 }

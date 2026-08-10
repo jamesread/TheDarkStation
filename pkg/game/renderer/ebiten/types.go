@@ -22,6 +22,9 @@ type HazardClearAdvanceFunc func(g *state.Game, nowMs int64)
 // HazardTourAdvanceFunc ticks an in-progress exit hazard tour from the Ebiten Update thread.
 type HazardTourAdvanceFunc func(g *state.Game, nowMs int64)
 
+// LiftRideAdvanceFunc ticks an in-progress lift ride cinematic from the Ebiten Update thread.
+type LiftRideAdvanceFunc func(g *state.Game, nowMs int64)
+
 // HintRefresher updates on-map control callouts after the primary input device changes.
 type HintRefresher func(g *state.Game)
 
@@ -97,6 +100,7 @@ type renderSnapshot struct {
 	generatorShutdownCol    int
 	hazardClear             *state.HazardClearSession
 	hazardTour              *state.HazardTourSession
+	liftRide                *state.LiftRideSession
 	powerGrid               powerGridSnapshot
 	mapPower                mapPowerSnapshot
 	devicePulses            []devicePulseSnapshot
@@ -231,6 +235,7 @@ type EbitenRenderer struct {
 	longUsePrevHeld      bool
 	hazardClearAdvancer  HazardClearAdvanceFunc
 	hazardTourAdvancer   HazardTourAdvanceFunc
+	liftRideAdvancer     LiftRideAdvanceFunc
 	repairTimerAdvancer  RepairTimerAdvanceFunc
 	hintRefresher        HintRefresher
 
@@ -239,6 +244,8 @@ type EbitenRenderer struct {
 
 	// Flag to track if we've logged window opening
 	windowOpenedLogged bool
+	// lastMonitorPersistMs throttles writing the preferred monitor to settings.
+	lastMonitorPersistMs int64
 
 	// Generic menu overlay state
 	genericMenuActive   bool
@@ -352,10 +359,10 @@ type EbitenRenderer struct {
 	envPlaquesCache      []envPlaque
 
 	// Background animation for main menu (floating tiles)
-	floatingTiles          []floatingTile
-	floatingTilesScreenW   int // last screen size used for density / spawn regions
-	floatingTilesScreenH   int
-	floatingTilesMutex     sync.RWMutex
+	floatingTiles        []floatingTile
+	floatingTilesScreenW int // last screen size used for density / spawn regions
+	floatingTilesScreenH int
+	floatingTilesMutex   sync.RWMutex
 
 	// Developer message (bottom-left overlay; e.g. map dump confirmation)
 	developerMessage      string

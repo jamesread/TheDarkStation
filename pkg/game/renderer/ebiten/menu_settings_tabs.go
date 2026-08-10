@@ -39,10 +39,25 @@ func settingsTabStripRows(labels []string, title string, items []gamemenu.MenuIt
 	if settingsTabStripLength(items) >= 2 {
 		return 1
 	}
-	if title == "Settings" && len(labels) >= 2 && labels[0] == "Bindings" && labels[1] == "Video" {
+	if title == "Settings" && settingsTabStripFallbackCount(labels) >= 2 {
 		return 1
 	}
 	return 0
+}
+
+func settingsTabStripFallbackCount(labels []string) int {
+	known := []string{"Bindings", "Video", "Audio"}
+	n := 0
+	for i := 0; i < len(labels) && i < len(known); i++ {
+		if labels[i] != known[i] {
+			break
+		}
+		n++
+	}
+	if n < 2 {
+		return 0
+	}
+	return n
 }
 
 func settingsTabStripItemCount(labels []string, title string, items []gamemenu.MenuItem) int {
@@ -50,7 +65,7 @@ func settingsTabStripItemCount(labels []string, title string, items []gamemenu.M
 		return n
 	}
 	if settingsTabStripRows(labels, title, items) == 1 {
-		return 2
+		return settingsTabStripFallbackCount(labels)
 	}
 	return 0
 }

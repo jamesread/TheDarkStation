@@ -37,11 +37,60 @@ func TestRoutingCouplerLockLabel_updatesWithAlignment(t *testing.T) {
 	if before == after {
 		t.Fatal("signal lock label should change when alignment improves")
 	}
+	if !strings.Contains(before, "\t") || !strings.Contains(after, "\t") {
+		t.Fatalf("lock labels should use tab columns, before=%q after=%q", before, after)
+	}
 	if !strings.Contains(before, "UNPOWERED{") && !strings.Contains(before, "DOOR{") {
 		t.Fatalf("misaligned label should be red or warming, got %q", before)
 	}
 	if !strings.Contains(after, "POWERED{") {
 		t.Fatalf("aligned label should be green, got %q", after)
+	}
+}
+
+func TestRoutingCouplerTuningMeter_centersWhenAligned(t *testing.T) {
+	got := routingCouplerTuningMeter(50, 50, 30, 11)
+	if !strings.Contains(got, "●") {
+		t.Fatalf("meter missing marker: %q", got)
+	}
+	// Aligned: marker replaces the center null.
+	mid := len([]rune(got)) / 2
+	runes := []rune(got)
+	if runes[mid] != '●' {
+		t.Fatalf("aligned meter center = %q, want ● in %q", string(runes[mid]), got)
+	}
+}
+
+func TestRoutingCouplerTuningMeter_offsetsWhenDetuned(t *testing.T) {
+	left := routingCouplerTuningMeter(50, 20, 30, 11)
+	right := routingCouplerTuningMeter(50, 80, 30, 11)
+	if left == right {
+		t.Fatalf("left/right detune should differ: %q vs %q", left, right)
+	}
+	leftPos := strings.IndexRune(left, '●')
+	rightPos := strings.IndexRune(right, '●')
+	center := strings.IndexRune(routingCouplerTuningMeter(50, 50, 30, 11), '●')
+	if leftPos >= center || rightPos <= center {
+		t.Fatalf("marker sides wrong: left=%d center=%d right=%d", leftPos, center, rightPos)
+	}
+}
+
+func TestRoutingCouplerAxisItem_usesTabColumns(t *testing.T) {
+	g := &state.Game{LevelSeed: 11}
+	repair := entities.NewRepairObjective("routing-repair-deck3-0", entities.RepairSignalCalibrator, "Lab", 0, 0)
+	repair.SkipExitGate = true
+	repair.TargetDeckID = 2
+	handler := NewRoutingCouplerMenuHandler(g, nil, repair, nil)
+	axis := &RoutingCouplerAxisItem{Handler: handler, Index: 0, Name: "Phase"}
+	label := axis.GetLabel()
+	if strings.Count(label, "\t") < 2 {
+		t.Fatalf("axis label should have tab columns, got %q", label)
+	}
+	if !strings.Contains(label, "●") {
+		t.Fatalf("axis label should include tuning marker, got %q", label)
+	}
+	if !axis.HandlesOwnCycleSound() {
+		t.Fatal("axis should handle its own cycle sound")
 	}
 }
 

@@ -223,6 +223,43 @@ func policyMenuLines(g *state.Game) []string {
 	return lines
 }
 
+// repairInterlockMenuLines exposes only telemetry the player has learned by
+// seeing or inspecting the selected room's repair device.
+func repairInterlockMenuLines(g *state.Game, roomName string) []string {
+	if g == nil || roomName == "" {
+		return nil
+	}
+	var lines []string
+	for _, repair := range g.RepairObjectives {
+		if repair == nil || repair.RoomName != roomName || repair.IsComplete() ||
+			!g.RepairDeviceKnown(repair) || len(repair.PrereqIDs) == 0 {
+			continue
+		}
+		upstream := g.RepairByID(repair.PrereqIDs[0])
+		if upstream == nil {
+			continue
+		}
+		report := entities.RepairDependencyReport(repair, upstream)
+		if len(lines) == 0 {
+			lines = append(lines, "SUBTLE{REPAIR INTERLOCKS}")
+		}
+		if !upstream.IsComplete() {
+			lines = append(lines,
+				"UNPOWERED{"+report.Symptom+"}",
+				report.Diagnosis,
+			)
+			if g.RepairDeviceKnown(upstream) {
+				lines = append(lines, fmt.Sprintf("SOURCE\t%s\t%s", upstream.Name, upstream.RoomName))
+			} else {
+				lines = append(lines, "SOURCE\tUNLOCATED")
+			}
+			continue
+		}
+		lines = append(lines, "POWERED{"+report.Restored+"}")
+	}
+	return lines
+}
+
 // RefreshPowerGridMenuItem re-applies generator-fed terminal power across the conductive grid.
 type RefreshPowerGridMenuItem struct {
 	Parent *MaintenanceMenuHandler
@@ -574,6 +611,12 @@ func (h *MaintenanceMenuHandler) getDiagnosticsMenuItems() []MenuItem {
 		&InfoMenuItem{Label: "SUBTLE{" + flavourLine + "}"},
 		&ViewingRoomMenuItem{Parent: h},
 		&InfoMenuItem{Label: ""},
+	}
+	if interlockLines := repairInterlockMenuLines(h.g, h.selectedRoomName); len(interlockLines) > 0 {
+		for _, line := range interlockLines {
+			items = append(items, &InfoMenuItem{Label: line})
+		}
+		items = append(items, &InfoMenuItem{Label: ""})
 	}
 	// Functional bus trace: where does conduction toward the selected room stop?
 	trace := setup.TraceBusFault(h.g, h.cell, h.selectedRoomName)

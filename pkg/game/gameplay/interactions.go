@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/audio"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/features"
 	"darkstation/pkg/game/renderer"
@@ -289,6 +290,7 @@ func CheckAdjacentGeneratorAtCell(g *state.Game, cell *world.Cell) bool {
 	if gen.Permanent {
 		calloutText := fmt.Sprintf("POWERED{%s}\nSUBTLE{Always online}", gen.Name)
 		renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorGeneratorOn, 0)
+		audio.PlayUseGenerator()
 		ToggleGeneratorPowerGridOverlay(g, cell)
 		return true
 	}
@@ -335,6 +337,11 @@ func CheckAdjacentGeneratorAtCell(g *state.Game, cell *world.Cell) bool {
 
 	renderer.AddCallout(cell.Row, cell.Col, calloutText.String(), calloutColor, 0)
 
+	// Long-use startup plays its own SFX when the hold begins; skip here to avoid a double tick.
+	if !GeneratorNeedsLongUsePowerUp(gen) {
+		audio.PlayUseGenerator()
+	}
+
 	if gen.IsPowered() {
 		ToggleGeneratorPowerGridOverlay(g, cell)
 	}
@@ -366,6 +373,7 @@ func pickUpItemsOnCell(g *state.Game, cell *world.Cell) {
 	}
 	cell.ItemsOnFloor.Each(func(item *world.Item) {
 		cell.ItemsOnFloor.Remove(item)
+		audio.PlayUsePickup()
 
 		if item.Name == "Map" {
 			g.HasMap = true
@@ -453,6 +461,7 @@ func CheckAdjacentGenerators(g *state.Game) {
 
 		inserted := gen.InsertBatteries(g.UseBatteries(toInsert))
 		if inserted > 0 {
+			audio.PlayUseBattery()
 			logMessage(g, "Inserted ACTION{%d} batteries into ROOM{%s}", inserted, gen.Name)
 			if gen.IsPowered() {
 				logMessage(g, "ITEM{%s} is now powered!", gen.Name)
@@ -483,6 +492,7 @@ func CheckAdjacentTerminalsAtCell(g *state.Game, cell *world.Cell) bool {
 	if !g.RoomCCTVPowered[cell.Name] {
 		logMessage(g, "CCTV terminal has no power. Restore power via the maintenance terminal.")
 		renderer.AddCallout(cell.Row, cell.Col, "UNPOWERED{Terminal has no power}", renderer.CalloutColorTerminal, 0)
+		audio.PlayUseDeny()
 		return true // consumed interaction, but no effect
 	}
 
@@ -496,12 +506,14 @@ func CheckAdjacentTerminalsAtCell(g *state.Game, cell *world.Cell) bool {
 		logMessage(g, "Accessed %s - ROOM{%s} already explored.", terminal.Name, targetRoom)
 		terminal.Activate()
 		renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("TITLE{%s already explored}", targetRoom), renderer.CalloutColorTerminal, 0)
+		audio.PlayUseTerminal()
 	} else {
 		// Reveal the target room
 		if revealRoomByName(g.Grid, targetRoom) {
 			terminal.Activate()
 			logMessage(g, "Accessed %s - revealed ROOM{%s} on security feed!", terminal.Name, targetRoom)
 			renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("TITLE{Revealed: %s}", targetRoom), renderer.CalloutColorTerminal, 0)
+			audio.PlayUseTerminal()
 		}
 	}
 	return true
@@ -528,6 +540,7 @@ func CheckAdjacentPuzzlesAtCell(g *state.Game, cell *world.Cell) bool {
 		// Story 5.3: correlation token must be inferred from another reachable surface before admit.
 		if puzzle.LinkageToken != "" && !g.HasLinkageToken(puzzle.LinkageToken) {
 			logMessage(g, "The terminal accepts your fragment, but a relay identifier is still unresolved.")
+			audio.PlayUseDeny()
 			return true
 		}
 		// Player has the code, solve the puzzle
@@ -536,8 +549,10 @@ func CheckAdjacentPuzzlesAtCell(g *state.Game, cell *world.Cell) bool {
 			logMessage(g, "Puzzle solved! Solution: %s", puzzle.Solution)
 			applyPuzzleReward(g, puzzle, cell)
 			renderer.AddCallout(cell.Row, cell.Col, "TITLE{Puzzle solved!}", renderer.CalloutColorTerminal, 0)
+			audio.PlayUseTerminal()
 		} else {
 			logMessage(g, "This puzzle has already been solved.")
+			audio.PlayUseTerminal()
 		}
 	} else {
 		// Show the puzzle challenge
@@ -547,6 +562,7 @@ func CheckAdjacentPuzzlesAtCell(g *state.Game, cell *world.Cell) bool {
 			logMessage(g, "Pattern Puzzle: Enter the correct pattern.")
 		}
 		logMessage(g, "Look for the solution code in logs and furniture descriptions.")
+		audio.PlayUseDeny()
 	}
 	return true
 }
@@ -595,6 +611,7 @@ func CheckAdjacentFurnitureAtCell(g *state.Game, cell *world.Cell) bool {
 		calloutText := fmt.Sprintf("%s\n%s", furnitureCalloutHeading(furniture.Name), furnitureCalloutBody(furniture.Description))
 		renderer.AddCallout(cell.Row, cell.Col, calloutText, renderer.CalloutColorFurnitureChecked, 0)
 	}
+	audio.PlayUseFurniture()
 	return true
 }
 
@@ -609,6 +626,7 @@ func CheckAdjacentHazardControlsAtCell(g *state.Game, cell *world.Cell) bool {
 	if !g.RoomCCTVPowered[cell.Name] {
 		logMessage(g, "Circuit breaker has no power. Restore power via the maintenance terminal.")
 		renderer.AddCallout(cell.Row, cell.Col, "UNPOWERED{No power}", renderer.CalloutColorHazardCtrl, 0)
+		audio.PlayUseDeny()
 		return true
 	}
 
@@ -619,6 +637,7 @@ func CheckAdjacentHazardControlsAtCell(g *state.Game, cell *world.Cell) bool {
 		logMessage(g, "Activated %s: %s", renderer.StyledHazardCtrl(control.Name), info.FixedMessage)
 		renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("TITLE{%s activated!}", control.Name), renderer.CalloutColorHazardCtrl, 0)
 	}
+	audio.PlayUseHazard()
 	return true
 }
 
@@ -636,6 +655,7 @@ func CheckAdjacentPowerRelayAtCell(g *state.Game, cell *world.Cell) bool {
 	msg := fmt.Sprintf("RELAY{%s}\nSUBTLE{Routing: }ACTION{%s}", "Power routing relay", stateLabel)
 	renderer.AddCallout(cell.Row, cell.Col, msg, renderer.CalloutColorMaintenance, 0)
 	renderer.AddDevicePulse(cell.Row, cell.Col)
+	audio.PlayUseRelay()
 	setup.NotifyPowerGridChanged(g)
 	return true
 }
@@ -656,10 +676,12 @@ func CheckAdjacentMaintenanceTerminalAtCell(g *state.Game, cell *world.Cell) boo
 		g.MaintenanceMenuTerminalCol = -1
 		logMessage(g, "Terminal has no power. Restore power from another maintenance terminal.")
 		renderer.AddCallout(cell.Row, cell.Col, "UNPOWERED{Terminal has no power}", renderer.CalloutColorMaintenance, 0)
+		audio.PlayUseDeny()
 		return true
 	}
 
 	// Open maintenance terminal menu
+	audio.PlayUseMaint()
 	runMaintenanceMenu(g, cell, maintenanceTerm)
 	return true
 }

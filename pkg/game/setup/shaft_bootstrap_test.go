@@ -12,6 +12,44 @@ import (
 	gameworld "darkstation/pkg/game/world"
 )
 
+func TestRevealLiftShaftStructure_marksWallsAndCorners(t *testing.T) {
+	g := state.NewGame()
+	g.Level = 2
+	g.Grid = generator.DefaultGenerator.Generate(2, deck.ThemeAirlock)
+	g.Grid.ForEachCell(func(row, col int, cell *world.Cell) {
+		if cell != nil {
+			gameworld.InitGameData(cell)
+		}
+	})
+
+	RevealLiftShaftStructure(g)
+
+	top, left, _, _ := generator.ShaftBoundsForLevel(g.Grid.Rows(), g.Grid.Cols(), g.Level)
+	// Interior
+	interior := g.Grid.GetCell(top, left)
+	if interior == nil || !interior.Discovered {
+		t.Fatal("expected shaft interior discovered")
+	}
+	// Corner wall (diagonally adjacent — not revealed by adjacent-room alone)
+	corner := g.Grid.GetCell(top-1, left-1)
+	if corner == nil || corner.Room {
+		t.Fatal("expected non-room corner wall cell")
+	}
+	if !corner.Discovered {
+		t.Fatal("expected lift corner wall discovered")
+	}
+	// Orthogonal wall
+	north := g.Grid.GetCell(top-1, left)
+	if north == nil || north.Room || !north.Discovered {
+		t.Fatal("expected lift edge wall discovered")
+	}
+	// Outside the ring stays undiscovered
+	outside := g.Grid.GetCell(top-2, left)
+	if outside != nil && !outside.Room && outside.Discovered {
+		t.Fatal("wall outside lift ring should not be force-discovered")
+	}
+}
+
 func TestLiftShaftBottomLeftCell(t *testing.T) {
 	g := state.NewGame()
 	g.Level = 2

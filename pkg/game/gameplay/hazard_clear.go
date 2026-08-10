@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/audio"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/state"
@@ -43,6 +44,7 @@ func AdvanceHazardClearIfActive(g *state.Game, nowMs int64) {
 			s.PhaseStartMs = nowMs
 			s.FadeProgress = 0
 			s.VisualAlpha = 1
+			audio.PlayHazardClear()
 		}
 	case state.HazardClearFade:
 		p := float64(elapsed) / float64(hazardClearFadeMs)
@@ -50,6 +52,7 @@ func AdvanceHazardClearIfActive(g *state.Game, nowMs int64) {
 			p = 1
 		}
 		s.FadeProgress = p
+		audio.SetHazardClearFadeProgress(p)
 		if elapsed >= hazardClearFadeMs {
 			completeHazardClearFix(g, s)
 			s.Phase = state.HazardClearPanBack

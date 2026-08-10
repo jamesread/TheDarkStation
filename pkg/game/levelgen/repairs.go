@@ -9,7 +9,6 @@ import (
 	"darkstation/pkg/engine/world"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/generator"
-	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
 	gameworld "darkstation/pkg/game/world"
@@ -19,6 +18,8 @@ type repairCandidate struct {
 	cell *world.Cell
 	dist int
 }
+
+const causalReturnMaxStartDistanceDelta = 32
 
 // PlaceRepairObjectives adds deck-wide repair chains that gate the exit lift.
 func PlaceRepairObjectives(g *state.Game, avoid *mapset.Set[*world.Cell]) {
@@ -53,7 +54,17 @@ func PlaceRepairObjectives(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 				continue
 			}
 		} else {
-			cell = pickValidatedRepairCandidate(g, candidates, fractions[i%len(fractions)], usedRooms, avoid)
+			if g.Level == 3 && len(placed) > 0 && typ == entities.RepairPowerCoupler &&
+				placed[len(placed)-1].Type == entities.RepairPressureValve {
+				previous := placed[len(placed)-1]
+				upstreamCell := g.Grid.GetCell(previous.DeviceRow, previous.DeviceCol)
+				cell = pickCausalDependentCandidate(
+					g, candidates, fractions[i%len(fractions)], upstreamCell, usedRooms, avoid,
+				)
+			}
+			if cell == nil {
+				cell = pickValidatedRepairCandidate(g, candidates, fractions[i%len(fractions)], usedRooms, avoid)
+			}
 			if cell == nil {
 				break
 			}
@@ -76,10 +87,50 @@ func PlaceRepairObjectives(g *state.Game, avoid *mapset.Set[*world.Cell]) {
 		avoid.Put(cell)
 		usedRooms[cell.Name] = true
 		placed = append(placed, repair)
-		g.AddHint(fmt.Sprintf("Repair the %s in %s", renderer.StyledItem(repair.Name), renderer.StyledCell(cell.Name)))
 	}
 
+	if g.Level == 3 {
+		orientCausalRepairChain(g, placed)
+	}
 	g.RepairObjectives = placed
+	if len(placed) > 0 {
+		hint := "Station diagnostics report an unresolved maintenance fault. Inspect failed equipment for local telemetry."
+		for _, repair := range placed {
+			if repair != nil && len(repair.PrereqIDs) > 0 {
+				hint = "Station diagnostics report unresolved maintenance interlocks. Inspect failed equipment for local telemetry."
+				break
+			}
+		}
+		g.AddHint(hint)
+	}
+}
+
+// orientCausalRepairChain keeps the inhibited coupler on the likely route
+// before its pressure prerequisite. Swapping device identities is safe because
+// both cells have already passed the same blocking-placement validation.
+func orientCausalRepairChain(g *state.Game, repairs []*entities.RepairObjective) {
+	if g == nil || g.Grid == nil {
+		return
+	}
+	distances := distancesFromStart(g.Grid, setup.PlayerEntryCell(g))
+	for i := 1; i < len(repairs); i++ {
+		upstream, dependent := repairs[i-1], repairs[i]
+		if upstream == nil || dependent == nil ||
+			upstream.Type != entities.RepairPressureValve ||
+			dependent.Type != entities.RepairPowerCoupler {
+			continue
+		}
+		upstreamCell := g.Grid.GetCell(upstream.DeviceRow, upstream.DeviceCol)
+		dependentCell := g.Grid.GetCell(dependent.DeviceRow, dependent.DeviceCol)
+		if upstreamCell == nil || dependentCell == nil || distances[dependentCell] < distances[upstreamCell] {
+			continue
+		}
+		gameworld.GetGameData(upstreamCell).RepairDevice = dependent
+		gameworld.GetGameData(dependentCell).RepairDevice = upstream
+		upstream.RoomName, dependent.RoomName = dependentCell.Name, upstreamCell.Name
+		upstream.DeviceRow, dependent.DeviceRow = dependentCell.Row, upstreamCell.Row
+		upstream.DeviceCol, dependent.DeviceCol = dependentCell.Col, upstreamCell.Col
+	}
 }
 
 func repairChainForLevel(level int, exitGate ExitGateKind) []entities.RepairType {
@@ -205,6 +256,48 @@ func pickValidatedRepairCandidate(g *state.Game, candidates []repairCandidate, f
 		}
 		// pickRepairCandidate consumed this entry; try the next-best candidate.
 	}
+}
+
+// pickCausalDependentCandidate places an inhibited dependent before its
+// prerequisite on the likely route from entry, while bounding the eventual
+// return journey. Falling back to the ordinary picker keeps cramped layouts
+// generatable.
+func pickCausalDependentCandidate(g *state.Game, candidates []repairCandidate, fraction float64, upstream *world.Cell, usedRooms map[string]bool, avoid *mapset.Set[*world.Cell]) *world.Cell {
+	if upstream == nil || len(candidates) == 0 {
+		return nil
+	}
+	if fraction < 0 {
+		fraction = 0
+	}
+	if fraction > 1 {
+		fraction = 1
+	}
+	distances := distancesFromStart(g.Grid, setup.PlayerEntryCell(g))
+	upstreamDist, ok := distances[upstream]
+	if !ok {
+		return nil
+	}
+	target := int(float64(len(candidates)-1) * fraction)
+	for radius := 0; radius < len(candidates); radius++ {
+		for _, idx := range []int{target - radius, target + radius} {
+			if idx < 0 || idx >= len(candidates) {
+				continue
+			}
+			candidate := candidates[idx]
+			cell := candidate.cell
+			if cell == nil || usedRooms[cell.Name] ||
+				candidate.dist >= upstreamDist ||
+				upstreamDist-candidate.dist > causalReturnMaxStartDistanceDelta {
+				continue
+			}
+			if !validRepairDeviceCell(g, cell, avoid) {
+				continue
+			}
+			candidates[idx].cell = nil
+			return cell
+		}
+	}
+	return nil
 }
 
 func pickRepairCandidate(candidates []repairCandidate, fraction float64, usedRooms map[string]bool) *world.Cell {

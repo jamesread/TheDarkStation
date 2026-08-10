@@ -2,6 +2,7 @@ package ebiten
 
 import (
 	"math"
+	"strings"
 	"time"
 
 	gamemenu "darkstation/pkg/game/menu"
@@ -41,6 +42,84 @@ func menuPanelWidthForTitle(title string, screenWidth int, maintOverlay, devMenu
 	return w
 }
 
+// resolveMenuPanelWidth picks a panel width for the given menu, using content measurement
+// for compact title-screen menus (game mode picker).
+func (e *EbitenRenderer) resolveMenuPanelWidth(title string, screenWidth int, maintOverlay, devMenuRight bool, labels []string, helpText string) int {
+	if title == "Select Game Mode" {
+		return e.compactMenuPanelWidth(title, screenWidth, labels, helpText)
+	}
+	return menuPanelWidthForTitle(title, screenWidth, maintOverlay, devMenuRight)
+}
+
+// compactMenuPanelWidth sizes a panel to its title, help, and tab-aligned rows.
+func (e *EbitenRenderer) compactMenuPanelWidth(title string, screenWidth int, labels []string, helpText string) int {
+	const paddingX = 48 // 24px left + right
+	const valueColumnGap = 32
+	const maxFrac = 0.7
+
+	face := e.getSansFontFace()
+	titleFace := e.getSansBoldTitleFontFace()
+	if face == nil || titleFace == nil || face.Source == nil || titleFace.Source == nil {
+		w := int(float32(screenWidth) * menuPanelWidthFrac("The Dark Station", false, false) * 1.75)
+		if w < mainMenuPanelMinWidth {
+			w = mainMenuPanelMinWidth
+		}
+		maxW := int(float32(screenWidth) * maxFrac)
+		if w > maxW {
+			w = maxW
+		}
+		return w
+	}
+
+	maxContent := e.getTextWidthWithFace(title, titleFace)
+	if helpText != "" {
+		if w := e.getMarkupWidthWithFace(helpText, face); w > maxContent {
+			maxContent = w
+		}
+	}
+
+	var maxLabelW, maxValueW float64
+	for _, label := range labels {
+		before, after, ok := strings.Cut(label, "\t")
+		if !ok {
+			if w := e.getMarkupWidthWithFace(label, face); w > maxContent {
+				maxContent = w
+			}
+			continue
+		}
+		if before != "" {
+			if w := e.getTextWidthWithFace(before, face); w > maxLabelW {
+				maxLabelW = w
+			}
+		}
+		valuePart := after
+		if middle, _, hasMore := strings.Cut(after, "\t"); hasMore {
+			valuePart = middle
+		}
+		if valuePart != "" {
+			if w := e.getMarkupWidthWithFace(valuePart, face); w > maxValueW {
+				maxValueW = w
+			}
+		}
+	}
+	if maxLabelW > 0 || maxValueW > 0 {
+		rowW := maxLabelW + float64(valueColumnGap) + maxValueW
+		if rowW > maxContent {
+			maxContent = rowW
+		}
+	}
+
+	w := int(math.Ceil(maxContent)) + paddingX
+	if w < mainMenuPanelMinWidth {
+		w = mainMenuPanelMinWidth
+	}
+	maxW := int(float32(screenWidth) * maxFrac)
+	if w > maxW {
+		w = maxW
+	}
+	return w
+}
+
 func titleScreenMenuTransition(from, to string) bool {
 	return titleScreenFloatingTilesMenu(from) && titleScreenFloatingTilesMenu(to) && from != to
 }
@@ -56,8 +135,8 @@ func (e *EbitenRenderer) beginTitleScreenMenuTransition(fromTitle, toTitle strin
 	if e.menuPanelTransitionStartMs == 0 {
 		e.menuPanelTransitionStartMs = time.Now().UnixMilli()
 	}
-	e.menuPanelTransitionFromW = menuPanelWidthForTitle(fromTitle, screenWidth, false, false)
-	e.menuPanelTransitionToW = menuPanelWidthForTitle(toTitle, screenWidth, false, false)
+	e.menuPanelTransitionFromW = e.resolveMenuPanelWidth(fromTitle, screenWidth, false, false, fromLabels, fromHelp)
+	e.menuPanelTransitionToW = e.resolveMenuPanelWidth(toTitle, screenWidth, false, false, toLabels, toHelp)
 	e.menuPanelTransitionFromH = e.calculateMenuHeight(fromLabels, fromTitle, fromHelp, e.prevMenuItems)
 	e.menuPanelTransitionToH = e.calculateMenuHeight(toLabels, toTitle, toHelp, toItems)
 	e.menuHeightAnimating = false
@@ -236,10 +315,10 @@ type menuPanelContentParams struct {
 	contentSlideX          float64
 	alpha                  float64
 
-	highlightAnimating                       bool
-	highlightAnimStartIndex, highlightTarget int
+	highlightAnimating                            bool
+	highlightAnimStartIndex, highlightTarget      int
 	highlightAnimStartWidth, highlightTargetWidth float64
-	highlightAnimStartTime                   int64
+	highlightAnimStartTime                        int64
 
 	screenWidth, screenHeight int
 	maintOverlayStable        bool

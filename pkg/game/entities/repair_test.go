@@ -52,3 +52,29 @@ func TestNeedsLivePower(t *testing.T) {
 		t.Fatal("conduit splice should not need live power")
 	}
 }
+
+func TestRepairDependencyReport_ValveToCouplerIsCausal(t *testing.T) {
+	valve := NewRepairObjective("v", RepairPressureValve, "Pressure", 0, 0)
+	coupler := NewRepairObjective("c", RepairPowerCoupler, "Transfer", 0, 1)
+	report := RepairDependencyReport(coupler, valve)
+	if report.Symptom != "COUPLER DRIVE INHIBITED" {
+		t.Fatalf("symptom = %q", report.Symptom)
+	}
+	if report.Diagnosis != "PRESSURE CONTROL INPUT OUT OF TOLERANCE" {
+		t.Fatalf("diagnosis = %q", report.Diagnosis)
+	}
+	if report.Prediction == "" || report.Restored != "COUPLER INTERLOCK RELEASED" {
+		t.Fatalf("incomplete causal report: %+v", report)
+	}
+}
+
+func TestRepairInspectionPersistsOnObjective(t *testing.T) {
+	repair := NewRepairObjective("v", RepairPressureValve, "Pressure", 0, 0)
+	if repair.Inspected {
+		t.Fatal("new repair should not start inspected")
+	}
+	repair.Inspect()
+	if !repair.Inspected {
+		t.Fatal("Inspect should persist knowledge on the repair objective")
+	}
+}

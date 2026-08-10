@@ -8,7 +8,7 @@ import (
 )
 
 func TestTitleScreenFloatingTilesMenu(t *testing.T) {
-	for _, title := range []string{"The Dark Station", "Settings"} {
+	for _, title := range []string{"The Dark Station", "Settings", "Select Game Mode"} {
 		if !titleScreenFloatingTilesMenu(title) {
 			t.Errorf("title %q should keep floating tiles", title)
 		}

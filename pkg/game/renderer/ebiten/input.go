@@ -11,6 +11,7 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 
 	engineinput "darkstation/pkg/engine/input"
+	"darkstation/pkg/game/audio"
 	"darkstation/pkg/game/config"
 	"darkstation/pkg/game/state"
 )
@@ -23,12 +24,20 @@ func (e *EbitenRenderer) Update() error {
 	e.menuAnimTimeNano = now.UnixNano()
 	e.maintPanDrawCount = 0
 	e.advanceTimedGameState(now.UnixMilli())
+	audio.UpdateMusic()
+	e.syncPowerGridPulseAudio()
 
 	// Log window opening on first update (confirms window is actually running)
 	if !e.windowOpenedLogged {
 		e.windowOpenedLogged = true
 		w, h := ebiten.WindowSize()
 		log.Printf("Main window opened successfully (%dx%d)", w, h)
+		SaveMonitorPreference()
+		e.lastMonitorPersistMs = now.UnixMilli()
+	} else if now.UnixMilli()-e.lastMonitorPersistMs >= 1000 {
+		// Periodically remember the current monitor if the window moved.
+		SaveMonitorPreference()
+		e.lastMonitorPersistMs = now.UnixMilli()
 	}
 
 	// Check for console toggle (backtick/grave accent or Shift+:`)
@@ -97,7 +106,17 @@ func (e *EbitenRenderer) Update() error {
 
 	e.advanceHazardTour()
 
+	e.advanceLiftRide()
+
 	return nil
+}
+
+// syncPowerGridPulseAudio starts/stops the looping pulse SFX with the overlay.
+func (e *EbitenRenderer) syncPowerGridPulseAudio() {
+	e.gameMutex.RLock()
+	g := e.game
+	e.gameMutex.RUnlock()
+	audio.SetPowerGridPulseActive(powerGridOverlayActive(g))
 }
 
 func (e *EbitenRenderer) advanceTimedGameState(nowMs int64) {
@@ -171,6 +190,19 @@ func (e *EbitenRenderer) advanceHazardTour() {
 		return
 	}
 	e.hazardTourAdvancer(g, e.menuAnimClockMilli)
+}
+
+func (e *EbitenRenderer) advanceLiftRide() {
+	if e.liftRideAdvancer == nil {
+		return
+	}
+	e.gameMutex.RLock()
+	g := e.game
+	e.gameMutex.RUnlock()
+	if g == nil || g.LiftRide == nil {
+		return
+	}
+	e.liftRideAdvancer(g, e.menuAnimClockMilli)
 }
 
 // handleZoom handles =/- for font/tile size adjustment

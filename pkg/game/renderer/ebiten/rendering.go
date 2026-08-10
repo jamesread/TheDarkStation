@@ -15,6 +15,7 @@ import (
 	"github.com/leonelquinteros/gotext"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/generator"
 	"darkstation/pkg/game/renderer"
 	"darkstation/pkg/game/setup"
 	"darkstation/pkg/game/state"
@@ -29,16 +30,23 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 	defer e.drawBuildLabel(screen, screenWidth, screenHeight)
 
 	if load := e.levelGenSnapshot(); load.active {
-		if e.monoFontSource != nil && e.sansFontSource != nil {
-			e.drawLevelGenLoading(screen, load)
-		}
-		e.drawConsole(screen)
-		sw, sh := screen.Bounds().Dx(), screen.Bounds().Dy()
+		// Keep the lift shaft on-screen during mid-ride generation instead of the
+		// fullscreen loading panel.
 		e.gameMutex.RLock()
-		g := e.game
+		rideActive := e.game != nil && e.game.LiftRide != nil
 		e.gameMutex.RUnlock()
-		e.drawDebugTopRight(screen, sw, sh, g)
-		return
+		if !rideActive {
+			if e.monoFontSource != nil && e.sansFontSource != nil {
+				e.drawLevelGenLoading(screen, load)
+			}
+			e.drawConsole(screen)
+			sw, sh := screen.Bounds().Dx(), screen.Bounds().Dy()
+			e.gameMutex.RLock()
+			g := e.game
+			e.gameMutex.RUnlock()
+			e.drawDebugTopRight(screen, sw, sh, g)
+			return
+		}
 	}
 
 	// Check if menu overlays are active - these should be drawn even without valid game state
@@ -63,7 +71,7 @@ func (e *EbitenRenderer) Draw(screen *ebiten.Image) {
 			return
 		}
 
-		// Drifting tile field for title screen and its sub-menus (bindings, video).
+		// Drifting tile field for title screen and its sub-menus (settings, game mode).
 		if titleScreenFloatingTilesMenu(title) {
 			e.ensureFloatingTiles(screenWidth, screenHeight)
 			e.drawFloatingTilesBackground(screen)
@@ -395,7 +403,20 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 
 	var camRow, camCol, visualRow, visualCol float64
 	var startRow, startCol int
-	if snap.hazardTour != nil {
+	if snap.liftRide != nil {
+		nowMs := e.menuAnimClockMilli
+		if nowMs == 0 {
+			nowMs = time.Now().UnixMilli()
+		}
+		var ok bool
+		camRow, camCol, ok = snap.liftRide.CameraAt(nowMs)
+		if !ok {
+			camRow, camCol, visualRow, visualCol, startRow, startCol = e.playVisualCamera(snap)
+		} else {
+			startRow, startCol = mapCameraStartAt(camRow, camCol, e.viewportRows, e.viewportCols)
+			visualRow, visualCol = camRow, camCol
+		}
+	} else if snap.hazardTour != nil {
 		nowMs := e.menuAnimClockMilli
 		if nowMs == 0 {
 			nowMs = time.Now().UnixMilli()
@@ -449,7 +470,17 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 		mapScrY = math.Round(mapScrY)
 	}
 
-	if !e.mapDrawCacheHit(snap.seq, startRow, startCol, bufW, bufH) {
+	// Lift ride: motion is screen-space (mask + pass markers). Keep the map buffer
+	// stable across frames; freeze it entirely while TravelToDeck mutates the grid.
+	freezeLiftFrame := snap.liftRide != nil && snap.liftRide.SwapInProgress && e.mapBuffer != nil
+	cacheSeq := snap.seq
+	if snap.liftRide != nil {
+		cacheSeq = uint64(snap.level+1) << 1
+		if snap.liftRide.Swapped {
+			cacheSeq |= 1
+		}
+	}
+	if !freezeLiftFrame && !e.mapDrawCacheHit(cacheSeq, startRow, startCol, bufW, bufH) {
 		// Draw tiles to offscreen buffer at integer coordinates - eliminates per-tile
 		// sub-pixel jitter. The single blit with fractional offset is smooth.
 		e.mapBuffer.Fill(colorBackground)
@@ -459,7 +490,7 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 				e.drawTileToBuffer(e.mapBuffer, startRow, startCol, vRow, vCol, g, snap, pg)
 			}
 		}
-		e.storeMapDrawCache(snap.seq, startRow, startCol, bufW, bufH)
+		e.storeMapDrawCache(cacheSeq, startRow, startCol, bufW, bufH)
 	}
 
 	if maintPanDebugOn() && g.MaintenanceMenuRoom != "" {
@@ -475,6 +506,10 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 	op.GeoM.Translate(mapScrX, mapScrY)
 	screen.DrawImage(e.mapBuffer, op)
 
+	if snap.liftRide != nil {
+		e.drawLiftRideMaskAndMotion(screen, g, snap, mapScrX, mapScrY, startRow, startCol)
+	}
+
 	pg := &snap.powerGrid
 	e.drawFOVRays(screen, g, snap, mapScrX, mapScrY, startRow, startCol)
 	e.drawPowerGridOverlay(screen, g, pg, mapScrX, mapScrY, startRow, startCol)
@@ -482,9 +517,11 @@ func (e *EbitenRenderer) drawMap(screen *ebiten.Image, g *state.Game, screenWidt
 	// Draw overlays using the same screen origin so labels/callouts match the quantized blit.
 	mapXF := mapScrX
 	mapYF := mapScrY
-	e.drawRoomLabels(screen, snap, mapXF, mapYF, startRow, startCol)
-	e.drawEnvironmentalPlaques(screen, snap, mapXF, mapYF, startRow, startCol)
-	e.drawCallouts(screen, snap, mapXF, mapYF, startRow, startCol)
+	if snap.liftRide == nil || snap.liftRide.PeripheralAlpha > 0.15 {
+		e.drawRoomLabels(screen, snap, mapXF, mapYF, startRow, startCol)
+		e.drawEnvironmentalPlaques(screen, snap, mapXF, mapYF, startRow, startCol)
+		e.drawCallouts(screen, snap, mapXF, mapYF, startRow, startCol)
+	}
 	e.drawLongUseProgress(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawRepairDrainProgress(screen, snap, mapXF, mapYF, startRow, startCol)
 	e.drawSlimePopEffects(screen, snap, mapXF, mapYF, startRow, startCol)
@@ -507,6 +544,13 @@ func (e *EbitenRenderer) drawTileToBuffer(buf *ebiten.Image, startRow, startCol,
 	y := vRow * e.tileSize
 
 	cell := g.Grid.GetCell(mapRow, mapCol)
+	ride := snap.liftRide
+	if ride != nil && !liftRideKeepCell(g, mapRow, mapCol) {
+		// Periphery is covered by a screen-space mask; skip while fully dimmed.
+		if ride.PeripheralAlpha <= 0.02 {
+			return
+		}
+	}
 
 	cellRenderOptions := e.getCellRenderOptions(g, cell, snap, false)
 
@@ -522,6 +566,73 @@ func (e *EbitenRenderer) drawTileToBuffer(buf *ebiten.Image, startRow, startCol,
 	customBg := e.getTileCustomBg(g, cell, snap, &cellRenderOptions, pg)
 	bg, fg := e.ambientTileColors(g, cell, snap, &cellRenderOptions, customBg)
 	e.drawTileWithBg(buf, cellRenderOptions.Icon, x, y, fg, cellRenderOptions.HasBackground, bg)
+}
+
+// liftRideKeepCell reports shaft interior plus the one-cell wall ring kept visible during rides.
+func liftRideKeepCell(g *state.Game, row, col int) bool {
+	if g == nil || g.Grid == nil {
+		return false
+	}
+	top, left, bottom, right := generator.ShaftBounds(g.Grid.Rows(), g.Grid.Cols())
+	return row >= top-1 && row <= bottom+1 && col >= left-1 && col <= right+1
+}
+
+// drawLiftRideMaskAndMotion dims everything outside the lift car (shaft + wall ring)
+// and draws subtle scrolling deck-pass markers inside the shaft interior.
+//
+// The car is anchored to the screen center (camera target), not live ShaftBounds.
+// Mid-swap the live grid may already be the destination while the frozen buffer and
+// camera still describe the source deck — world-space bounds would shift the hole
+// toward the bottom-right until the next snap.
+func (e *EbitenRenderer) drawLiftRideMaskAndMotion(screen *ebiten.Image, g *state.Game, snap *renderSnapshot, mapScrX, mapScrY float64, startRow, startCol int) {
+	if snap == nil || snap.liftRide == nil {
+		return
+	}
+	_ = g
+	_ = mapScrX
+	_ = mapScrY
+	_ = startRow
+	_ = startCol
+	ride := snap.liftRide
+	sw, sh := float64(screen.Bounds().Dx()), float64(screen.Bounds().Dy())
+	tile := float64(e.tileSize)
+	// 5×5 shaft + one-cell wall ring, centered on the screen (same as camera focus).
+	const shaftTiles = 5
+	const wallRing = 1
+	keepTiles := shaftTiles + wallRing*2
+	keepW := float64(keepTiles) * tile
+	keepH := float64(keepTiles) * tile
+	keepX := sw/2 - keepW/2
+	keepY := sh/2 - keepH/2
+	shaftW := float64(shaftTiles) * tile
+	shaftH := float64(shaftTiles) * tile
+	shaftX := sw/2 - shaftW/2
+	shaftY := sh/2 - shaftH/2
+
+	dim := 1 - ride.PeripheralAlpha
+	if dim > 0.02 {
+		a := uint8(math.Round(230 * dim))
+		mask := color.RGBA{8, 6, 12, a}
+		// Four rects around the lift car (shaft + walls).
+		vector.DrawFilledRect(screen, 0, 0, float32(sw), float32(math.Max(0, keepY)), mask, false)
+		vector.DrawFilledRect(screen, 0, float32(keepY+keepH), float32(sw), float32(math.Max(0, sh-(keepY+keepH))), mask, false)
+		vector.DrawFilledRect(screen, 0, float32(keepY), float32(math.Max(0, keepX)), float32(keepH), mask, false)
+		vector.DrawFilledRect(screen, float32(keepX+keepW), float32(keepY), float32(math.Max(0, sw-(keepX+keepW))), float32(keepH), mask, false)
+	}
+
+	// Subtle scrolling pass-markers inside the shaft floor only (not over walls).
+	spacing := tile
+	scroll := math.Mod(ride.ScrollOffset*spacing, spacing)
+	if scroll < 0 {
+		scroll += spacing
+	}
+	line := color.RGBA{110, 130, 155, 35}
+	for y := shaftY - spacing + scroll; y < shaftY+shaftH+spacing; y += spacing {
+		if y < shaftY || y > shaftY+shaftH {
+			continue
+		}
+		vector.StrokeLine(screen, float32(shaftX+3), float32(y), float32(shaftX+shaftW-3), float32(y), 1, line, false)
+	}
 }
 
 // getTileCustomBg returns the background color for a cell (focus, hazard, floor, exit, etc.).
@@ -678,6 +789,11 @@ func (e *EbitenRenderer) visibleMapCharStart(g *state.Game, snap *renderSnapshot
 	nowMs := e.menuAnimClockMilli
 	if nowMs == 0 {
 		nowMs = time.Now().UnixMilli()
+	}
+	if snap != nil && snap.liftRide != nil {
+		if row, col, ok := snap.liftRide.CameraAt(nowMs); ok {
+			return mapCameraStartAt(row, col, e.viewportRows, e.viewportCols)
+		}
 	}
 	if snap != nil && snap.hazardTour != nil {
 		if row, col, ok := snap.hazardTour.CameraAt(nowMs); ok {

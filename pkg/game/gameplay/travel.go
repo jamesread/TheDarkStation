@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/audio"
 	"darkstation/pkg/game/generator"
 	gamemenu "darkstation/pkg/game/menu"
 	"darkstation/pkg/game/renderer"
@@ -85,6 +86,7 @@ func spawnInLiftShaft(g *state.Game) {
 	if g == nil || g.Grid == nil {
 		return
 	}
+	setup.RevealLiftShaftStructure(g)
 	exit := g.Grid.ExitCell()
 	if exit != nil {
 		TeleportPlayerTo(g, exit)
@@ -106,7 +108,11 @@ func TryUseLift(g *state.Game) bool {
 	}
 
 	switch setup.ExitLiftState(g) {
-	case state.ExitLiftLockedUnpowered, state.ExitLiftLockedIncomplete:
+	case state.ExitLiftLockedUnpowered:
+		audio.PlayUseDeny()
+		CheckAdjacentExitLiftAtCell(g, cell)
+		return true
+	case state.ExitLiftLockedIncomplete:
 		CheckAdjacentExitLiftAtCell(g, cell)
 		return true
 	}
@@ -114,6 +120,7 @@ func TryUseLift(g *state.Game) bool {
 		return false
 	}
 
+	audio.PlayUseLift()
 	if g.IsFinalDeckLevel(g.Level) {
 		TriggerGameComplete(g)
 		return true
@@ -123,7 +130,7 @@ func TryUseLift(g *state.Game) bool {
 	if !ok || targetLevel <= 0 {
 		return true
 	}
-	if err := TravelToDeck(g, targetLevel); err != nil {
+	if err := StartLiftRide(g, targetLevel); err != nil {
 		logMessage(g, "%v", err)
 		renderer.ShowDeveloperMessage(err.Error())
 	}

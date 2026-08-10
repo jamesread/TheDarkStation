@@ -30,6 +30,11 @@ type CycleMenuItem interface {
 	HandleCycle(delta int) (consumed bool, helpText string)
 }
 
+// OwnCycleSoundMenuItem plays its own A/D feedback and skips the default menu confirm beep.
+type OwnCycleSoundMenuItem interface {
+	HandlesOwnCycleSound() bool
+}
+
 // MenuHandler handles menu item selection and activation.
 type MenuHandler interface {
 	// OnSelect is called when an item is selected (navigated to).
@@ -174,7 +179,7 @@ func RunMenu(g *state.Game, items []MenuItem, handler MenuHandler) {
 		}
 
 		if consumed, ht := handleCycleIntent(items, selected, intent); consumed {
-			audio.PlayMenuConfirm()
+			playCycleFeedback(items, selected)
 			if ht != "" {
 				helpText = ht
 			}
@@ -396,7 +401,7 @@ func RunMenuDynamic(g *state.Game, handler DynamicMenuHandler) {
 		}
 
 		if consumed, ht := handleCycleIntent(items, selected, intent); consumed {
-			audio.PlayMenuConfirm()
+			playCycleFeedback(items, selected)
 			if ht != "" {
 				helpText = ht
 			}
@@ -598,6 +603,15 @@ func handleCycleIntent(items []MenuItem, selected int, intent engineinput.Intent
 		return false, ""
 	}
 	return cycler.HandleCycle(delta)
+}
+
+func playCycleFeedback(items []MenuItem, selected int) {
+	if selected >= 0 && selected < len(items) {
+		if own, ok := items[selected].(OwnCycleSoundMenuItem); ok && own.HandlesOwnCycleSound() {
+			return
+		}
+	}
+	audio.PlayMenuConfirm()
 }
 
 // Helper function to match logMessage signature

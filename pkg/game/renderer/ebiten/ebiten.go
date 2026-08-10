@@ -66,6 +66,11 @@ func (e *EbitenRenderer) SetHazardTourAdvancer(fn HazardTourAdvanceFunc) {
 	e.hazardTourAdvancer = fn
 }
 
+// SetLiftRideAdvancer registers the gameplay hook that advances lift ride cinematics each Update tick.
+func (e *EbitenRenderer) SetLiftRideAdvancer(fn LiftRideAdvanceFunc) {
+	e.liftRideAdvancer = fn
+}
+
 // SetRepairTimerAdvancer registers the gameplay hook after timed repair completion.
 func (e *EbitenRenderer) SetRepairTimerAdvancer(fn RepairTimerAdvanceFunc) {
 	e.repairTimerAdvancer = fn
@@ -94,6 +99,7 @@ func (e *EbitenRenderer) Init() {
 	if cfg.TileSize >= minTileSize && cfg.TileSize <= maxTileSize {
 		e.tileSize = cfg.TileSize
 	}
+	restorePreferredMonitor(cfg)
 
 	// Load the monospace font for map tiles (embedded Cascadia Code NF)
 	monoSrc, err := text.NewGoTextFaceSource(bytes.NewReader(resources.CascadiaCodeNFRegular))
@@ -198,7 +204,9 @@ func (e *EbitenRenderer) ToggleFullscreen() bool {
 // Run starts the Ebiten game loop
 func (e *EbitenRenderer) Run() error {
 	e.running = true
-	return ebiten.RunGame(e)
+	err := ebiten.RunGame(e)
+	SaveMonitorPreference()
+	return err
 }
 
 // IsRunning returns whether the renderer is running

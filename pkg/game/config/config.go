@@ -20,7 +20,16 @@ const (
 // Config holds application settings
 type Config struct {
 	// Display settings
-	TileSize int `ini:"tile_size"`
+	TileSize      int    `ini:"tile_size"`
+	MonitorName   string `ini:"monitor_name"`
+	MonitorIndex  int    `ini:"monitor_index"` // -1 = unset
+	MonitorWidth  int    `ini:"monitor_width"`
+	MonitorHeight int    `ini:"monitor_height"`
+
+	// Audio settings
+	SFXVolume   int  `ini:"sfx_volume"`   // 0–100
+	MusicVolume int  `ini:"music_volume"` // 0–100
+	Mute        bool `ini:"mute"`
 
 	// Internal: path to config file
 	configPath string
@@ -29,7 +38,11 @@ type Config struct {
 // DefaultConfig returns a Config with default values
 func DefaultConfig() *Config {
 	return &Config{
-		TileSize: 24, // Default tile size
+		TileSize:     24, // Default tile size
+		MonitorIndex: -1,
+		SFXVolume:    100,
+		MusicVolume:  70,
+		Mute:         false,
 	}
 }
 
@@ -110,12 +123,40 @@ func Load() (*Config, error) {
 		value := strings.TrimSpace(parts[1])
 
 		// Apply settings based on section and key
-		if currentSection == "Display" {
+		switch currentSection {
+		case "Display":
 			switch key {
 			case "tile_size":
 				if v, err := strconv.Atoi(value); err == nil {
 					cfg.TileSize = v
 				}
+			case "monitor_name":
+				cfg.MonitorName = value
+			case "monitor_index":
+				if v, err := strconv.Atoi(value); err == nil {
+					cfg.MonitorIndex = v
+				}
+			case "monitor_width":
+				if v, err := strconv.Atoi(value); err == nil {
+					cfg.MonitorWidth = v
+				}
+			case "monitor_height":
+				if v, err := strconv.Atoi(value); err == nil {
+					cfg.MonitorHeight = v
+				}
+			}
+		case "Audio":
+			switch key {
+			case "sfx_volume":
+				if v, err := strconv.Atoi(value); err == nil {
+					cfg.SFXVolume = clampPercent(v)
+				}
+			case "music_volume":
+				if v, err := strconv.Atoi(value); err == nil {
+					cfg.MusicVolume = clampPercent(v)
+				}
+			case "mute":
+				cfg.Mute = parseBool(value)
 			}
 		}
 	}
@@ -162,6 +203,17 @@ func (c *Config) Save() error {
 	// Display section
 	fmt.Fprintln(writer, "[Display]")
 	fmt.Fprintf(writer, "tile_size = %d\n", c.TileSize)
+	fmt.Fprintf(writer, "monitor_name = %s\n", c.MonitorName)
+	fmt.Fprintf(writer, "monitor_index = %d\n", c.MonitorIndex)
+	fmt.Fprintf(writer, "monitor_width = %d\n", c.MonitorWidth)
+	fmt.Fprintf(writer, "monitor_height = %d\n", c.MonitorHeight)
+	fmt.Fprintln(writer)
+
+	// Audio section
+	fmt.Fprintln(writer, "[Audio]")
+	fmt.Fprintf(writer, "sfx_volume = %d\n", clampPercent(c.SFXVolume))
+	fmt.Fprintf(writer, "music_volume = %d\n", clampPercent(c.MusicVolume))
+	fmt.Fprintf(writer, "mute = %t\n", c.Mute)
 	fmt.Fprintln(writer)
 
 	return writer.Flush()
@@ -171,6 +223,52 @@ func (c *Config) Save() error {
 func (c *Config) SetTileSize(size int) error {
 	c.TileSize = size
 	return c.Save()
+}
+
+// SetMonitorPreference stores the preferred display and saves the config.
+func (c *Config) SetMonitorPreference(name string, index, width, height int) error {
+	c.MonitorName = name
+	c.MonitorIndex = index
+	c.MonitorWidth = width
+	c.MonitorHeight = height
+	return c.Save()
+}
+
+// SetSFXVolume sets the SFX volume percent (0–100) and saves the config.
+func (c *Config) SetSFXVolume(percent int) error {
+	c.SFXVolume = clampPercent(percent)
+	return c.Save()
+}
+
+// SetMusicVolume sets the music volume percent (0–100) and saves the config.
+func (c *Config) SetMusicVolume(percent int) error {
+	c.MusicVolume = clampPercent(percent)
+	return c.Save()
+}
+
+// SetMute sets whether audio is muted and saves the config.
+func (c *Config) SetMute(mute bool) error {
+	c.Mute = mute
+	return c.Save()
+}
+
+func clampPercent(v int) int {
+	if v < 0 {
+		return 0
+	}
+	if v > 100 {
+		return 100
+	}
+	return v
+}
+
+func parseBool(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // Global config instance

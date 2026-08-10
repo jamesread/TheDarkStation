@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"strings"
 	"testing"
 
 	"darkstation/pkg/engine/world"
@@ -119,6 +120,18 @@ func TestSimulatePlaythrough_RepairChainWithPrereqs(t *testing.T) {
 	report := SimulatePlaythrough(g)
 	if !report.Solvable {
 		t.Fatalf("repair chain (keycard -> device 1 -> device 2) reported unsolvable: %v", report.Failures)
+	}
+	firstAt, secondAt := -1, -1
+	for i, step := range report.Trace {
+		if strings.Contains(step, first.ID) {
+			firstAt = i
+		}
+		if strings.Contains(step, second.ID) {
+			secondAt = i
+		}
+	}
+	if firstAt < 0 || secondAt < 0 || firstAt >= secondAt {
+		t.Fatalf("simulator trace must preserve prerequisite order, got %v", report.Trace)
 	}
 }
 

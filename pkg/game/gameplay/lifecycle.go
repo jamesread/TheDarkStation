@@ -212,6 +212,7 @@ func clearCrossDeckPowerState(g *state.Game) {
 	g.LongUse = nil
 	g.HazardClear = nil
 	g.HazardTour = nil
+	// LiftRide is intentionally kept across the mid-transit TravelToDeck swap.
 	ClearGeneratorPowerGridOverlay(g)
 }
 

@@ -169,6 +169,9 @@ type Game struct {
 	// HazardTour runs a camera tour of blocking hazards when the exit lift is powered but blocked.
 	HazardTour *HazardTourSession
 
+	// LiftRide runs a shaft-anchored cinematic when traveling between decks.
+	LiftRide *LiftRideSession
+
 	// SlimePops holds short drain pop animations for toxic-slime cells.
 	SlimePops []SlimePop
 
@@ -401,6 +404,58 @@ func (g *Game) RepairByID(id string) *entities.RepairObjective {
 		}
 	}
 	return nil
+}
+
+// FirstIncompleteRepairPrerequisite returns the first unresolved upstream
+// repair in the objective's deterministic prerequisite order.
+func (g *Game) FirstIncompleteRepairPrerequisite(repair *entities.RepairObjective) *entities.RepairObjective {
+	if g == nil || repair == nil {
+		return nil
+	}
+	for _, id := range repair.PrereqIDs {
+		dep := g.RepairByID(id)
+		if dep != nil && !dep.IsComplete() {
+			return dep
+		}
+	}
+	return nil
+}
+
+// RepairDependents returns objectives directly interlocked by upstreamID.
+func (g *Game) RepairDependents(upstreamID string) []*entities.RepairObjective {
+	if g == nil || upstreamID == "" {
+		return nil
+	}
+	var out []*entities.RepairObjective
+	for _, repair := range g.RepairObjectives {
+		if repair == nil {
+			continue
+		}
+		for _, id := range repair.PrereqIDs {
+			if id == upstreamID {
+				out = append(out, repair)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// RepairDeviceKnown reports whether the device has been inspected or previously
+// seen under live illumination. It is the knowledge boundary for remote repair
+// telemetry and feedback.
+func (g *Game) RepairDeviceKnown(repair *entities.RepairObjective) bool {
+	if g == nil || repair == nil {
+		return false
+	}
+	if repair.Inspected {
+		return true
+	}
+	if g.Grid == nil {
+		return false
+	}
+	cell := g.Grid.GetCell(repair.DeviceRow, repair.DeviceCol)
+	return cell != nil && gameworld.GetGameData(cell).Lighted
 }
 
 // RepairPrereqsComplete reports whether all prerequisite objectives are complete.

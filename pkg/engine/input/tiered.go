@@ -35,9 +35,9 @@ const (
 	ActionOpenMenu
 	ActionOpenInventory // Open run-wide inventory overlay (in-game)
 	ActionAction        // Generic "action/confirm" (e.g., Enter/A)
-	ActionInteract // Interact with furniture/objects (E, Enter, A button)
-	ActionDevMenu  // Open developer menu (F9)
-	ActionDevMap   // Switch to developer testing map (menu / console)
+	ActionInteract      // Interact with furniture/objects (E, Enter, A button)
+	ActionDevMenu       // Open developer menu (F9)
+	ActionDevMap        // Switch to developer testing map (menu / console)
 	ActionMaintPanTestMap
 	ActionPerfTestMap
 	ActionDebugMapDump // Dump revealed map to map.txt (F8)
@@ -119,10 +119,10 @@ var bindings = map[string]Action{
 	"screenshot": ActionScreenshot,
 
 	// Menu
-	"menu":        ActionOpenMenu,
-	"f":           ActionOpenInventory,
-	"f9":          ActionDevMenu,
-	"f8":          ActionDebugMapDump,
+	"menu": ActionOpenMenu,
+	"f":    ActionOpenInventory,
+	"f9":   ActionDevMenu,
+	"f8":   ActionDebugMapDump,
 
 	// Controller/gamepad specific bindings
 	"gamepad_dpad_up":    ActionMoveNorth,

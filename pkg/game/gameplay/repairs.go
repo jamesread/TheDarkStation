@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"darkstation/pkg/engine/world"
+	"darkstation/pkg/game/audio"
 	"darkstation/pkg/game/entities"
 	"darkstation/pkg/game/levelgen"
 	"darkstation/pkg/game/renderer"
@@ -27,21 +28,28 @@ func repairCanStart(g *state.Game, repair *entities.RepairObjective, cell *world
 		return false, repairPrereqCallout(g, repair)
 	}
 	if repair.NeedsLivePower() && (cell == nil || !setup.CellHasLivePower(g, cell)) {
+		if dependent := inspectedRepairDependent(g, repair); dependent != nil {
+			report := entities.RepairDependencyReport(dependent, repair)
+			return false, fmt.Sprintf("UNPOWERED{%s}\nACTION{%s}\nSUBTLE{Restore this room's power, then return.}",
+				repair.Name, report.Prediction)
+		}
 		return false, fmt.Sprintf("UNPOWERED{%s}\nSUBTLE{Restore this room's power, then return.}", repair.Name)
 	}
 	return true, ""
 }
 
 func repairPrereqCallout(g *state.Game, repair *entities.RepairObjective) string {
-	for _, id := range repair.PrereqIDs {
-		dep := g.RepairByID(id)
-		if dep != nil && !dep.IsComplete() {
-			if repairDeviceSeen(g, dep) {
-				return fmt.Sprintf("UNPOWERED{%s locked}\nNeeds: ACTION{%s}\nSUBTLE{Backtrack to %s.}", repair.Name, dep.Name, dep.RoomName)
-			}
-			// The dependency has never been seen lit: don't name it or its room.
-			return fmt.Sprintf("UNPOWERED{%s locked}\nNeeds: ACTION{an upstream system}\nSUBTLE{Unlocated. Survey the deck.}", repair.Name)
+	upstream := g.FirstIncompleteRepairPrerequisite(repair)
+	if upstream != nil {
+		report := entities.RepairDependencyReport(repair, upstream)
+		if repairDeviceSeen(g, upstream) {
+			return fmt.Sprintf("UNPOWERED{%s}\nACTION{%s}\nSUBTLE{SOURCE: %s — %s}",
+				report.Symptom, report.Diagnosis, upstream.Name, upstream.RoomName)
 		}
+		// The dependency has never been seen or inspected: report the failing
+		// input without naming equipment the player cannot know about.
+		return fmt.Sprintf("UNPOWERED{%s}\nACTION{%s}\nSUBTLE{SOURCE: unlocated — survey the deck}",
+			report.Symptom, report.Diagnosis)
 	}
 	return fmt.Sprintf("UNPOWERED{%s locked}\nNeeds: ACTION{earlier repair}", repair.Name)
 }
@@ -49,14 +57,7 @@ func repairPrereqCallout(g *state.Game, repair *entities.RepairObjective) string
 // repairDeviceSeen reports whether the player has seen this repair's device cell lit.
 // Knowledge gates hint specificity: unseen systems are never named in callouts.
 func repairDeviceSeen(g *state.Game, repair *entities.RepairObjective) bool {
-	if g == nil || repair == nil || g.Grid == nil {
-		return false
-	}
-	cell := g.Grid.GetCell(repair.DeviceRow, repair.DeviceCol)
-	if cell == nil {
-		return false
-	}
-	return gameworld.GetGameData(cell).Lighted
+	return g != nil && g.RepairDeviceKnown(repair)
 }
 
 func repairDrainCallout(repair *entities.RepairObjective, nowMs int64) string {
@@ -100,7 +101,24 @@ func repairDeviceCallout(g *state.Game, repair *entities.RepairObjective, cell *
 	if repair.Type == entities.RepairPowerCoupler {
 		return fmt.Sprintf("TITLE{%s}\nSUBTLE{%s}", repair.Name, repair.CouplerCrankHint())
 	}
+	if dependent := inspectedRepairDependent(g, repair); dependent != nil {
+		report := entities.RepairDependencyReport(dependent, repair)
+		return fmt.Sprintf("TITLE{%s}\nACTION{%s}\nSUBTLE{Hold USE to repair.}",
+			repair.Name, report.Prediction)
+	}
 	return fmt.Sprintf("TITLE{%s}\nSUBTLE{Hold USE to repair.}", repair.Name)
+}
+
+func inspectedRepairDependent(g *state.Game, upstream *entities.RepairObjective) *entities.RepairObjective {
+	if g == nil || upstream == nil {
+		return nil
+	}
+	for _, dependent := range g.RepairDependents(upstream.ID) {
+		if dependent != nil && dependent.Inspected && !dependent.IsComplete() {
+			return dependent
+		}
+	}
+	return nil
 }
 
 // CheckAdjacentRepairAtCell handles tap interactions with repair devices.
@@ -112,12 +130,15 @@ func CheckAdjacentRepairAtCell(g *state.Game, cell *world.Cell) bool {
 	if repair == nil {
 		return false
 	}
+	repair.Inspect()
 	if ok, reason := repairCanStart(g, repair, cell); !ok {
 		renderer.AddCallout(cell.Row, cell.Col, reason, renderer.CalloutColorMaintenance, 0)
+		audio.PlayUseDeny()
 		return true
 	}
 	if repair.Type == entities.RepairSignalCalibrator {
 		if repair.IsRoutingCoupler() {
+			audio.PlayUseRepair()
 			RunRoutingCouplerMenu(g, cell, repair)
 			return true
 		}
@@ -141,6 +162,7 @@ func advanceSignalCalibration(g *state.Game, repair *entities.RepairObjective, c
 		completeRepair(g, repair, cell)
 		return
 	}
+	audio.PlayUseRepair()
 	renderer.AddCallout(cell.Row, cell.Col,
 		fmt.Sprintf("TITLE{%s}\nAligned signal %s. Next: ACTION{%s}", repair.Name, step, repair.CalibrationLabel()),
 		renderer.CalloutColorMaintenance, 0)
@@ -150,6 +172,11 @@ func OnRepairTimersAdvanced(g *state.Game) {
 	if g == nil {
 		return
 	}
+	for _, repair := range g.RepairObjectives {
+		if repair != nil && repair.IsComplete() && !repair.Acknowledged {
+			acknowledgeRepairConsequences(g, repair, false)
+		}
+	}
 	levelgen.SpawnUnlockKeycardPayoffs(g)
 	g.MaybeSetReactorOnlineFromDeck()
 }
@@ -158,6 +185,8 @@ func completeRepair(g *state.Game, repair *entities.RepairObjective, cell *world
 	if g == nil || repair == nil {
 		return
 	}
+	wasLiftReady := setup.ExitLiftReady(g)
+	audio.PlayUseRepair()
 	now := time.Now().UnixMilli()
 	repair.BeginTimedCompletion(now)
 	if repair.IsComplete() {
@@ -180,6 +209,32 @@ func completeRepair(g *state.Game, repair *entities.RepairObjective, cell *world
 		logMessage(g, "%s repaired. Toxic slime is draining.", repair.Name)
 		return
 	}
+	acknowledgeRepairConsequences(g, repair, wasLiftReady)
 	renderer.AddCallout(cell.Row, cell.Col, fmt.Sprintf("POWERED{%s repaired}", repair.Name), renderer.CalloutColorSuccess, 0)
 	logMessage(g, "%s repaired.", repair.Name)
+}
+
+func acknowledgeRepairConsequences(g *state.Game, upstream *entities.RepairObjective, wasLiftReady bool) {
+	if g == nil || upstream == nil || !upstream.IsComplete() {
+		return
+	}
+	upstream.Acknowledged = true
+	for _, dependent := range g.RepairDependents(upstream.ID) {
+		if dependent == nil || dependent.IsComplete() || !g.RepairPrereqsComplete(dependent) ||
+			!g.RepairDeviceKnown(dependent) {
+			continue
+		}
+		report := entities.RepairDependencyReport(dependent, upstream)
+		renderer.AddDevicePulse(dependent.DeviceRow, dependent.DeviceCol)
+		audio.PlaySignalLockReady()
+		logMessage(g, "POWERED{"+report.Restored+"}")
+	}
+	if wasLiftReady || !setup.ExitLiftReady(g) {
+		return
+	}
+	if exit := setup.ExitCell(g); exit != nil && exit.Discovered {
+		renderer.AddDevicePulse(exit.Row, exit.Col)
+	}
+	audio.PlaySignalLockReady()
+	logMessage(g, "POWERED{LIFT POWER TRANSFER AVAILABLE}")
 }

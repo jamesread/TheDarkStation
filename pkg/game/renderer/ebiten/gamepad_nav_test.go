@@ -50,6 +50,10 @@ func TestIsPointerDeviceGamepadName(t *testing.T) {
 		{"Apple Inc. Magic Trackpad", true},
 		{"TPPS/2 Elan TrackPoint", true},
 		{"Logitech USB Optical Mouse", true},
+		{"HP, Inc HyperX QuadCast Consumer Control", true},
+		{"Metadot - Das Keyboard Das Keyboard System Control", true},
+		{"C-Media Electronics Inc. USB PnP Sound Device", true},
+		{"Elgato Stream Deck MK.2", true},
 		{"Xbox Wireless Controller", false},
 		{"Wireless Controller", false}, // DualShock / DualSense style
 		{"Nintendo Switch Pro Controller", false},
@@ -59,6 +63,29 @@ func TestIsPointerDeviceGamepadName(t *testing.T) {
 		if got := isPointerDeviceGamepadName(tc.name); got != tc.want {
 			t.Errorf("isPointerDeviceGamepadName(%q) = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+func TestIsUsableGamepadCandidate_RejectsMicVolumeKnob(t *testing.T) {
+	// Reproduces HyperX QuadCast Consumer Control as seen by GLFW/Ebiten on Linux:
+	// 1 axis resting at -1.0, 1 button, no standard layout → continuous MoveWest.
+	if isUsableGamepadCandidate("HP, Inc HyperX QuadCast Consumer Control", false, 1, 1) {
+		t.Fatal("mic consumer-control knob must not be treated as a gamepad")
+	}
+	if isUsableGamepadCandidate("Generic HID", false, 1, 1) {
+		t.Fatal("1-axis unmapped HID must not be treated as a gamepad")
+	}
+}
+
+func TestIsUsableGamepadCandidate_AcceptsRealPads(t *testing.T) {
+	if !isUsableGamepadCandidate("Xbox Wireless Controller", true, 6, 14) {
+		t.Fatal("standard-mapped pad should be accepted")
+	}
+	if !isUsableGamepadCandidate("Unknown Fight Stick", false, 2, 8) {
+		t.Fatal("unmapped stick with 2 axes and enough buttons should be accepted")
+	}
+	if isUsableGamepadCandidate("Elan Touchpad", true, 2, 8) {
+		t.Fatal("pointer device must be rejected even with a standard layout mapping")
 	}
 }
 

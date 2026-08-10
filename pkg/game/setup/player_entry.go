@@ -92,6 +92,7 @@ func EnsureLiftShaftEntryClearance(g *state.Game) {
 	if g == nil || g.Grid == nil {
 		return
 	}
+	RevealLiftShaftStructure(g)
 	entry := g.Grid.ExitCell()
 	if entry == nil {
 		entry = PlayerEntryCell(g)

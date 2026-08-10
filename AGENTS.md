@@ -417,6 +417,7 @@ Many tests use `levelrand.Seed(fixed)` and `gameplay.SetupLevel(g)` directly wit
 | Room power behavior | `setup/roompower.go`, `menu/power_circuit.go`, `gameplay/door_release.go` |
 | Maintenance terminal panel | `menu/maintenance*.go`, `renderer/ebiten/menu_panel_content.go` |
 | On-screen control hints | `engine/input/hints.go`, `gameplay/hints.go` |
+| Music / BGM | Embed under `pkg/resources/music/`, register in `audio/music.go`, call `audio.PlayMusic` / `StopMusic`; crossfades advance via `audio.UpdateMusic` in the Ebiten `Update` loop |
 | Player input binding | `engine/input/tiered.go`, `engine/input/bindings.go`, `menu/settings.go` |
 | Lift menu / travel | `menu/lift.go`, `gameplay/travel.go` |
 | New menu | Implement `menu.MenuHandler`, call `menu.RunMenu` |
@@ -435,6 +436,7 @@ Many tests use `levelrand.Seed(fixed)` and `gameplay.SetupLevel(g)` directly wit
 - **Passability trinity:** `setup.CanEnterCellAtInit` ≈ `gameplay.CanEnter` ≈ `simulate.simPassable` must stay aligned.
 - **i18n:** user-visible strings go through gotext; embed updates require `make mo`.
 - **Renderer markup:** `renderer.StyleText`, `FormatText` for colored in-game log lines.
+- **Menu tab columns:** Use `"\t"` in `GetLabel()` only as a **column separator** (e.g. `"Name\tACTION{value}"`). The Ebiten menu renderer splits on tabs and draws columns at aligned X positions — it must never paint the tab character itself. UI fonts render `\t` as an empty square “tofu” box if a label is drawn as a single string. Prefer tabs + column layout over spaces for alignment; do not invent ad-hoc spacer glyphs. Implementation: `menuLabelsUseTabColumns` / `drawMenuPanelContent` in `pkg/game/renderer/ebiten/menu_panel_content.go`.
 - **Minimal diffs:** match surrounding package style; don't refactor unrelated code in feature PRs.
 
 ---
